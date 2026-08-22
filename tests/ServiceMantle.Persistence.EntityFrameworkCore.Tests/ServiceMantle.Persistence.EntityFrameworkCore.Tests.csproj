@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\\..\\src\\ServiceMantle\\ServiceMantle.csproj" />
+    <ProjectReference Include="..\\..\\src\\ServiceMantle.Persistence.EntityFrameworkCore\\ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
+  </ItemGroup>
+
+</Project>
+
