@@ -59,6 +59,28 @@ public sealed class BootstrapFileStoreTests
     }
 
     [Fact]
+    public void Load_reads_the_legacy_sqlite_file_using_the_expected_service_id()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var serviceId = ServiceId.Parse("signacore");
+        var store = CreateStore(directory, serviceId);
+        File.WriteAllText(store.FilePath, """
+            {
+              "Database": {
+                "Provider": " SQLite ",
+                "ConnectionString": "Data Source=legacy.db;Mode=ReadWrite;Password=legacy-password"
+              },
+              "MasterKey": "legacy-master-key"
+            }
+            """);
+
+        var configuration = store.Load();
+
+        Assert.Equal(serviceId, configuration.ServiceId);
+        Assert.Equal("SQLite", configuration.Database.Provider);
+    }
+
+    [Fact]
     public void Create_writes_the_current_format_version_and_service_id()
     {
         using var directory = TemporaryDirectory.Create();
@@ -201,21 +223,40 @@ public sealed class BootstrapFileStoreTests
     }
 
     [Fact]
-    public void Unsupported_provider_fails()
+    public void Legal_unregistered_provider_loads_from_file()
     {
         using var directory = TemporaryDirectory.Create();
         var store = CreateStore(directory);
         File.WriteAllText(store.FilePath, """
             {
               "Database": {
-                "Provider": "MySql",
+                "Provider": "AcmeDb",
                 "ConnectionString": "Host=db;Password=provider-password"
               },
               "MasterKey": "provider-master-key"
             }
             """);
 
-        Assert.Throws<BootstrapException>(() => store.Load());
+        var configuration = store.Load();
+
+        Assert.Equal("AcmeDb", configuration.Database.Provider);
+        Assert.Equal("provider-master-key", configuration.MasterKey);
+    }
+
+    [Theory]
+    [InlineData("MySQL")]
+    [InlineData("MariaDB")]
+    [InlineData("Oracle")]
+    [InlineData("SqlServer")]
+    [InlineData("MyCompanyDB")]
+    public void Create_accepts_well_known_and_third_party_providers(string provider)
+    {
+        using var directory = TemporaryDirectory.Create();
+        var store = CreateStore(directory);
+        store.Create(CreateConfiguration(provider: provider));
+
+        var loaded = store.Load();
+        Assert.Equal(provider, loaded.Database.Provider);
     }
 
     [Fact]
@@ -407,12 +448,13 @@ public sealed class BootstrapFileStoreTests
 
     private static BootstrapConfiguration CreateConfiguration(
         ServiceId? serviceId = null,
-        string connectionString = "Host=db;Database=signacore;Password=test-password")
+        string connectionString = "Host=db;Database=signacore;Password=test-password",
+        string provider = "PostgreSQL")
     {
         var actualServiceId = serviceId ?? ServiceId.Parse("signacore");
         return new BootstrapConfiguration(
             actualServiceId,
-            new BootstrapDatabaseConfiguration("PostgreSQL", "15", connectionString),
+            new BootstrapDatabaseConfiguration(provider, "15", connectionString),
             "test-master-key");
     }
 

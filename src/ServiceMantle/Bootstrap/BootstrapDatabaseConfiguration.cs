@@ -23,7 +23,7 @@ public sealed class BootstrapDatabaseConfiguration
     /// <summary>
     /// Initializes a database bootstrap configuration.
     /// </summary>
-    /// <param name="provider">The canonical provider name, either PostgreSQL or SQLite.</param>
+    /// <param name="provider">The canonical database provider identifier.</param>
     /// <param name="serverVersion">The optional database server version.</param>
     /// <param name="connectionString">The database connection string.</param>
     /// <exception cref="ArgumentNullException">A required argument is null.</exception>
@@ -33,18 +33,10 @@ public sealed class BootstrapDatabaseConfiguration
         string? serverVersion,
         string connectionString)
     {
-        ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(connectionString);
+        ArgumentNullException.ThrowIfNull(provider);
 
-        var normalizedProvider = provider.Trim();
-
-        Provider = normalizedProvider switch
-        {
-            "PostgreSQL" or "SQLite" => normalizedProvider,
-            _ => throw new ArgumentException(
-                "The database provider must be PostgreSQL or SQLite.",
-                nameof(provider))
-        };
+        Provider = NormalizeProvider(provider);
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
@@ -64,4 +56,46 @@ public sealed class BootstrapDatabaseConfiguration
     /// </summary>
     public override string ToString() =>
         $"BootstrapDatabaseConfiguration(Provider={Provider})";
+
+    private static string NormalizeProvider(string provider)
+    {
+        var normalized = provider.Trim();
+
+        if (normalized.Length is 0)
+        {
+            throw new ArgumentException(
+                "The database provider cannot be empty.",
+                nameof(provider));
+        }
+
+        if (normalized.Length > 64)
+        {
+            throw new ArgumentException(
+                "The database provider is too long.",
+                nameof(provider));
+        }
+
+        if (!IsAsciiLetterOrDigit(normalized[0]))
+        {
+            throw new ArgumentException(
+                "The database provider identifier must start with an ASCII letter or digit.",
+                nameof(provider));
+        }
+
+        for (var i = 1; i < normalized.Length; i++)
+        {
+            var current = normalized[i];
+            if (!IsAsciiLetterOrDigit(current) && current is not ('.' or '-' or '_'))
+            {
+                throw new ArgumentException(
+                    "The database provider identifier contains invalid characters.",
+                    nameof(provider));
+            }
+        }
+
+        return normalized;
+    }
+
+    private static bool IsAsciiLetterOrDigit(char value) =>
+        value is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9';
 }

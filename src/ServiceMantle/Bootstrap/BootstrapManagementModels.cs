@@ -270,6 +270,429 @@ public sealed class BootstrapValidationResult
 }
 
 /// <summary>
+/// Common provider identifiers used by bootstrap configuration metadata.
+/// </summary>
+public static class WellKnownDatabaseProviderIds
+{
+    /// <summary>
+    /// PostgreSQL provider id.
+    /// </summary>
+    public const string PostgreSql = "PostgreSQL";
+
+    /// <summary>
+    /// SQLite provider id.
+    /// </summary>
+    public const string Sqlite = "SQLite";
+
+    /// <summary>
+    /// MySQL provider id.
+    /// </summary>
+    public const string MySql = "MySQL";
+
+    /// <summary>
+    /// MariaDB provider id.
+    /// </summary>
+    public const string MariaDb = "MariaDB";
+
+    /// <summary>
+    /// Oracle provider id.
+    /// </summary>
+    public const string Oracle = "Oracle";
+
+    /// <summary>
+    /// SQL Server provider id.
+    /// </summary>
+    public const string SqlServer = "SqlServer";
+}
+
+/// <summary>
+/// Describes how a provider is expected to persist bootstrap targets.
+/// </summary>
+public enum BootstrapDatabaseTargetKind
+{
+    /// <summary>
+    /// The provider uses a server-hosted database.
+    /// </summary>
+    ServerDatabase,
+
+    /// <summary>
+    /// The provider uses a local file database.
+    /// </summary>
+    File,
+
+    /// <summary>
+    /// The provider manages a database server schema.
+    /// </summary>
+    ServerSchema
+}
+
+/// <summary>
+/// Describes server-version requirements for a provider.
+/// </summary>
+public enum BootstrapServerVersionRequirement
+{
+    /// <summary>
+    /// A server version is required by the provider.
+    /// </summary>
+    Required,
+
+    /// <summary>
+    /// A server version is optional.
+    /// </summary>
+    Optional,
+
+    /// <summary>
+    /// A server version must be omitted for this provider.
+    /// </summary>
+    Forbidden
+}
+
+/// <summary>
+/// Describes a provider implementation without exposing any secret configuration data.
+/// </summary>
+public sealed class BootstrapDatabaseProviderDescriptor
+{
+    /// <summary>
+    /// Initializes a provider descriptor.
+    /// </summary>
+    public BootstrapDatabaseProviderDescriptor(
+        string id,
+        string displayName,
+        BootstrapDatabaseTargetKind targetKind,
+        BootstrapServerVersionRequirement serverVersionRequirement,
+        IEnumerable<string>? aliases = null)
+    {
+        Id = NormalizeProviderId(id);
+
+        DisplayName = displayName?.Trim() ??
+            throw new ArgumentNullException(nameof(displayName));
+
+        if (DisplayName.Length == 0)
+        {
+            throw new ArgumentException(
+                "The provider display name cannot be empty.",
+                nameof(displayName));
+        }
+
+        if (!Enum.IsDefined(targetKind))
+        {
+            throw new ArgumentOutOfRangeException(nameof(targetKind));
+        }
+
+        if (!Enum.IsDefined(serverVersionRequirement))
+        {
+            throw new ArgumentOutOfRangeException(nameof(serverVersionRequirement));
+        }
+
+        TargetKind = targetKind;
+        ServerVersionRequirement = serverVersionRequirement;
+        Aliases = NormalizeAliases(aliases);
+    }
+
+    /// <summary>
+    /// Gets the provider identifier used in bootstrap files.
+    /// </summary>
+    public string Id { get; }
+
+    /// <summary>
+    /// Gets the provider display name.
+    /// </summary>
+    public string DisplayName { get; }
+
+    /// <summary>
+    /// Gets the bootstrap target strategy for this provider.
+    /// </summary>
+    public BootstrapDatabaseTargetKind TargetKind { get; }
+
+    /// <summary>
+    /// Gets the server-version requirement for this provider.
+    /// </summary>
+    public BootstrapServerVersionRequirement ServerVersionRequirement { get; }
+
+    /// <summary>
+    /// Gets a copy of any aliases for this provider.
+    /// </summary>
+    public IReadOnlyList<string> Aliases { get; }
+
+    /// <summary>
+    /// Returns safe provider metadata.
+    /// </summary>
+    public override string ToString() =>
+        $"BootstrapDatabaseProviderDescriptor(Id={Id}, DisplayName={DisplayName}, " +
+        $"TargetKind={TargetKind}, ServerVersionRequirement={ServerVersionRequirement}, " +
+        $"Aliases={string.Join(',', Aliases)})";
+
+    private static string NormalizeProviderId(string id)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+
+        var normalized = id.Trim();
+
+        if (normalized.Length is 0)
+        {
+            throw new ArgumentException("The provider id cannot be empty.", nameof(id));
+        }
+
+        if (normalized.Length > 64)
+        {
+            throw new ArgumentException("The provider id is too long.", nameof(id));
+        }
+
+        if (!IsAsciiLetterOrDigit(normalized[0]))
+        {
+            throw new ArgumentException(
+                "The provider id must start with an ASCII letter or digit.",
+                nameof(id));
+        }
+
+        for (var i = 1; i < normalized.Length; i++)
+        {
+            var character = normalized[i];
+            if (!IsAsciiLetterOrDigit(character) && character is not ('.' or '-' or '_'))
+            {
+                throw new ArgumentException(
+                    "The provider id contains invalid characters.",
+                    nameof(id));
+            }
+        }
+
+        return normalized;
+    }
+
+    private static IReadOnlyList<string> NormalizeAliases(IEnumerable<string>? aliases)
+    {
+        if (aliases is null)
+        {
+            return [];
+        }
+
+        var normalizedAliases = new List<string>();
+
+        foreach (var alias in aliases)
+        {
+            if (alias is null)
+            {
+                throw new ArgumentNullException(nameof(aliases));
+            }
+
+            normalizedAliases.Add(NormalizeProviderId(alias));
+        }
+
+        return normalizedAliases.AsReadOnly();
+    }
+
+    private static bool IsAsciiLetterOrDigit(char character) =>
+        character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9';
+}
+
+/// <summary>
+/// Represents a concrete provider-specific bootstrap validator.
+/// </summary>
+public interface IBootstrapDatabaseProvider
+{
+    /// <summary>
+    /// Gets provider metadata used by administration workflows.
+    /// </summary>
+    BootstrapDatabaseProviderDescriptor Descriptor { get; }
+
+    /// <summary>
+    /// Validates whether the database configuration can be accepted for this provider.
+    /// </summary>
+    /// <param name="database">The database candidate.</param>
+    /// <param name="cancellationToken">Cancellation token for the validation call.</param>
+    ValueTask<BootstrapValidationResult> ValidateAsync(
+        BootstrapDatabaseConfiguration database,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Resolves and holds a read-only bootstrap provider registration table.
+/// </summary>
+public sealed class BootstrapDatabaseProviderRegistry
+{
+    private readonly IReadOnlyList<BootstrapDatabaseProviderDescriptor> descriptors;
+    private readonly Dictionary<string, ProviderRegistration> registrations;
+
+    /// <summary>
+    /// Initializes a provider registry.
+    /// </summary>
+    /// <param name="providers">All providers to expose through this registry.</param>
+    public BootstrapDatabaseProviderRegistry(IEnumerable<IBootstrapDatabaseProvider> providers)
+    {
+        ArgumentNullException.ThrowIfNull(providers);
+
+        this.registrations = new Dictionary<string, ProviderRegistration>(StringComparer.OrdinalIgnoreCase);
+        var descriptorList = new List<BootstrapDatabaseProviderDescriptor>();
+
+        foreach (var provider in providers)
+        {
+            if (provider is null)
+            {
+                throw new ArgumentNullException(nameof(providers));
+            }
+
+            var descriptor = provider.Descriptor;
+            if (descriptor is null)
+            {
+                throw new ArgumentException("Provider descriptor cannot be null.", nameof(providers));
+            }
+
+            if (this.registrations.ContainsKey(descriptor.Id))
+            {
+                throw new ArgumentException(
+                    $"The provider id '{descriptor.Id}' is already registered.",
+                    nameof(providers));
+            }
+
+            var registration = new ProviderRegistration(
+                provider,
+                descriptor);
+
+            this.registrations.Add(descriptor.Id, registration);
+
+            foreach (var alias in descriptor.Aliases)
+            {
+                if (this.registrations.ContainsKey(alias))
+                {
+                    throw new ArgumentException(
+                        $"The alias '{alias}' conflicts with a registered canonical id.",
+                        nameof(providers));
+                }
+
+                this.registrations.Add(alias, registration);
+            }
+
+            descriptorList.Add(descriptor);
+        }
+
+        this.descriptors = descriptorList
+            .OrderBy(item => item.Id, StringComparer.Ordinal)
+            .ToList()
+            .AsReadOnly();
+    }
+
+    /// <summary>
+    /// Gets provider descriptors in deterministic order.
+    /// </summary>
+    public IReadOnlyList<BootstrapDatabaseProviderDescriptor> Descriptors => descriptors;
+
+    /// <summary>
+    /// Looks up a provider by canonical id or alias.
+    /// </summary>
+    /// <param name="providerId">The provider id or alias.</param>
+    /// <param name="provider">The provider instance when found.</param>
+    public bool TryGetProvider(string providerId, out IBootstrapDatabaseProvider? provider)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+        {
+            provider = null;
+            return false;
+        }
+
+        if (!registrations.TryGetValue(providerId, out var registration))
+        {
+            provider = null;
+            return false;
+        }
+
+        provider = registration.Provider;
+        return true;
+    }
+
+    internal bool TryGetRegistration(
+        string providerId,
+        out ProviderRegistration? registration)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+        {
+            registration = null;
+            return false;
+        }
+
+        return registrations.TryGetValue(providerId, out registration);
+    }
+
+    internal sealed class ProviderRegistration
+    {
+        public ProviderRegistration(
+            IBootstrapDatabaseProvider provider,
+            BootstrapDatabaseProviderDescriptor descriptor)
+        {
+            Provider = provider;
+            Descriptor = descriptor;
+        }
+
+        public IBootstrapDatabaseProvider Provider { get; }
+        public BootstrapDatabaseProviderDescriptor Descriptor { get; }
+    }
+}
+
+/// <summary>
+/// Validates bootstrap candidates by dispatching to a registered provider.
+/// </summary>
+public sealed class BootstrapDatabaseCandidateValidator : IBootstrapCandidateValidator
+{
+    private readonly BootstrapDatabaseProviderRegistry providerRegistry;
+
+    /// <summary>
+    /// Initializes a candidate validator.
+    /// </summary>
+    /// <param name="providerRegistry">The bootstrap provider registry.</param>
+    public BootstrapDatabaseCandidateValidator(BootstrapDatabaseProviderRegistry providerRegistry)
+    {
+        this.providerRegistry = providerRegistry ??
+            throw new ArgumentNullException(nameof(providerRegistry));
+    }
+
+    /// <summary>
+    /// Validates a candidate by resolving the provider and applying shared checks.
+    /// </summary>
+    public async ValueTask<BootstrapValidationResult> ValidateAsync(
+        BootstrapConfiguration candidate,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        if (!providerRegistry.TryGetRegistration(candidate.Database.Provider, out var registration) ||
+            registration is null)
+        {
+            return BootstrapValidationResult.Failure("database.provider_not_registered");
+        }
+
+        var descriptor = registration.Descriptor;
+        var serverVersion = candidate.Database.ServerVersion;
+
+        if (descriptor.ServerVersionRequirement == BootstrapServerVersionRequirement.Required &&
+            string.IsNullOrWhiteSpace(serverVersion))
+        {
+            return BootstrapValidationResult.Failure("database.server_version_required");
+        }
+
+        if (descriptor.ServerVersionRequirement == BootstrapServerVersionRequirement.Forbidden &&
+            !string.IsNullOrWhiteSpace(serverVersion))
+        {
+            return BootstrapValidationResult.Failure("database.server_version_not_allowed");
+        }
+
+        try
+        {
+            var result = await registration.Provider.ValidateAsync(candidate.Database, cancellationToken)
+                .ConfigureAwait(false);
+
+            return result ?? BootstrapValidationResult.Failure("database.provider_invalid_result");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return BootstrapValidationResult.Failure("database.provider_validation_failed");
+        }
+    }
+}
+
+/// <summary>
 /// Validates a complete bootstrap candidate before it is persisted.
 /// </summary>
 public interface IBootstrapCandidateValidator
