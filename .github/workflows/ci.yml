@@ -52,8 +52,6 @@ jobs:
           --configuration Release
           --no-build
           --no-restore
-          --logger "trx;LogFileName=smoke.trx"
-          --results-directory artifacts/test-results
 
       - name: Pack
         run: >-
@@ -64,15 +62,6 @@ jobs:
           --output artifacts/packages
           -p:Version=$PACKAGE_VERSION
           -p:RepositoryCommit=${{ github.sha }}
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: test-results
-          path: artifacts/test-results
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Upload packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
