@@ -1,9 +1,9 @@
 name: CI
 
 on:
+  # Default-branch pushes are verified by release.yml before package artifacts
+  # are published, so CI remains a pull-request verification gate.
   pull_request:
-    branches: [main]
-  push:
     branches: [main]
   workflow_call:
   workflow_dispatch:
