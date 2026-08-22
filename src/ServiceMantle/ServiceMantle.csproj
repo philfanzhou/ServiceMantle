@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>ServiceMantle</RootNamespace>
+    <AssemblyName>ServiceMantle</AssemblyName>
+    <PackageId>ServiceMantle</PackageId>
+    <PackageDescription>Reusable service management foundations for ASP.NET Core services.</PackageDescription>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/philfanzhou/ServiceMantle</RepositoryUrl>
+    <PackageTags>service-management;aspnetcore;bootstrap;configuration;observability</PackageTags>
+
+  </PropertyGroup>
+
+</Project>
