@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: true
+
+jobs:
+  build-test-pack:
+    name: Build, test, and pack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PACKAGE_VERSION: 0.0.0-ci.${{ github.run_number }}.${{ github.run_attempt }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore ServiceMantle.slnx
+
+      - name: Build
+        run: >-
+          dotnet build ServiceMantle.slnx
+          --configuration Release
+          --no-restore
+          -p:Version=$PACKAGE_VERSION
+          -p:RepositoryCommit=${{ github.sha }}
+
+      - name: Test
+        run: >-
+          dotnet test ServiceMantle.slnx
+          --configuration Release
+          --no-build
+          --no-restore
+
+      - name: Pack
+        run: >-
+          dotnet pack src/ServiceMantle/ServiceMantle.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          --output artifacts/packages
+          -p:Version=$PACKAGE_VERSION
+          -p:RepositoryCommit=${{ github.sha }}
+
+      - name: Upload packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packages
+          path: artifacts/packages
+          if-no-files-found: error
+          retention-days: 14
