@@ -123,6 +123,34 @@ public sealed class BootstrapConfigurationManagerTests
     }
 
     [Fact]
+    public async Task CreateAsync_uses_bootstrap_database_candidate_validator()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var store = CreateStore(directory);
+        var provider = new FakeDatabaseProvider(
+            new BootstrapDatabaseProviderDescriptor(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "PostgreSQL",
+                BootstrapDatabaseTargetKind.ServerDatabase,
+                BootstrapServerVersionRequirement.Optional));
+        var validator = new BootstrapDatabaseCandidateValidator(
+            new BootstrapDatabaseProviderRegistry([provider]));
+        var manager = CreateManager(store, validator: validator);
+
+        var result = await manager.CreateAsync(
+            new BootstrapCreateRequest(
+                new BootstrapDatabaseConfiguration(WellKnownDatabaseProviderIds.PostgreSql, "15", "Host=db;Password=create-password"),
+                "create-master-key"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(BootstrapChangeOperation.Create, result.Operation);
+        Assert.Equal("signacore", result.ServiceId.Value);
+        Assert.True(result.RestartRequired);
+        Assert.True(File.Exists(store.FilePath));
+        Assert.Equal(1, provider.CallCount);
+    }
+
+    [Fact]
     public async Task CreateAsync_does_not_overwrite_an_existing_file()
     {
         using var directory = TemporaryDirectory.Create();
@@ -220,6 +248,27 @@ public sealed class BootstrapConfigurationManagerTests
 
         Assert.Equal("update.empty", exception.ErrorCode);
         Assert.Equal(0, validator.CallCount);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_does_not_modify_file_when_provider_is_not_registered()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var store = CreateStore(directory);
+        store.Create(CreateConfiguration());
+        var original = File.ReadAllBytes(store.FilePath);
+        var validator = new BootstrapDatabaseCandidateValidator(
+            new BootstrapDatabaseProviderRegistry(Array.Empty<IBootstrapDatabaseProvider>()));
+        var manager = CreateManager(store, validator: validator);
+
+        var exception = await Assert.ThrowsAsync<BootstrapManagementException>(() =>
+            manager.UpdateAsync(
+                new BootstrapUpdateRequest(
+                    new BootstrapDatabaseConfiguration("PostgreSQL", "15", "Host=db;Password=replacement-password")),
+                TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("database.provider_not_registered", exception.ErrorCode);
+        Assert.Equal(original, File.ReadAllBytes(store.FilePath));
     }
 
     [Fact]
@@ -429,6 +478,36 @@ public sealed class BootstrapConfigurationManagerTests
         }
 
         private int maximumConcurrentValidations;
+    }
+
+    private sealed class FakeDatabaseProvider : IBootstrapDatabaseProvider
+    {
+        private readonly Func<BootstrapDatabaseConfiguration, CancellationToken, ValueTask<BootstrapValidationResult>>? handler;
+
+        public FakeDatabaseProvider(
+            BootstrapDatabaseProviderDescriptor descriptor,
+            Func<BootstrapDatabaseConfiguration, CancellationToken, ValueTask<BootstrapValidationResult>>? handler = null)
+        {
+            Descriptor = descriptor;
+            this.handler = handler;
+        }
+
+        public BootstrapDatabaseProviderDescriptor Descriptor { get; }
+
+        public int CallCount { get; private set; }
+
+        public ValueTask<BootstrapValidationResult> ValidateAsync(
+            BootstrapDatabaseConfiguration database,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            if (handler is null)
+            {
+                return ValueTask.FromResult(BootstrapValidationResult.Success());
+            }
+
+            return handler(database, cancellationToken);
+        }
     }
 
     private sealed class TemporaryDirectory : IDisposable

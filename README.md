@@ -52,6 +52,27 @@ Bootstrap files belong to individual service instances. Synchronizing or distrib
 
 Bootstrap changes affect only the current instance's local Bootstrap file and return `RestartRequired=true`; the process must be restarted before a change is activated. HTTP endpoints, real database connectivity validation, administrator authentication, and multi-instance synchronization are not implemented yet.
 
+## Provider SPI and validation dispatch
+
+The core library now provides a provider SPI so validation can be extended without changing the core package.
+
+- `IBootstrapDatabaseProvider` implementations are expected in optional provider packages and receive only `BootstrapDatabaseConfiguration`.
+- `BootstrapDatabaseProviderRegistry` resolves providers by canonical `Provider` id and aliases using case-insensitive matching.
+- `BootstrapDatabaseCandidateValidator` performs generic checks (`database.provider_not_registered`, server-version constraints) and then dispatches to the matched provider.
+- Provider IDs in bootstrap files are validated for safe syntax only; registration and driver-specific behavior are handled by the candidate validator at management time.
+
+Planned provider packages are:
+
+- `ServiceMantle.Database.PostgreSql`
+- `ServiceMantle.Database.SQLite`
+- `ServiceMantle.Database.MySql`
+- `ServiceMantle.Database.MariaDb`
+- `ServiceMantle.Database.Oracle`
+- `ServiceMantle.Database.SqlServer`
+
+MySQL and MariaDB keep independent provider IDs even if they can share lower-level behavior.
+Oracle and SQLite are treated with different target semantics from server databases, and migration/bootstrap features are out of scope for this round.
+
 ## Non-goals (first version)
 
 - No product-specific user / OAuth / JWT domain models.
