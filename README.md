@@ -52,6 +52,43 @@ Bootstrap files belong to individual service instances. Synchronizing or distrib
 
 Bootstrap changes affect only the current instance's local Bootstrap file and return `RestartRequired=true`; the process must be restarted before a change is activated. HTTP endpoints, real database connectivity validation, administrator authentication, and multi-instance synchronization are not implemented yet.
 
+## Installation persistence foundation
+
+`ServiceMantle` core stays provider-agnostic and does not reference EF Core.
+
+`ServiceMantle.Persistence.EntityFrameworkCore` is an optional package that defines:
+
+- `ServiceInstallationEntity` mapping for `service_installations`.
+- `IServiceMantleDbContext` contract that business DbContexts implement.
+- `ModelBuilder` extension `AddServiceMantleInstallation()` for model registration.
+- `EfCoreServiceInstallationStore<TDbContext>` implementing `IServiceInstallationStore`.
+
+This layer only standardizes installation state access; it does not generate migrations, execute `Database.MigrateAsync`, or assume ownership of bootstrap secrets. `service_installations` rows are owned by the consuming service database.
+
+Management consumers should implement a minimal integration model, for example:
+
+```csharp
+public sealed class MyDbContext : DbContext, IServiceMantleDbContext
+{
+    public DbSet<ServiceInstallationEntity> ServiceInstallations { get; set; } = null!;
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.AddServiceMantleInstallation();
+    }
+}
+```
+
+For now, only `service_installations` is defined. Planned future tables (not in this release):
+
+- `service_settings`
+- `service_audit_logs`
+- `service_data_protection_keys`
+- Setup code metadata
+- administrator identity/state tables
+
+Shared migration ownership is intentionally moved to the consuming service. In deployments against existing business databases, services must create migration entries and keep installation table ownership in their own startup/deployment process.
+
 ## Provider SPI and validation dispatch
 
 The core library now provides a provider SPI so validation can be extended without changing the core package.
@@ -65,6 +102,7 @@ The core library now provides a provider SPI so validation can be extended witho
 Current and planned provider packages are:
 
 - `ServiceMantle.Database.PostgreSql` validates PostgreSQL settings and performs a minimum read probe (`SELECT 1`) against the target database.
+- `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
 - `ServiceMantle.Database.SQLite`
 - `ServiceMantle.Database.MySql`
 - `ServiceMantle.Database.MariaDb`
@@ -93,9 +131,11 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 - `src/ServiceMantle/ServiceId.cs`
 - `src/ServiceMantle/InstanceId.cs`
 - `src/ServiceMantle/Installation/`
+- `src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj`
 - `tests/ServiceMantle.Tests/ServiceIdTests.cs`
 - `tests/ServiceMantle.Tests/InstanceIdTests.cs`
 - `tests/ServiceMantle.Tests/Installation/`
+- `tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj`
 - `ServiceMantle.slnx`
 - `global.json`
 - `Directory.Build.props`
@@ -108,4 +148,5 @@ dotnet restore
 dotnet build -c Release
 dotnet test -c Release
 dotnet pack src/ServiceMantle/ServiceMantle.csproj -c Release --no-build
+dotnet pack src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj -c Release --no-build
 ```
