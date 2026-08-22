@@ -60,18 +60,21 @@ The core library now provides a provider SPI so validation can be extended witho
 - `BootstrapDatabaseProviderRegistry` resolves providers by canonical `Provider` id and aliases using case-insensitive matching.
 - `BootstrapDatabaseCandidateValidator` performs generic checks (`database.provider_not_registered`, server-version constraints) and then dispatches to the matched provider.
 - Provider IDs in bootstrap files are validated for safe syntax only; registration and driver-specific behavior are handled by the candidate validator at management time.
+- Driver packages are distributed separately, so the ServiceMantle core package stays free of database driver dependencies.
 
-Planned provider packages are:
+Current and planned provider packages are:
 
-- `ServiceMantle.Database.PostgreSql`
+- `ServiceMantle.Database.PostgreSql` validates PostgreSQL settings and performs a minimum read probe (`SELECT 1`) against the target database.
 - `ServiceMantle.Database.SQLite`
 - `ServiceMantle.Database.MySql`
 - `ServiceMantle.Database.MariaDb`
 - `ServiceMantle.Database.Oracle`
 - `ServiceMantle.Database.SqlServer`
 
+The PostgreSQL provider only validates configuration and target connectivity. It does not create databases, migrate schemas, manage history tables, or provide multi-instance locking.
+
 MySQL and MariaDB keep independent provider IDs even if they can share lower-level behavior.
-Oracle and SQLite are treated with different target semantics from server databases, and migration/bootstrap features are out of scope for this round.
+Oracle is planned as a `ServerSchema`-style target provider; SQL Server and SQLite follow their own target semantics.
 
 ## Non-goals (first version)
 

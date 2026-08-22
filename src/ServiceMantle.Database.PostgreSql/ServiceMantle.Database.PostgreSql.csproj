@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>ServiceMantle.Database.PostgreSql</RootNamespace>
+    <AssemblyName>ServiceMantle.Database.PostgreSql</AssemblyName>
+    <PackageId>ServiceMantle.Database.PostgreSql</PackageId>
+    <IsPackable>true</IsPackable>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageDescription>PostgreSQL validation provider for ServiceMantle bootstrap workflows.</PackageDescription>
+    <PackageTags>service-management aspnetcore bootstrap database postgresql configuration</PackageTags>
+    <RepositoryUrl>https://github.com/philfanzhou/ServiceMantle</RepositoryUrl>
+    <TargetFramework>net10.0</TargetFramework>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\\ServiceMantle\\ServiceMantle.csproj" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+</Project>

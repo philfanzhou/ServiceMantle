@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ServiceMantle/ServiceMantle.csproj" />
+    <Project Path="src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj" />
+    <Project Path="tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj" />
   </Folder>
 </Solution>
