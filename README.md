@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, and the PostgreSQL advisory lock provider are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management authentication, auditing, observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, and product-agnostic management audit persistence are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management authentication, observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -79,15 +79,55 @@ public sealed class MyDbContext : DbContext, IServiceMantleDbContext
 }
 ```
 
-For now, only `service_installations` is defined. Planned future tables (not in this release):
+`service_installations` and `service_audit_logs` (see below) are defined. Planned future tables (not in this release):
 
 - `service_settings`
-- `service_audit_logs`
 - `service_data_protection_keys`
 - Setup code metadata
 - administrator identity/state tables
 
 Shared migration ownership is intentionally moved to the consuming service. In deployments against existing business databases, services must create migration entries and keep installation table ownership in their own startup/deployment process.
+
+## Management audit persistence
+
+`ServiceMantle.Audit` (in the core `ServiceMantle` package) defines a product-agnostic management audit domain: `ManagementAuditEvent` (write contract input), `ManagementAuditRecord` (read model), `ManagementAuditQuery`/`ManagementAuditQueryResult` (query contract), and bounded value types `ManagementAuditAction`, `ManagementAuditTargetType`, `ManagementAuditTarget`, `ManagementAuditOperator`, `ManagementAuditOperatorSource`, and the `ManagementAuditOutcome` security result enum (`Unknown`/`Success`/`Failure`/`Denied`). `WellKnownManagementAuditActions`, `WellKnownManagementAuditTargetTypes`, and `WellKnownManagementAuditOperatorSources` provide reusable conventions for installation, administrator login, and configuration-change events; consuming services define additional actions and target types with the same `Parse` pattern (for example `signacore.account_created`). ServiceMantle does not define SignaCore-specific identity, application, credential, signing-key, or OAuth semantics.
+
+`ManagementAuditEvent.Create(...)` enforces the sensitive-content policy before an event can be constructed: metadata keys that name a secret (`password`, `token`, `connectionstring`, `apikey`, `setupcode`, `authorization`, and similar) are rejected outright, and secret-shaped substrings in the description or metadata values (connection-string fragments, bearer tokens, JWT-like strings, PEM private key blocks) are redacted in place. Connection strings, external root keys, database administrator credentials, setup codes, passwords, tokens, and other sensitive configuration values must never reach persisted audit content.
+
+`ServiceMantle.Persistence.EntityFrameworkCore` adds:
+
+- `ManagementAuditLogEntity` mapping for `service_audit_logs`.
+- `IServiceMantleAuditDbContext` contract that business DbContexts implement (separate from `IServiceMantleDbContext` so consumers can adopt installation persistence, audit persistence, or both independently).
+- `ModelBuilder` extension `AddServiceMantleManagementAudit()` for model registration.
+- `EfCoreManagementAuditWriter<TDbContext>` implementing `IManagementAuditWriter`. It only stages the entity on the caller's `DbSet` — it never calls `SaveChangesAsync` and never commits a transaction. The write participates in whatever unit of work or explicit transaction the caller already owns, and future Setup/configuration flows can call it before their own `SaveChangesAsync` to persist an audit record atomically with their own changes.
+- `EfCoreManagementAuditQueryService<TDbContext>` implementing `IManagementAuditQueryService`, providing stable paginated queries filtered by action, target, operator, and time range, ordered by occurrence time with the record identifier as a tiebreaker.
+
+```csharp
+public sealed class MyDbContext : DbContext, IServiceMantleDbContext, IServiceMantleAuditDbContext
+{
+    public DbSet<ServiceInstallationEntity> ServiceInstallations { get; set; } = null!;
+    public DbSet<ManagementAuditLogEntity> ServiceAuditLogs { get; set; } = null!;
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.AddServiceMantleInstallation();
+        modelBuilder.AddServiceMantleManagementAudit();
+    }
+}
+
+var writer = new EfCoreManagementAuditWriter<MyDbContext>(dbContext);
+var auditEvent = ManagementAuditEvent.Create(
+    ManagementAuditOperator.Create(WellKnownManagementAuditOperatorSources.InteractiveAdmin, operatorId: "admin-1"),
+    WellKnownManagementAuditActions.ConfigurationChanged,
+    ManagementAuditTarget.Create(WellKnownManagementAuditTargetTypes.Configuration, "smtp"),
+    outcome: ManagementAuditOutcome.Success);
+
+await writer.RecordAsync(auditEvent);
+// ... stage other business changes on the same dbContext ...
+await dbContext.SaveChangesAsync(); // caller owns save/commit
+```
+
+Authentication, admin cookies, log storage/shipping, an HTTP API surface, Setup, and shared configuration are out of scope for this layer; `service_audit_logs` rows are owned by the consuming service database, the same as `service_installations`.
 
 ## Provider SPI and validation dispatch
 
