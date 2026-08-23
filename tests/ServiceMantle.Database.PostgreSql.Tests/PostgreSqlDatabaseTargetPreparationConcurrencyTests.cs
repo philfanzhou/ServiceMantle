@@ -144,6 +144,39 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
     }
 
     [Fact]
+    public async Task Observe_InFlightNpgsqlCancellation_IsPropagatedSafely()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        const string targetPassword = "observe-in-flight-secret";
+        using var source = new CancellationTokenSource();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var acceptTask = listener.AcceptTcpClientAsync(TestContext.Current.CancellationToken).AsTask();
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.PostgreSql,
+            "16",
+            $"Host=127.0.0.1;Port={port};Database=app;Username=observe-app;" +
+            $"Password={targetPassword};Timeout=60;Command Timeout=60");
+
+        var observationTask = new PostgreSqlDatabaseTargetPreparationProvider()
+            .ObserveAsync(target, source.Token)
+            .AsTask();
+        using var accepted = await acceptTask.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+        source.Cancel();
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() => observationTask);
+
+        Assert.Null(exception.InnerException);
+        Assert.DoesNotContain(targetPassword, exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("observe-app", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("127.0.0.1", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Prepare_CreatesDatabase_WhenMissing()
     {
         Assert.SkipUnless(CanRun, SkipReason);
@@ -162,6 +195,67 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         Assert.True(result.Succeeded);
         Assert.Equal(DatabaseTargetPreparationOutcome.Created, result.Outcome);
         Assert.True(await DatabaseExistsAsync(databaseName));
+    }
+
+    [Fact]
+    public async Task Prepare_CreatesDatabaseOwnedByTargetApplicationRole()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var roleName = $"app_owner_{UniqueSuffix()}";
+        const string rolePassword = "app-owner-password";
+        var databaseName = $"owned_{UniqueSuffix()}";
+        await CreateNonCreateDbRoleAsync(roleName, rolePassword);
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.PostgreSql,
+            "16",
+            BuildConnectionString(databaseName, roleName, rolePassword));
+        var request = new DatabaseTargetPreparationRequest(target, AdministrativeConnectionString());
+
+        var result = await new PostgreSqlDatabaseTargetPreparationProvider().PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(15),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(DatabaseTargetPreparationOutcome.Created, result.Outcome);
+        Assert.Equal(roleName, await GetDatabaseOwnerAsync(databaseName));
+
+        await using var applicationConnection = new NpgsqlConnection(
+            BuildConnectionString(databaseName, roleName, rolePassword));
+        await applicationConnection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = applicationConnection.CreateCommand();
+        command.CommandText = "CREATE TABLE owner_can_migrate (id INTEGER PRIMARY KEY)";
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Prepare_DoesNotRetainDefaultPooledAdministrativeConnection()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var applicationName = $"target-preparation-{UniqueSuffix()}";
+        var administrativeBuilder = new NpgsqlConnectionStringBuilder
+        {
+            Host = serverConnectionInfo!.Host,
+            Port = serverConnectionInfo.Port,
+            Database = "postgres",
+            Username = serverConnectionInfo.Username,
+            Password = serverConnectionInfo.Password,
+            ApplicationName = applicationName
+        };
+        Assert.True(administrativeBuilder.Pooling);
+        var request = new DatabaseTargetPreparationRequest(
+            CreateTargetConfiguration($"no_pool_{UniqueSuffix()}"),
+            administrativeBuilder.ConnectionString);
+
+        var result = await new PostgreSqlDatabaseTargetPreparationProvider().PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(15),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(0, await CountSessionsByApplicationNameAsync(applicationName));
     }
 
     [Fact]
@@ -184,6 +278,42 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
         Assert.False(await DatabaseExistsAsync(databaseName));
         Assert.False(await DatabaseExistsAsync(truncatedName));
+    }
+
+    [Fact]
+    public async Task Prepare_AcceptsDatabaseNameWithinLatin1ServerByteLimit()
+    {
+        Assert.SkipUnless(ShouldRunPostgreSqlTests(), SkipReason);
+
+        await using var latin1Container = new PostgreSqlBuilder(GetPostgresImage())
+            .WithPassword("latin1-password")
+            .WithUsername("latin1-admin")
+            .WithEnvironment("POSTGRES_INITDB_ARGS", "--encoding=LATIN1 --locale=C")
+            .Build();
+        await latin1Container.StartAsync(TestContext.Current.CancellationToken);
+        var latin1Connection = new NpgsqlConnectionStringBuilder(latin1Container.GetConnectionString())
+        {
+            Pooling = false
+        };
+        var databaseName = new string('é', 32);
+        var targetBuilder = new NpgsqlConnectionStringBuilder(latin1Connection.ConnectionString)
+        {
+            Database = databaseName
+        };
+        var request = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                targetBuilder.ConnectionString),
+            latin1Connection.ConnectionString);
+
+        var result = await new PostgreSqlDatabaseTargetPreparationProvider().PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(15),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(DatabaseTargetPreparationOutcome.Created, result.Outcome);
     }
 
     [Fact]
@@ -523,6 +653,32 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         parameter.ParameterName = "@name";
         parameter.Value = databaseName;
         command.Parameters.Add(parameter);
+
+        var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return result is long count ? (int)count : 0;
+    }
+
+    private async Task<string?> GetDatabaseOwnerAsync(string databaseName)
+    {
+        await using var connection = new NpgsqlConnection(AdministrativeConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = @name";
+        command.Parameters.AddWithValue("@name", databaseName);
+
+        return (await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))?.ToString();
+    }
+
+    private async Task<int> CountSessionsByApplicationNameAsync(string applicationName)
+    {
+        await using var connection = new NpgsqlConnection(AdministrativeConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM pg_stat_activity WHERE application_name = @name";
+        command.Parameters.AddWithValue("@name", applicationName);
 
         var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         return result is long count ? (int)count : 0;

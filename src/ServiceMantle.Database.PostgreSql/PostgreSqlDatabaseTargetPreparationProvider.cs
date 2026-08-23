@@ -13,7 +13,6 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
 {
     private const int MaximumConnectTimeoutSeconds = 8;
     private const int CommandTimeoutSeconds = 5;
-    private const int MaximumDatabaseNameUtf8Bytes = 63;
     private static readonly TimeSpan MaximumPreparationTimeout =
         TimeSpan.FromMilliseconds(uint.MaxValue - 1D);
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -85,6 +84,8 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
             var outcome = await observationProbe.ProbeAsync(builder, CommandTimeoutSeconds, cancellationToken)
                 .ConfigureAwait(false);
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             return outcome switch
             {
                 PostgreSqlProbeOutcome.Success => DatabaseTargetObservation.TargetConnectable(),
@@ -140,7 +141,8 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
         }
 
         if (!TryBuildConnectionString(request.Target.ConnectionString, out var targetBuilder) ||
-            !TryGetValidDatabaseName(targetBuilder, out var databaseName))
+            !TryGetValidDatabaseName(targetBuilder, out var databaseName) ||
+            !TryGetValidRoleName(targetBuilder, out var ownerName))
         {
             return DatabaseTargetPreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
@@ -152,12 +154,20 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
                 WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
         }
 
+        // Administrative credentials are scoped to this call. Npgsql pooling would otherwise
+        // retain the privileged physical connection after DisposeAsync returns.
+        administrativeBuilder.Pooling = false;
+
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
         try
         {
-            return await creationProbe.CreateIfMissingAsync(databaseName, administrativeBuilder, linkedCts.Token)
+            return await creationProbe.CreateIfMissingAsync(
+                    databaseName,
+                    ownerName,
+                    administrativeBuilder,
+                    linkedCts.Token)
                 .ConfigureAwait(false);
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
@@ -208,7 +218,29 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
 
         try
         {
-            return StrictUtf8.GetByteCount(databaseName) <= MaximumDatabaseNameUtf8Bytes;
+            _ = StrictUtf8.GetByteCount(databaseName);
+            return true;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetValidRoleName(
+        NpgsqlConnectionStringBuilder builder,
+        out string roleName)
+    {
+        roleName = builder.Username ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(roleName) || roleName.Any(char.IsControl))
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = StrictUtf8.GetByteCount(roleName);
+            return true;
         }
         catch (EncoderFallbackException)
         {
@@ -238,6 +270,7 @@ internal interface INpgsqlDatabaseCreationProbe
 {
     ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
+        string ownerName,
         NpgsqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken);
 }
@@ -255,6 +288,7 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
 
     public async ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
+        string ownerName,
         NpgsqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken)
     {
@@ -276,6 +310,12 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
                 return DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.AlreadyExists);
             }
 
+            if (!await IsRoleValidForServerAsync(connection, ownerName, cancellationToken).ConfigureAwait(false))
+            {
+                return DatabaseTargetPreparationResult.Failure(
+                    WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+            }
+
             if (afterMissingTargetObserved is not null)
             {
                 await afterMissingTargetObserved(cancellationToken).ConfigureAwait(false);
@@ -284,7 +324,7 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
             await using (var createCommand = connection.CreateCommand())
             {
                 createCommand.CommandText =
-                    $"CREATE DATABASE \"{databaseName.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+                    $"CREATE DATABASE {QuoteIdentifier(databaseName)} OWNER {QuoteIdentifier(ownerName)}";
 
                 try
                 {
@@ -373,6 +413,32 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
             return false;
         }
     }
+
+    private static async ValueTask<bool> IsRoleValidForServerAsync(
+        NpgsqlConnection connection,
+        string roleName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT octet_length(convert_to(@name, current_setting('server_encoding'))) <= @maximumBytes " +
+                "AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @name)";
+            command.Parameters.AddWithValue("@name", roleName);
+            command.Parameters.AddWithValue("@maximumBytes", MaximumDatabaseNameBytes);
+
+            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+        }
+        catch (PostgresException exception) when (exception.SqlState.StartsWith("22", StringComparison.Ordinal))
+        {
+            // The target owner cannot be represented by the server encoding.
+            return false;
+        }
+    }
+
+    private static string QuoteIdentifier(string identifier) =>
+        $"\"{identifier.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
 
     private static bool IsConcurrentCreationRace(PostgresException exception) =>
         string.Equals(exception.SqlState, PostgresErrorCodes.DuplicateDatabase, StringComparison.Ordinal) ||

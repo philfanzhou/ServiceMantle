@@ -140,6 +140,14 @@ if (observation.IsTargetConnectable)
     return; // Already ready; nothing to prepare.
 }
 
+if (observation.TargetExists is not false)
+{
+    // Authentication failed, existence is unknown, or an existing target is not connectable.
+    // Preserve the observation failure instead of turning it into a false AlreadyExists success.
+    logger.LogError("Target is not connectable: {ErrorCode}", observation.ErrorCode);
+    return;
+}
+
 // AdministrativeConnectionString is used only for the duration of this call. It is never
 // persisted, logged, included in diagnostics, or returned in any result.
 var request = new DatabaseTargetPreparationRequest(bootstrapDatabaseConfiguration, administrativeConnectionString);
@@ -148,6 +156,13 @@ var result = await provider.PrepareAsync(request, timeout: TimeSpan.FromSeconds(
 if (!result.Succeeded)
 {
     logger.LogError("Target preparation failed: {ErrorCode}", result.ErrorCode);
+    return;
+}
+
+var preparedObservation = await provider.ObserveAsync(bootstrapDatabaseConfiguration, cancellationToken);
+if (!preparedObservation.IsTargetConnectable)
+{
+    logger.LogError("Prepared target is not connectable: {ErrorCode}", preparedObservation.ErrorCode);
 }
 ```
 
@@ -155,7 +170,7 @@ if (!result.Succeeded)
 
 ### PostgreSQL target preparation
 
-`ServiceMantle.Database.PostgreSql.PostgreSqlDatabaseTargetPreparationProvider` observes a PostgreSQL target with a single connection attempt. A structured "database does not exist" response (SQLSTATE `3D000`) proves the server is reachable and the target is missing. Authentication errors can occur before PostgreSQL checks the database name, so those observations report a reachable server with `TargetExists == null`; target-level `CONNECT` denial (`42501`) reports a known existing but unreachable target. `PrepareAsync` uses the caller-supplied administrative connection string to check `pg_database` and, only when the target is absent, issue `CREATE DATABASE`. Database names must be valid Unicode without control characters and no more than 63 UTF-8 bytes, preventing PostgreSQL's silent identifier truncation. A genuinely concurrent creation race — observed as either the `duplicate_database` error (`42P04`) or a unique-key violation on the `pg_database` name index (`23505`), depending on timing — is verified against `pg_database` and treated as `AlreadyExists`, not a failure.
+`ServiceMantle.Database.PostgreSql.PostgreSqlDatabaseTargetPreparationProvider` observes a PostgreSQL target with a single connection attempt. A structured "database does not exist" response (SQLSTATE `3D000`) proves the server is reachable and the target is missing. Authentication errors can occur before PostgreSQL checks the database name, so those observations report a reachable server with `TargetExists == null`; target-level `CONNECT` denial (`42501`) reports a known existing but unreachable target. `PrepareAsync` uses the caller-supplied administrative connection string with pooling forcibly disabled to check `pg_database` and, only when the target is absent, issue `CREATE DATABASE ... OWNER ...`; the owner is the target connection string's PostgreSQL username and must already exist as a role. Database and owner names must be valid Unicode without control characters and no more than 63 bytes in the connected server's actual encoding, preventing PostgreSQL's silent identifier truncation without rejecting legal names on non-UTF-8 servers. A genuinely concurrent creation race — observed as either the `duplicate_database` error (`42P04`) or a unique-key violation on the `pg_database` name index (`23505`), depending on timing — is verified against `pg_database` and treated as `AlreadyExists`, not a failure.
 
 ### Error codes
 

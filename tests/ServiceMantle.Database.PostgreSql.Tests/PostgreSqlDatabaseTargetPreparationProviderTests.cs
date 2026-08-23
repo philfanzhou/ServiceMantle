@@ -142,6 +142,24 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     }
 
     [Fact]
+    public async Task ObserveAsync_propagates_cancellation_when_probe_returns_a_failure_outcome()
+    {
+        using var source = new CancellationTokenSource();
+        var provider = CreateProvider(new FakeObservationProbe(
+            PostgreSqlProbeOutcome.ConnectionFailed,
+            _ =>
+            {
+                source.Cancel();
+                return PostgreSqlProbeOutcome.ConnectionFailed;
+            }));
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            provider.ObserveAsync(CreateTarget(), source.Token).AsTask());
+
+        Assert.Null(exception.InnerException);
+    }
+
+    [Fact]
     public async Task ObserveAsync_does_not_leak_secret_from_exception()
     {
         const string secret = "Password=observe-leak-test";
@@ -214,10 +232,8 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     }
 
     [Theory]
-    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
-    [InlineData("数据库数据库数据库数据库数据库数据库数据库数据库数据库数据库数据库")]
     [InlineData("app\nname")]
-    public async Task PrepareAsync_rejects_database_name_postgresql_cannot_represent_safely(string databaseName)
+    public async Task PrepareAsync_rejects_malformed_database_name_before_contacting_server(string databaseName)
     {
         var targetConnectionString = new NpgsqlConnectionStringBuilder(ValidTargetConnectionString)
         {
@@ -230,7 +246,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
                 targetConnectionString),
             ValidAdministrativeConnectionString);
         var probe = new FakeCreationProbe(
-            (_, _, _) => ValueTask.FromResult(
+            (_, _, _, _) => ValueTask.FromResult(
                 DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)));
 
         var result = await CreateProvider(creationProbe: probe).PrepareAsync(
@@ -241,6 +257,34 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
         Assert.False(result.Succeeded);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
         Assert.Null(probe.LastDatabaseName);
+    }
+
+    [Theory]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("éééééééééééééééééééééééééééééééé")]
+    public async Task PrepareAsync_defers_database_name_byte_limit_to_server_encoding(string databaseName)
+    {
+        var targetConnectionString = new NpgsqlConnectionStringBuilder(ValidTargetConnectionString)
+        {
+            Database = databaseName
+        }.ConnectionString;
+        var request = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                targetConnectionString),
+            ValidAdministrativeConnectionString);
+        var probe = new FakeCreationProbe(
+            (_, _, _, _) => ValueTask.FromResult(
+                DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)));
+
+        var result = await CreateProvider(creationProbe: probe).PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(databaseName, probe.LastDatabaseName);
     }
 
     [Fact]
@@ -258,7 +302,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
                 targetConnectionString),
             ValidAdministrativeConnectionString);
         var probe = new FakeCreationProbe(
-            (_, _, _) => ValueTask.FromResult(
+            (_, _, _, _) => ValueTask.FromResult(
                 DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)));
 
         var result = await CreateProvider(creationProbe: probe).PrepareAsync(
@@ -286,7 +330,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     public async Task PrepareAsync_returns_created_when_probe_creates_database()
     {
         var probe = new FakeCreationProbe(
-            (name, _, _) => ValueTask.FromResult(
+            (name, _, _, _) => ValueTask.FromResult(
                 DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)));
         var provider = CreateProvider(creationProbe: probe);
 
@@ -298,13 +342,30 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
         Assert.True(result.Succeeded);
         Assert.Equal(DatabaseTargetPreparationOutcome.Created, result.Outcome);
         Assert.Equal("app", probe.LastDatabaseName);
+        Assert.Equal("app", probe.LastOwnerName);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_disables_administrative_connection_pooling()
+    {
+        var probe = new FakeCreationProbe(
+            (_, _, _, _) => ValueTask.FromResult(
+                DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)));
+
+        var result = await CreateProvider(creationProbe: probe).PrepareAsync(
+            CreateRequest(),
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Succeeded);
+        Assert.False(probe.LastAdministrativeConnectionString!.Pooling);
     }
 
     [Fact]
     public async Task PrepareAsync_returns_already_exists_without_treating_it_as_failure()
     {
         var probe = new FakeCreationProbe(
-            (_, _, _) => ValueTask.FromResult(
+            (_, _, _, _) => ValueTask.FromResult(
                 DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.AlreadyExists)));
         var provider = CreateProvider(creationProbe: probe);
 
@@ -324,7 +385,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     public async Task PrepareAsync_forwards_failure_error_codes_from_probe(string errorCode)
     {
         var probe = new FakeCreationProbe(
-            (_, _, _) => ValueTask.FromResult(DatabaseTargetPreparationResult.Failure(errorCode)));
+            (_, _, _, _) => ValueTask.FromResult(DatabaseTargetPreparationResult.Failure(errorCode)));
         var provider = CreateProvider(creationProbe: probe);
 
         var result = await provider.PrepareAsync(
@@ -339,7 +400,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     [Fact]
     public async Task PrepareAsync_maps_timeout_expiry_to_timeout_error_code()
     {
-        var probe = new FakeCreationProbe(async (_, _, token) =>
+        var probe = new FakeCreationProbe(async (_, _, _, token) =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created);
@@ -359,7 +420,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     public async Task PrepareAsync_propagates_caller_cancellation_distinctly_from_timeout()
     {
         using var source = new CancellationTokenSource();
-        var probe = new FakeCreationProbe(async (_, _, token) =>
+        var probe = new FakeCreationProbe(async (_, _, _, token) =>
         {
             source.Cancel();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
@@ -378,7 +439,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     {
         const string secret = "admin-cancellation-secret";
         using var source = new CancellationTokenSource();
-        var probe = new FakeCreationProbe((_, _, _) =>
+        var probe = new FakeCreationProbe((_, _, _, _) =>
         {
             source.Cancel();
             throw new NpgsqlException($"Host=internal;Username=admin;Password={secret}");
@@ -400,7 +461,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     {
         const string secret = "Password=admin-leak-test";
         var probe = new FakeCreationProbe(
-            (_, _, _) => throw new InvalidOperationException(secret));
+            (_, _, _, _) => throw new InvalidOperationException(secret));
         var provider = CreateProvider(creationProbe: probe);
         var target = CreateTarget();
         var request = new DatabaseTargetPreparationRequest(
@@ -422,7 +483,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
         new(
             observationProbe ?? new FakeObservationProbe(PostgreSqlProbeOutcome.Success),
             creationProbe ?? new FakeCreationProbe(
-                (_, _, _) => ValueTask.FromResult(
+                (_, _, _, _) => ValueTask.FromResult(
                     DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created))));
 
     private static BootstrapDatabaseConfiguration CreateTarget() =>
@@ -481,23 +542,30 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
 
     private sealed class FakeCreationProbe : INpgsqlDatabaseCreationProbe
     {
-        private readonly Func<string, NpgsqlConnectionStringBuilder, CancellationToken, ValueTask<DatabaseTargetPreparationResult>> handler;
+        private readonly Func<string, string, NpgsqlConnectionStringBuilder, CancellationToken, ValueTask<DatabaseTargetPreparationResult>> handler;
 
         public FakeCreationProbe(
-            Func<string, NpgsqlConnectionStringBuilder, CancellationToken, ValueTask<DatabaseTargetPreparationResult>> handler)
+            Func<string, string, NpgsqlConnectionStringBuilder, CancellationToken, ValueTask<DatabaseTargetPreparationResult>> handler)
         {
             this.handler = handler;
         }
 
         public string? LastDatabaseName { get; private set; }
 
+        public string? LastOwnerName { get; private set; }
+
+        public NpgsqlConnectionStringBuilder? LastAdministrativeConnectionString { get; private set; }
+
         public ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
             string databaseName,
+            string ownerName,
             NpgsqlConnectionStringBuilder administrativeConnectionString,
             CancellationToken cancellationToken)
         {
             LastDatabaseName = databaseName;
-            return handler(databaseName, administrativeConnectionString, cancellationToken);
+            LastOwnerName = ownerName;
+            LastAdministrativeConnectionString = administrativeConnectionString;
+            return handler(databaseName, ownerName, administrativeConnectionString, cancellationToken);
         }
     }
 }
