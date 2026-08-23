@@ -21,7 +21,7 @@ internal sealed class AuditTestDbContext : DbContext, IServiceMantleAuditDbConte
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.AddServiceMantleManagementAudit();
+        modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.Sqlite);
 
         modelBuilder.Entity<BusinessWidgetEntity>(entity =>
         {

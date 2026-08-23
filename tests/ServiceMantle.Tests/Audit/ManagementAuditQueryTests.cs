@@ -55,6 +55,17 @@ public sealed class ManagementAuditQueryTests
     }
 
     [Fact]
+    public void Create_accepts_page_exceeding_first_request_maximum_when_cursor_is_present()
+    {
+        var query = ManagementAuditQuery.Create(
+            page: ManagementAuditQuery.MaxPage + 1,
+            cursor: "opaque-continuation");
+
+        Assert.Equal(ManagementAuditQuery.MaxPage + 1, query.Page);
+        Assert.Equal("opaque-continuation", query.Cursor);
+    }
+
+    [Fact]
     public void Create_rejects_cursor_exceeding_maximum_length()
     {
         var exception = Assert.Throws<ManagementAuditException>(() =>

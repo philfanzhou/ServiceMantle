@@ -133,13 +133,6 @@ public sealed record ManagementAuditQuery
                 "The audit query page number must be at least 1.");
         }
 
-        if (page > MaxPage)
-        {
-            throw new ManagementAuditException(
-                "audit.query_page_invalid",
-                $"The audit query page number must not exceed {MaxPage}.");
-        }
-
         if (pageSize is < 1 or > MaxPageSize)
         {
             throw new ManagementAuditException(
@@ -186,6 +179,13 @@ public sealed record ManagementAuditQuery
             MaxCursorLength,
             "audit.query_cursor_invalid",
             "continuation cursor");
+
+        if (page > MaxPage && cleanedCursor is null)
+        {
+            throw new ManagementAuditException(
+                "audit.query_page_invalid",
+                $"The first audit query page number must not exceed {MaxPage}.");
+        }
 
         return new ManagementAuditQuery(
             action,

@@ -56,6 +56,21 @@ public sealed class ManagementAuditEventTests
     }
 
     [Fact]
+    public void Create_normalizes_supplied_occurrence_time_to_utc()
+    {
+        var localTime = new DateTimeOffset(2026, 8, 1, 20, 0, 0, TimeSpan.FromHours(8));
+
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            occurredAtUtc: localTime);
+
+        Assert.Equal(TimeSpan.Zero, auditEvent.OccurredAtUtc.Offset);
+        Assert.Equal(localTime.UtcDateTime, auditEvent.OccurredAtUtc.UtcDateTime);
+    }
+
+    [Fact]
     public void Create_defaults_outcome_to_unknown()
     {
         var auditEvent = ManagementAuditEvent.Create(
@@ -181,6 +196,21 @@ public sealed class ManagementAuditEventTests
     }
 
     [Fact]
+    public void Create_rejects_non_ascii_metadata_key_that_could_hide_a_sensitive_name()
+    {
+        var metadata = new Dictionary<string, string>
+        {
+            ["p\u0430ssword"] = "clear-text"
+        };
+
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditEvent.Create(
+                Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target, metadata: metadata));
+
+        Assert.Equal("audit.metadata_key_rejected", exception.ErrorCode);
+    }
+
+    [Fact]
     public void Create_redacts_secret_shaped_substrings_in_metadata_values()
     {
         var metadata = new Dictionary<string, string>
@@ -215,6 +245,23 @@ public sealed class ManagementAuditEventTests
 
         Assert.DoesNotContain(secret, auditEvent.SecurityDescription, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(secret.Replace(" ", string.Empty), auditEvent.SecurityDescription, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("redis://:redis-password@cache.internal:6379/0", "redis-password")]
+    [InlineData("mongodb://admin:mongo-password@db.internal/audit", "mongo-password")]
+    [InlineData("amqp://worker:rabbit-password@queue.internal/vhost", "rabbit-password")]
+    [InlineData("custom+tls://client:encoded%2Dsecret@service.internal/path", "encoded%2Dsecret")]
+    public void Create_redacts_credentials_in_any_absolute_uri(string uri, string secret)
+    {
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            securityDescription: $"Updated endpoint {uri}");
+
+        Assert.DoesNotContain(secret, auditEvent.SecurityDescription, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", auditEvent.SecurityDescription, StringComparison.Ordinal);
     }
 
     [Fact]

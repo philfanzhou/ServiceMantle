@@ -142,6 +142,40 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     }
 
     [Fact]
+    public async Task QueryAsync_returns_a_usable_continuation_after_page_ten_thousand()
+    {
+        await using var context = await SeedAsync(
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(1)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(2)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(3)));
+        var service = new EfCoreManagementAuditQueryService<AuditTestDbContext>(context);
+        var precedingQuery = ManagementAuditQuery.Create(
+            page: ManagementAuditQuery.MaxPage - 1,
+            pageSize: 1,
+            cursor: "preceding-cursor");
+        var pageTenThousandCursor = ManagementAuditContinuationCursor.Encode(
+            ManagementAuditContinuationCursor.Create(precedingQuery, Day(4), Guid.NewGuid()));
+
+        var pageTenThousand = await service.QueryAsync(
+            ManagementAuditQuery.Create(
+                page: ManagementAuditQuery.MaxPage,
+                pageSize: 1,
+                cursor: pageTenThousandCursor),
+            TestContext.Current.CancellationToken);
+        var nextPage = await service.QueryAsync(
+            ManagementAuditQuery.Create(
+                page: ManagementAuditQuery.MaxPage + 1,
+                pageSize: 1,
+                cursor: pageTenThousand.ContinuationCursor),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(pageTenThousand.HasNextPage);
+        Assert.NotNull(pageTenThousand.ContinuationCursor);
+        Assert.Single(nextPage.Items);
+        Assert.Equal(ManagementAuditQuery.MaxPage + 1, nextPage.Page);
+    }
+
+    [Fact]
     public async Task QueryAsync_uses_id_as_stable_tiebreaker_for_equal_timestamps()
     {
         var sameInstant = Day(1);

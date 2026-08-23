@@ -154,6 +154,33 @@ public sealed class EfCoreManagementAuditWriterTests
     }
 
     [Fact]
+    public async Task RecordAsync_stages_maximum_unicode_metadata_without_partial_failure()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var context = CreateContext(connection);
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+
+        var metadata = Enumerable.Range(0, ManagementAuditEvent.MaxMetadataEntries)
+            .ToDictionary(
+                index => $"field_{index}",
+                _ => new string('\u6570', ManagementAuditEvent.MaxMetadataValueLength),
+                StringComparer.Ordinal);
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            metadata: metadata);
+
+        var record = await new EfCoreManagementAuditWriter<AuditTestDbContext>(context)
+            .RecordAsync(auditEvent, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ManagementAuditEvent.MaxMetadataEntries, record.Metadata.Count);
+        Assert.Single(context.ChangeTracker.Entries<ManagementAuditLogEntity>());
+        Assert.Equal(EntityState.Added, context.ChangeTracker.Entries<ManagementAuditLogEntity>().Single().State);
+    }
+
+    [Fact]
     public async Task RecordAsync_respects_cancellation_token()
     {
         using var connection = new SqliteConnection("Data Source=:memory:");
@@ -194,7 +221,7 @@ public sealed class EfCoreManagementAuditWriterTests
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.AddServiceMantleManagementAudit();
+            modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.Sqlite);
         }
     }
 }

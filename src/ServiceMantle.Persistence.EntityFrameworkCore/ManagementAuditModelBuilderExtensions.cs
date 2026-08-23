@@ -11,8 +11,11 @@ public static class ManagementAuditModelBuilderExtensions
     /// Adds the ServiceMantle management audit log entity to the model.
     /// </summary>
     /// <param name="modelBuilder">The model builder.</param>
+    /// <param name="databaseDialect">The SQL dialect used by the consuming DbContext.</param>
     /// <returns>The same model builder for fluent use.</returns>
-    public static ModelBuilder AddServiceMantleManagementAudit(this ModelBuilder modelBuilder)
+    public static ModelBuilder AddServiceMantleManagementAudit(
+        this ModelBuilder modelBuilder,
+        ManagementAuditDatabaseDialect databaseDialect)
     {
         if (modelBuilder is null)
         {
@@ -25,7 +28,7 @@ public static class ManagementAuditModelBuilderExtensions
                 "service_audit_logs",
                 table => table.HasCheckConstraint(
                     "ck_service_audit_logs_metadata_json_length",
-                    $"metadata_json IS NULL OR length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonLength}"));
+                    GetMetadataJsonLengthConstraint(databaseDialect)));
 
             entity.HasKey(item => item.Id);
 
@@ -108,4 +111,17 @@ public static class ManagementAuditModelBuilderExtensions
 
         return modelBuilder;
     }
+
+    private static string GetMetadataJsonLengthConstraint(ManagementAuditDatabaseDialect databaseDialect) =>
+        databaseDialect switch
+        {
+            ManagementAuditDatabaseDialect.Sqlite =>
+                $"metadata_json IS NULL OR length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonLength}",
+            ManagementAuditDatabaseDialect.PostgreSql =>
+                $"metadata_json IS NULL OR char_length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonLength}",
+            ManagementAuditDatabaseDialect.SqlServer =>
+                $"metadata_json IS NULL OR DATALENGTH(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonLength * 2}",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(databaseDialect), databaseDialect, "The management audit database dialect is not supported.")
+        };
 }

@@ -178,7 +178,8 @@ public sealed record ManagementAuditEvent
 
         var sanitizedMetadata = SanitizeMetadata(metadata);
 
-        var resolvedOccurredAtUtc = occurredAtUtc ?? (timeProvider ?? TimeProvider.System).GetUtcNow();
+        var resolvedOccurredAtUtc = (occurredAtUtc ?? (timeProvider ?? TimeProvider.System).GetUtcNow())
+            .ToUniversalTime();
 
         return new ManagementAuditEvent(
             operatorInfo,

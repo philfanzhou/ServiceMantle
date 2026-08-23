@@ -35,8 +35,7 @@ public sealed record ManagementAuditQueryResult
     /// <summary>
     /// Gets a value indicating whether a subsequent page contains further records.
     /// </summary>
-    public bool HasNextPage => ContinuationCursor is not null
-        || (ContinuationCursor is null && (long)Page * PageSize < TotalCount);
+    public bool HasNextPage => ContinuationCursor is not null;
 
     public ManagementAuditQueryResult(
         IReadOnlyList<ManagementAuditRecord> items,

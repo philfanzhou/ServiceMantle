@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using ServiceMantle.Audit;
 
@@ -5,7 +6,7 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 
 internal static class ManagementAuditEntityMapper
 {
-    internal const int MaxMetadataJsonLength = 64 * 1024;
+    internal const int MaxMetadataJsonLength = 256 * 1024;
 
     private static readonly JsonDocumentOptions MetadataDocumentOptions = new()
     {
@@ -16,6 +17,7 @@ internal static class ManagementAuditEntityMapper
 
     private static readonly JsonSerializerOptions MetadataJsonOptions = new()
     {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         WriteIndented = false
     };
 
@@ -23,6 +25,15 @@ internal static class ManagementAuditEntityMapper
     {
         ArgumentNullException.ThrowIfNull(auditEvent);
         var safeEvent = Revalidate(auditEvent);
+        var metadataJson = safeEvent.Metadata.Count == 0
+            ? null
+            : JsonSerializer.Serialize(safeEvent.Metadata, MetadataJsonOptions);
+        if (metadataJson?.Length > MaxMetadataJsonLength)
+        {
+            throw new ManagementAuditException(
+                "audit.metadata_invalid",
+                "The serialized audit metadata exceeds the persistence limit.");
+        }
 
         return new ManagementAuditLogEntity
         {
@@ -38,9 +49,7 @@ internal static class ManagementAuditEntityMapper
             ClientIp = safeEvent.ClientIp,
             CorrelationId = safeEvent.CorrelationId,
             SecurityDescription = safeEvent.SecurityDescription,
-            MetadataJson = safeEvent.Metadata.Count == 0
-                ? null
-                : JsonSerializer.Serialize(safeEvent.Metadata, MetadataJsonOptions)
+            MetadataJson = metadataJson
         };
     }
 

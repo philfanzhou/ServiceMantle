@@ -103,7 +103,7 @@ public sealed class PostgreSqlManagementAuditPersistenceTests : IAsyncLifetime
             TargetId = "smtp",
             Outcome = ManagementAuditOutcome.Success,
             OccurredAtUtc = Day(1).UtcDateTime,
-            MetadataJson = new string('x', (64 * 1024) + 1)
+            MetadataJson = new string('x', (256 * 1024) + 1)
         });
 
         await Assert.ThrowsAsync<DbUpdateException>(() =>
@@ -154,6 +154,6 @@ public sealed class PostgreSqlManagementAuditPersistenceTests : IAsyncLifetime
         public DbSet<ManagementAuditLogEntity> ServiceAuditLogs { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder) =>
-            modelBuilder.AddServiceMantleManagementAudit();
+            modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.PostgreSql);
     }
 }

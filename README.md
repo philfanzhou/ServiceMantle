@@ -92,13 +92,14 @@ Shared migration ownership is intentionally moved to the consuming service. In d
 
 `ServiceMantle.Audit` (in the core `ServiceMantle` package) defines a product-agnostic management audit domain: `ManagementAuditEvent` (write contract input), `ManagementAuditRecord` (read model), `ManagementAuditQuery`/`ManagementAuditQueryResult` (query contract), and bounded value types `ManagementAuditAction`, `ManagementAuditTargetType`, `ManagementAuditTarget`, `ManagementAuditOperator`, `ManagementAuditOperatorSource`, and the `ManagementAuditOutcome` security result enum (`Unknown`/`Success`/`Failure`/`Denied`). `WellKnownManagementAuditActions`, `WellKnownManagementAuditTargetTypes`, and `WellKnownManagementAuditOperatorSources` provide reusable conventions for installation, administrator login, and configuration-change events; consuming services define additional actions and target types with the same `Parse` pattern (for example `signacore.account_created`). ServiceMantle does not define SignaCore-specific identity, application, credential, signing-key, or OAuth semantics.
 
-`ManagementAuditEvent.Create(...)` enforces the sensitive-content policy before an event can be constructed: metadata keys that name a secret (`password`, `token`, `connectionstring`, `apikey`, `setupcode`, `authorization`, and similar) are rejected outright, and secret-shaped substrings in descriptions, display names, or metadata values (connection-string fragments and URIs, bearer tokens, JWT-like strings, PEM private key blocks, and natural-language secret assignments) are redacted in place. Client IPs and correlation IDs use strict format allowlists; opaque operator and target identifiers that contain secret-shaped content are rejected because modifying them would destroy identity semantics. Connection strings, external root keys, database administrator credentials, setup codes, passwords, tokens, and other sensitive configuration values must never reach persisted audit content.
+`ManagementAuditEvent.Create(...)` enforces the sensitive-content policy before an event can be constructed: metadata keys must normalize to ASCII under NFKC so mixed-script confusables cannot hide a sensitive name; keys that name a secret (`password`, `token`, `connectionstring`, `apikey`, `setupcode`, `authorization`, and similar) are rejected outright. Secret-shaped substrings in descriptions, display names, or metadata values (connection-string fragments and credential-bearing URIs, bearer tokens, JWT-like strings, PEM private key blocks, and natural-language secret assignments) are redacted in place. Client IPs and correlation IDs use strict format allowlists; opaque operator and target identifiers that contain secret-shaped content are rejected because modifying them would destroy identity semantics. Connection strings, external root keys, database administrator credentials, setup codes, passwords, tokens, and other sensitive configuration values must never reach persisted audit content.
 
 `ServiceMantle.Persistence.EntityFrameworkCore` adds:
 
 - `ManagementAuditLogEntity` mapping for `service_audit_logs`.
 - `IServiceMantleAuditDbContext` contract that business DbContexts implement (separate from `IServiceMantleDbContext` so consumers can adopt installation persistence, audit persistence, or both independently).
-- `ModelBuilder` extension `AddServiceMantleManagementAudit()` for model registration.
+- `ModelBuilder` extension `AddServiceMantleManagementAudit(...)` for model registration. Pass the
+  consuming database's `ManagementAuditDatabaseDialect` so the metadata size constraint uses valid SQL.
 - `EfCoreManagementAuditWriter<TDbContext>` implementing `IManagementAuditWriter`. It only stages the entity on the caller's `DbSet` — it never calls `SaveChangesAsync` and never commits a transaction. The write participates in whatever unit of work or explicit transaction the caller already owns, and future Setup/configuration flows can call it before their own `SaveChangesAsync` to persist an audit record atomically with their own changes.
 - `EfCoreManagementAuditQueryService<TDbContext>` implementing `IManagementAuditQueryService`, providing bounded keyset-paginated queries filtered by action, target, operator, and time range. The first result returns an opaque `ContinuationCursor`; pass it unchanged to the immediately following `ManagementAuditQuery` rather than using an unbounded offset. The cursor is bound to the normalized filters, sort order, page size, and next page number, so it cannot be silently reused with a different query.
 
@@ -113,7 +114,7 @@ public sealed class MyDbContext : DbContext, IServiceMantleDbContext, IServiceMa
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.AddServiceMantleInstallation();
-        modelBuilder.AddServiceMantleManagementAudit();
+        modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.PostgreSql);
     }
 }
 

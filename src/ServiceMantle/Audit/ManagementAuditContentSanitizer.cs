@@ -77,6 +77,12 @@ internal static partial class ManagementAuditContentSanitizer
             {
                 builder.Append(character);
             }
+            else if (character > 0x7f)
+            {
+                throw new ManagementAuditException(
+                    "audit.metadata_key_rejected",
+                    "The audit metadata key contains characters that cannot be checked safely.");
+            }
         }
 
         return builder.ToString();
@@ -93,7 +99,7 @@ internal static partial class ManagementAuditContentSanitizer
     private static partial Regex ConnectionStringPattern();
 
     [GeneratedRegex(
-        @"(?<![A-Za-z0-9])(?:postgres(?:ql)?|mysql|mariadb|sqlserver):\/\/[^\s,;]+",
+        @"(?<![A-Za-z0-9])(?:postgres(?:ql)?|mysql|mariadb|sqlserver):\/\/[^\s,;]+|(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9+.-]*):\/\/[^\s\/?#@]+@[^\s,;]+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DatabaseUriPattern();
 

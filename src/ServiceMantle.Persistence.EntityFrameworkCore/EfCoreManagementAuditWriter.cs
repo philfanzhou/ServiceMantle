@@ -38,8 +38,9 @@ public sealed class EfCoreManagementAuditWriter<TDbContext> : IManagementAuditWr
 
         var id = Guid.NewGuid();
         var entity = ManagementAuditEntityMapper.ConvertToEntity(id, auditEvent);
+        var record = ManagementAuditEntityMapper.ConvertToRecord(entity);
         dbContext.ServiceAuditLogs.Add(entity);
 
-        return ValueTask.FromResult(ManagementAuditEntityMapper.ConvertToRecord(entity));
+        return ValueTask.FromResult(record);
     }
 }

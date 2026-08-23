@@ -80,6 +80,20 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
         Assert.Equal("service_audit_logs", entityType!.GetTableName());
     }
 
+    [Fact]
+    public void ModelBuilder_generates_sql_server_compatible_metadata_length_constraint()
+    {
+        using var context = new SqlServerAuditDbContext(
+            new DbContextOptionsBuilder<SqlServerAuditDbContext>()
+                .UseSqlServer("Server=localhost;Database=servicemantle_model_test;Integrated Security=true;TrustServerCertificate=true")
+                .Options);
+
+        var createScript = context.Database.GenerateCreateScript();
+
+        Assert.Contains("DATALENGTH(metadata_json)", createScript, StringComparison.Ordinal);
+        Assert.DoesNotContain(" OR length(metadata_json)", createScript, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void AssertColumn(
         Microsoft.EntityFrameworkCore.Metadata.IEntityType entityType,
         string propertyName,
@@ -106,8 +120,21 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.AddServiceMantleManagementAudit();
-            modelBuilder.AddServiceMantleManagementAudit();
+            modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.Sqlite);
+            modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.Sqlite);
         }
+    }
+
+    private sealed class SqlServerAuditDbContext : DbContext, IServiceMantleAuditDbContext
+    {
+        public SqlServerAuditDbContext(DbContextOptions<SqlServerAuditDbContext> options)
+            : base(options)
+        {
+        }
+
+        public DbSet<ManagementAuditLogEntity> ServiceAuditLogs { get; set; } = null!;
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+            modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.SqlServer);
     }
 }
