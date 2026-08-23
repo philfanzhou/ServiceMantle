@@ -21,7 +21,11 @@ public static class ManagementAuditModelBuilderExtensions
 
         modelBuilder.Entity<ManagementAuditLogEntity>(entity =>
         {
-            entity.ToTable("service_audit_logs");
+            entity.ToTable(
+                "service_audit_logs",
+                table => table.HasCheckConstraint(
+                    "ck_service_audit_logs_metadata_json_length",
+                    $"metadata_json IS NULL OR length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonLength}"));
 
             entity.HasKey(item => item.Id);
 
@@ -83,7 +87,8 @@ public static class ManagementAuditModelBuilderExtensions
                 .HasMaxLength(4000);
 
             entity.Property(item => item.MetadataJson)
-                .HasColumnName("metadata_json");
+                .HasColumnName("metadata_json")
+                .HasMaxLength(ManagementAuditEntityMapper.MaxMetadataJsonLength);
 
             entity.HasIndex(item => new { item.OccurredAtUtc, item.Id })
                 .HasDatabaseName("ix_service_audit_logs_occurred_at_utc_id");

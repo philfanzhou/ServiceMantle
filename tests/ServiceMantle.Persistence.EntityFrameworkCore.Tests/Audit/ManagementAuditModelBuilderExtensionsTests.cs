@@ -1,5 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using ServiceMantle.Persistence.EntityFrameworkCore;
 using Xunit;
 
@@ -35,6 +37,15 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
         AssertColumn(
             entityType, nameof(ManagementAuditLogEntity.SecurityDescription), "security_description", isRequired: false);
         AssertColumn(entityType, nameof(ManagementAuditLogEntity.MetadataJson), "metadata_json", isRequired: false);
+        Assert.Equal(
+            ManagementAuditEntityMapper.MaxMetadataJsonLength,
+            entityType.FindProperty(nameof(ManagementAuditLogEntity.MetadataJson))!.GetMaxLength());
+        var designTimeEntityType = context.GetService<IDesignTimeModel>()
+            .Model
+            .FindEntityType(typeof(ManagementAuditLogEntity));
+        Assert.Contains(
+            designTimeEntityType!.GetCheckConstraints(),
+            constraint => constraint.Name == "ck_service_audit_logs_metadata_json_length");
     }
 
     [Fact]

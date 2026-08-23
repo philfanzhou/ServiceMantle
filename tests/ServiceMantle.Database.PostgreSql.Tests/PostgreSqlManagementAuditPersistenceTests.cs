@@ -90,6 +90,26 @@ public sealed class PostgreSqlManagementAuditPersistenceTests : IAsyncLifetime
         Assert.Equal(0, await context.ServiceAuditLogs.CountAsync(TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task PostgreSql_rejects_oversized_metadata_json_at_the_database_boundary()
+    {
+        await using var context = await CreateResetContextAsync();
+        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
+        {
+            Id = Guid.NewGuid(),
+            OperatorSource = WellKnownManagementAuditOperatorSources.System.Value,
+            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
+            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
+            TargetId = "smtp",
+            Outcome = ManagementAuditOutcome.Success,
+            OccurredAtUtc = Day(1).UtcDateTime,
+            MetadataJson = new string('x', (64 * 1024) + 1)
+        });
+
+        await Assert.ThrowsAsync<DbUpdateException>(() =>
+            context.SaveChangesAsync(TestContext.Current.CancellationToken));
+    }
+
     private async Task<PostgreSqlAuditDbContext> CreateResetContextAsync()
     {
         Assert.SkipUnless(

@@ -5,8 +5,10 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 
 /// <summary>
 /// EF Core-based <see cref="IManagementAuditQueryService"/> providing bounded keyset pagination over
-/// <c>service_audit_logs</c>. A continuation cursor carries the snapshot boundary and the last
-/// occurrence/id key, so inserts after the first page cannot shift later pages and duplicate records.
+/// <c>service_audit_logs</c>. A continuation cursor binds the normalized query and carries the last
+/// occurrence/id key, preventing cursor reuse with different filters or pagination parameters.
+/// Continuations use ordinary keyset semantics rather than claiming a database snapshot: concurrent
+/// backfilled rows may appear on a later page and counts may change between requests.
 /// </summary>
 public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementAuditQueryService
     where TDbContext : DbContext, IServiceMantleAuditDbContext
@@ -43,27 +45,31 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
             ? (ManagementAuditContinuationCursor?)null
             : ManagementAuditContinuationCursor.Decode(query.Cursor);
 
-        if (cursor.HasValue && cursor.Value.SortOrder != query.SortOrder)
+        if (cursor.HasValue && !cursor.Value.Matches(query))
         {
             throw new ManagementAuditException(
                 "audit.query_cursor_invalid",
-                "The audit query continuation cursor does not match the requested sort order.");
+                "The audit query continuation cursor does not match the requested query.");
         }
 
-        var snapshot = cursor ?? await FindSnapshotAsync(filtered, query.SortOrder, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (!snapshot.HasValue)
-        {
-            return new ManagementAuditQueryResult([], query.Page, query.PageSize, 0);
-        }
-
-        var snapshotFiltered = ApplySnapshot(filtered, snapshot.Value);
-        var totalCount = await snapshotFiltered.LongCountAsync(cancellationToken).ConfigureAwait(false);
+        var totalCount = await filtered.LongCountAsync(cancellationToken).ConfigureAwait(false);
         var pageSource = cursor.HasValue
-            ? ApplyCursor(snapshotFiltered, cursor.Value)
-            : snapshotFiltered;
+            ? ApplyCursor(filtered, cursor.Value, query.SortOrder)
+            : filtered;
         var ordered = Order(pageSource, query.SortOrder);
+        if (await ordered
+            .Take(query.PageSize + 1)
+            .AnyAsync(
+                item => item.MetadataJson != null
+                    && item.MetadataJson.Length > ManagementAuditEntityMapper.MaxMetadataJsonLength,
+                cancellationToken)
+            .ConfigureAwait(false))
+        {
+            throw new ManagementAuditException(
+                "audit.entity_invalid",
+                "The stored audit entity failed validation.");
+        }
+
         var entities = await ordered
             .Take(query.PageSize + 1)
             .ToListAsync(cancellationToken)
@@ -77,13 +83,10 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
 
         var items = entities.Select(ManagementAuditEntityMapper.ConvertToRecord).ToList();
         var continuationCursor = hasNext && entities.Count > 0
-            ? ManagementAuditContinuationCursor.Encode(
-                new ManagementAuditContinuationCursor(
-                    snapshot.Value.SnapshotOccurredAtUtc,
-                    snapshot.Value.SnapshotId,
-                    new DateTimeOffset(DateTime.SpecifyKind(entities[^1].OccurredAtUtc, DateTimeKind.Utc)),
-                    entities[^1].Id,
-                    query.SortOrder))
+            ? ManagementAuditContinuationCursor.Encode(ManagementAuditContinuationCursor.Create(
+                query,
+                new DateTimeOffset(DateTime.SpecifyKind(entities[^1].OccurredAtUtc, DateTimeKind.Utc)),
+                entities[^1].Id))
             : null;
 
         return new ManagementAuditQueryResult(
@@ -94,42 +97,12 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
             continuationCursor);
     }
 
-    private static async Task<ManagementAuditContinuationCursor?> FindSnapshotAsync(
-        IQueryable<ManagementAuditLogEntity> filtered,
-        ManagementAuditSortOrder sortOrder,
-        CancellationToken cancellationToken)
-    {
-        var latest = await filtered
-            .OrderByDescending(item => item.OccurredAtUtc)
-            .ThenByDescending(item => item.Id)
-            .Select(item => new { item.OccurredAtUtc, item.Id })
-            .FirstOrDefaultAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        return latest is null
-            ? null
-            : new ManagementAuditContinuationCursor(
-                new DateTimeOffset(DateTime.SpecifyKind(latest.OccurredAtUtc, DateTimeKind.Utc)),
-                latest.Id,
-                default,
-                Guid.Empty,
-                sortOrder);
-    }
-
-    private static IQueryable<ManagementAuditLogEntity> ApplySnapshot(
-        IQueryable<ManagementAuditLogEntity> source,
-        ManagementAuditContinuationCursor cursor)
-    {
-        return source.Where(item => item.OccurredAtUtc < cursor.SnapshotOccurredAtUtc.UtcDateTime
-            || (item.OccurredAtUtc == cursor.SnapshotOccurredAtUtc.UtcDateTime
-                && item.Id.CompareTo(cursor.SnapshotId) <= 0));
-    }
-
     private static IQueryable<ManagementAuditLogEntity> ApplyCursor(
         IQueryable<ManagementAuditLogEntity> source,
-        ManagementAuditContinuationCursor cursor)
+        ManagementAuditContinuationCursor cursor,
+        ManagementAuditSortOrder sortOrder)
     {
-        return cursor.SortOrder == ManagementAuditSortOrder.Oldest
+        return sortOrder == ManagementAuditSortOrder.Oldest
             ? source.Where(item => item.OccurredAtUtc > cursor.LastOccurredAtUtc.UtcDateTime
                 || (item.OccurredAtUtc == cursor.LastOccurredAtUtc.UtcDateTime
                     && item.Id.CompareTo(cursor.LastId) > 0))

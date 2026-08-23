@@ -61,6 +61,19 @@ public sealed record ManagementAuditOperator
             "audit.operator_display_name_invalid",
             "operator display name");
 
+        if (cleanedOperatorId is not null)
+        {
+            ManagementAuditContentSanitizer.EnsureNoSensitiveContent(
+                cleanedOperatorId,
+                "audit.operator_id_invalid",
+                "operator identifier");
+        }
+
+        if (cleanedDisplayName is not null)
+        {
+            cleanedDisplayName = ManagementAuditContentSanitizer.Redact(cleanedDisplayName);
+        }
+
         return new ManagementAuditOperator(cleanedOperatorId, cleanedDisplayName, source);
     }
 

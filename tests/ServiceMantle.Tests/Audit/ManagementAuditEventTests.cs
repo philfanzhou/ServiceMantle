@@ -202,6 +202,9 @@ public sealed class ManagementAuditEventTests
     [InlineData("connectionString: Host=db;Database=prod", "Host=db")]
     [InlineData("Password=\"abc def\"", "abc def")]
     [InlineData("Host=db;Database=prod;Username=admin", "Username=admin")]
+    [InlineData("postgresql://admin:uri-secret@db/prod", "uri-secret")]
+    [InlineData("setup code is natural-secret", "natural-secret")]
+    [InlineData("{\\\"password\\\":\\\"escaped-secret\\\"}", "escaped-secret")]
     public void Create_redacts_common_sensitive_formats_in_description(string rawDescription, string secret)
     {
         var auditEvent = ManagementAuditEvent.Create(
@@ -278,6 +281,22 @@ public sealed class ManagementAuditEventTests
     }
 
     [Fact]
+    public void Create_rejects_metadata_keys_that_collide_after_cleaning()
+    {
+        var metadata = new Dictionary<string, string>
+        {
+            ["reason"] = "first",
+            [" reason "] = "second"
+        };
+
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditEvent.Create(
+                Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target, metadata: metadata));
+
+        Assert.Equal("audit.metadata_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
     public void Create_rejects_metadata_value_exceeding_max_length()
     {
         var metadata = new Dictionary<string, string>
@@ -313,6 +332,19 @@ public sealed class ManagementAuditEventTests
         Assert.Equal("audit.client_ip_invalid", exception.ErrorCode);
     }
 
+    [Theory]
+    [InlineData("Bearer client-secret")]
+    [InlineData("203.0.113.7 token=client-secret")]
+    [InlineData("not-an-ip")]
+    public void Create_rejects_non_ip_client_values(string clientIp)
+    {
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditEvent.Create(
+                Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target, clientIp: clientIp));
+
+        Assert.Equal("audit.client_ip_invalid", exception.ErrorCode);
+    }
+
     [Fact]
     public void Create_rejects_correlation_id_exceeding_max_length()
     {
@@ -321,6 +353,22 @@ public sealed class ManagementAuditEventTests
         var exception = Assert.Throws<ManagementAuditException>(() =>
             ManagementAuditEvent.Create(
                 Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target, correlationId: tooLong));
+
+        Assert.Equal("audit.correlation_id_invalid", exception.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("token=correlation-secret")]
+    [InlineData("Bearer correlation-secret")]
+    [InlineData("correlation/id")]
+    public void Create_rejects_correlation_ids_outside_the_allowlist(string correlationId)
+    {
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditEvent.Create(
+                Operator,
+                WellKnownManagementAuditActions.ConfigurationChanged,
+                Target,
+                correlationId: correlationId));
 
         Assert.Equal("audit.correlation_id_invalid", exception.ErrorCode);
     }

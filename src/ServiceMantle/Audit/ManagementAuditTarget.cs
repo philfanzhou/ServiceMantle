@@ -42,6 +42,11 @@ public sealed record ManagementAuditTarget
             "audit.target_id_invalid",
             "target identifier");
 
+        ManagementAuditContentSanitizer.EnsureNoSensitiveContent(
+            cleanedId,
+            "audit.target_id_invalid",
+            "target identifier");
+
         return new ManagementAuditTarget(type, cleanedId);
     }
 

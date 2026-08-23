@@ -1,7 +1,7 @@
 namespace ServiceMantle.Audit;
 
 /// <summary>
-/// Provides stable, bounded paginated queries over persisted management audit records.
+/// Provides bounded keyset-paginated queries over persisted management audit records.
 /// </summary>
 public interface IManagementAuditQueryService
 {

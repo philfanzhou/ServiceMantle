@@ -1,9 +1,9 @@
 namespace ServiceMantle.Audit;
 
 /// <summary>
-/// A stable, bounded page of management audit records. The continuation cursor provides keyset
-/// pagination across concurrent inserts; <see cref="TotalCount"/> is a weakly consistent count from
-/// the query execution and may change if rows are deleted concurrently.
+/// A bounded page of management audit records. The continuation cursor provides ordinary keyset
+/// pagination rather than a database snapshot; <see cref="TotalCount"/> is observed per request and
+/// may change when rows are inserted or deleted concurrently.
 /// </summary>
 public sealed record ManagementAuditQueryResult
 {

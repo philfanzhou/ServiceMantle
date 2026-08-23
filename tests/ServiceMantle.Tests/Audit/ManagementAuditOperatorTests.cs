@@ -48,6 +48,29 @@ public sealed class ManagementAuditOperatorTests
     }
 
     [Fact]
+    public void Create_rejects_sensitive_content_in_operator_id()
+    {
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditOperator.Create(
+                WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+                operatorId: "token=operator-secret"));
+
+        Assert.Equal("audit.operator_id_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
+    public void Create_redacts_sensitive_content_in_display_name()
+    {
+        var operatorInfo = ManagementAuditOperator.Create(
+            WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+            operatorId: "admin-42",
+            displayName: "password: display-secret");
+
+        Assert.DoesNotContain("display-secret", operatorInfo.DisplayName, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", operatorInfo.DisplayName, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ToString_never_includes_display_name()
     {
         var operatorInfo = ManagementAuditOperator.Create(

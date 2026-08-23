@@ -188,6 +188,107 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     }
 
     [Fact]
+    public async Task QueryAsync_uses_documented_keyset_semantics_for_backfilled_records()
+    {
+        await using var context = await SeedAsync(
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(1)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(2)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(3)));
+
+        var service = new EfCoreManagementAuditQueryService<AuditTestDbContext>(context);
+        var firstPage = await service.QueryAsync(
+            ManagementAuditQuery.Create(pageSize: 1), TestContext.Current.CancellationToken);
+
+        var backfilled = Day(2).AddHours(12);
+        var writer = new EfCoreManagementAuditWriter<AuditTestDbContext>(context);
+        await writer.RecordAsync(
+            Record("admin-backfill", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, backfilled),
+            TestContext.Current.CancellationToken);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var secondPage = await service.QueryAsync(
+            ManagementAuditQuery.Create(page: 2, pageSize: 1, cursor: firstPage.ContinuationCursor),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, secondPage.TotalCount);
+        Assert.Equal("admin-backfill", Assert.Single(secondPage.Items).Operator.OperatorId);
+    }
+
+    [Fact]
+    public async Task QueryAsync_rejects_cursor_reused_with_a_different_action()
+    {
+        await using var context = await SeedAsync(
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(1)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(2)),
+            Record("admin-1", WellKnownManagementAuditActions.ConfigurationChanged, ConfigTarget, Day(3)),
+            Record("admin-1", WellKnownManagementAuditActions.ConfigurationChanged, ConfigTarget, Day(4)));
+        var service = new EfCoreManagementAuditQueryService<AuditTestDbContext>(context);
+        var firstPage = await service.QueryAsync(
+            ManagementAuditQuery.Create(
+                action: WellKnownManagementAuditActions.AdminLoginSucceeded,
+                pageSize: 1),
+            TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            service.QueryAsync(
+                ManagementAuditQuery.Create(
+                    action: WellKnownManagementAuditActions.ConfigurationChanged,
+                    page: 2,
+                    pageSize: 1,
+                    cursor: firstPage.ContinuationCursor),
+                TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.query_cursor_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryAsync_rejects_cursor_reused_with_a_different_time_range()
+    {
+        await using var context = await SeedAsync(
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(1)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(2)));
+        var service = new EfCoreManagementAuditQueryService<AuditTestDbContext>(context);
+        var firstPage = await service.QueryAsync(
+            ManagementAuditQuery.Create(fromUtc: Day(1), pageSize: 1),
+            TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            service.QueryAsync(
+                ManagementAuditQuery.Create(
+                    fromUtc: Day(0),
+                    page: 2,
+                    pageSize: 1,
+                    cursor: firstPage.ContinuationCursor),
+                TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.query_cursor_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryAsync_rejects_cursor_reused_with_a_different_page_size_or_page_number()
+    {
+        await using var context = await SeedAsync(
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(1)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(2)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(3)));
+        var service = new EfCoreManagementAuditQueryService<AuditTestDbContext>(context);
+        var firstPage = await service.QueryAsync(
+            ManagementAuditQuery.Create(pageSize: 1), TestContext.Current.CancellationToken);
+
+        var changedSize = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            service.QueryAsync(
+                ManagementAuditQuery.Create(page: 2, pageSize: 2, cursor: firstPage.ContinuationCursor),
+                TestContext.Current.CancellationToken).AsTask());
+        var skippedPage = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            service.QueryAsync(
+                ManagementAuditQuery.Create(page: 3, pageSize: 1, cursor: firstPage.ContinuationCursor),
+                TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.query_cursor_invalid", changedSize.ErrorCode);
+        Assert.Equal("audit.query_cursor_invalid", skippedPage.ErrorCode);
+    }
+
+    [Fact]
     public async Task QueryAsync_rejects_offset_pages_without_a_continuation_cursor()
     {
         await using var context = await SeedAsync(
@@ -280,9 +381,37 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     }
 
     [Fact]
+    public async Task QueryAsync_rejects_legacy_metadata_keys_that_collide_after_cleaning()
+    {
+        await using var context = await SeedAsync();
+        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
+        {
+            Id = Guid.NewGuid(),
+            OperatorId = "admin-1",
+            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
+            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
+            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
+            TargetId = "smtp",
+            Outcome = ManagementAuditOutcome.Success,
+            OccurredAtUtc = Day(1).UtcDateTime,
+            MetadataJson = "{\"reason\":\"first\",\" reason \":\"second\"}"
+        });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
+                .QueryAsync(ManagementAuditQuery.Create(), TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.entity_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
     public async Task QueryAsync_rejects_oversized_metadata_json_with_stable_error()
     {
         await using var context = await SeedAsync();
+        await context.Database.ExecuteSqlRawAsync(
+            "PRAGMA ignore_check_constraints = ON",
+            TestContext.Current.CancellationToken);
         context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
         {
             Id = Guid.NewGuid(),
@@ -296,6 +425,9 @@ public sealed class EfCoreManagementAuditQueryServiceTests
             MetadataJson = new string('x', ManagementAuditEntityMapper.MaxMetadataJsonLength + 1)
         });
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await context.Database.ExecuteSqlRawAsync(
+            "PRAGMA ignore_check_constraints = OFF",
+            TestContext.Current.CancellationToken);
 
         var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
             new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)

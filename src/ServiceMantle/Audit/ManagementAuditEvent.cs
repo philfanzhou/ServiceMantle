@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Net;
 
 namespace ServiceMantle.Audit;
 
@@ -149,6 +150,25 @@ public sealed record ManagementAuditEvent
         var cleanedCorrelationId = AuditTextSanitizer.Clean(
             correlationId, MaxCorrelationIdLength, "audit.correlation_id_invalid", "correlation identifier");
 
+        if (cleanedClientIp is not null)
+        {
+            if (!IPAddress.TryParse(cleanedClientIp, out var parsedClientIp))
+            {
+                throw new ManagementAuditException(
+                    "audit.client_ip_invalid",
+                    "The audit client IP must be a valid IPv4 or IPv6 address.");
+            }
+
+            cleanedClientIp = parsedClientIp.ToString();
+        }
+
+        if (cleanedCorrelationId is not null && !IsSafeCorrelationId(cleanedCorrelationId))
+        {
+            throw new ManagementAuditException(
+                "audit.correlation_id_invalid",
+                "The audit correlation identifier contains unsupported characters.");
+        }
+
         var cleanedDescription = AuditTextSanitizer.Clean(
             securityDescription, MaxDescriptionLength, "audit.description_invalid", "security description");
         if (cleanedDescription is not null)
@@ -202,9 +222,30 @@ public sealed record ManagementAuditEvent
 
             var cleanedValue = AuditTextSanitizer.CleanRequired(
                 value, MaxMetadataValueLength, "audit.metadata_invalid", "metadata value");
-            sanitized[cleanedKey] = ManagementAuditContentSanitizer.Redact(cleanedValue);
+            if (!sanitized.TryAdd(cleanedKey, ManagementAuditContentSanitizer.Redact(cleanedValue)))
+            {
+                throw new ManagementAuditException(
+                    "audit.metadata_invalid",
+                    "The audit metadata contains duplicate keys after normalization.");
+            }
         }
 
         return sanitized.ToFrozenDictionary(StringComparer.Ordinal);
+    }
+
+    private static bool IsSafeCorrelationId(string value)
+    {
+        foreach (var character in value)
+        {
+            if (character is not (>= 'A' and <= 'Z'
+                or >= 'a' and <= 'z'
+                or >= '0' and <= '9'
+                or '-' or '_' or '.' or ':'))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

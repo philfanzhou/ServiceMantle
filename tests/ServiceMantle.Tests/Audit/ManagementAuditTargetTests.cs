@@ -35,6 +35,17 @@ public sealed class ManagementAuditTargetTests
     }
 
     [Fact]
+    public void Create_rejects_sensitive_content_in_target_identifier()
+    {
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditTarget.Create(
+                WellKnownManagementAuditTargetTypes.Configuration,
+                "Server=db;Password=target-secret"));
+
+        Assert.Equal("audit.target_id_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
     public void ToString_combines_type_and_identifier()
     {
         var target = ManagementAuditTarget.Create(WellKnownManagementAuditTargetTypes.Configuration, "smtp");

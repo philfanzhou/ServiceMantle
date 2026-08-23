@@ -42,7 +42,8 @@ internal static partial class ManagementAuditContentSanitizer
 
     internal static string Redact(string value)
     {
-        var redacted = ConnectionStringPattern().Replace(value, "[REDACTED]");
+        var redacted = DatabaseUriPattern().Replace(value, "[REDACTED]");
+        redacted = ConnectionStringPattern().Replace(redacted, "[REDACTED]");
         redacted = SensitiveKeyValuePattern().Replace(
             redacted,
             match => $"{match.Groups["key"].Value}{match.Groups["separator"].Value}[REDACTED]");
@@ -50,6 +51,16 @@ internal static partial class ManagementAuditContentSanitizer
         redacted = JwtLikePattern().Replace(redacted, "[REDACTED_TOKEN]");
         redacted = PemBlockPattern().Replace(redacted, "[REDACTED_KEY]");
         return redacted;
+    }
+
+    internal static void EnsureNoSensitiveContent(string value, string errorCode, string fieldDescription)
+    {
+        if (!string.Equals(value, Redact(value), StringComparison.Ordinal))
+        {
+            throw new ManagementAuditException(
+                errorCode,
+                $"The audit {fieldDescription} contains sensitive content and is not allowed.");
+        }
     }
 
     private static string NormalizeKey(string key)
@@ -72,7 +83,7 @@ internal static partial class ManagementAuditContentSanitizer
     }
 
     [GeneratedRegex(
-        @"(?<key>pass(?:[\s_-]*word)?|pwd|secret|token|api[\s_-]*key|master[\s_-]*key|root[\s_-]*key|setup[\s_-]*code|connection[\s_-]*(?:string|str)|client[\s_-]*secret|access[\s_-]*key|credential|authorization|cookie)(?<separator>[""']?\s*[:=]\s*)(?:(?<quote>[""'])(?:(?!\k<quote>)[\s\S])*?\k<quote>|[^;,\r\n}\]]+)",
+        @"(?<key>pass(?:[\s_-]*word)?|pwd|secret|token|api[\s_-]*key|master[\s_-]*key|root[\s_-]*key|setup[\s_-]*code|connection[\s_-]*(?:string|str)|client[\s_-]*secret|access[\s_-]*key|credential|authorization|cookie)(?<separator>(?:\\?[""'])?\s*(?::|=|\bis\b)\s*)(?:\\?[""'][^}\]\r\n]*?\\?[""']|[^;,\r\n}\]]+)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveKeyValuePattern();
 
@@ -80,6 +91,11 @@ internal static partial class ManagementAuditContentSanitizer
         @"(?<![A-Za-z0-9_])(?:host|server|data[\s_-]*source|address)\s*=\s*[^;\r\n]+(?:;\s*[A-Za-z][A-Za-z0-9 _-]*\s*=\s*[^;\r\n]*)+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ConnectionStringPattern();
+
+    [GeneratedRegex(
+        @"(?<![A-Za-z0-9])(?:postgres(?:ql)?|mysql|mariadb|sqlserver):\/\/[^\s,;]+",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex DatabaseUriPattern();
 
     [GeneratedRegex(@"Bearer\s+[A-Za-z0-9\-_.~+/]+=*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BearerTokenPattern();
