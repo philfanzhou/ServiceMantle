@@ -467,7 +467,7 @@ public sealed class EfCoreManagementAuditQueryServiceTests
             TargetId = "smtp",
             Outcome = ManagementAuditOutcome.Success,
             OccurredAtUtc = Day(1).UtcDateTime,
-            MetadataJson = new string('x', ManagementAuditEntityMapper.MaxMetadataJsonLength + 1)
+            MetadataJson = "\0" + new string('x', ManagementAuditEntityMapper.MaxMetadataJsonByteLength)
         });
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
         await context.Database.ExecuteSqlRawAsync(
@@ -477,6 +477,37 @@ public sealed class EfCoreManagementAuditQueryServiceTests
         var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
             new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
                 .QueryAsync(ManagementAuditQuery.Create(), TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.entity_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryAsync_rejects_empty_id_at_a_page_boundary_instead_of_emitting_an_invalid_cursor()
+    {
+        await using var context = await SeedAsync(
+            Record("admin-valid", WellKnownManagementAuditActions.ConfigurationChanged, ConfigTarget, Day(1)));
+        await context.Database.ExecuteSqlRawAsync(
+            "PRAGMA ignore_check_constraints = ON",
+            TestContext.Current.CancellationToken);
+        await context.Database.ExecuteSqlRawAsync(
+            """
+            INSERT INTO service_audit_logs
+                (id, operator_id, operator_source, action, target_type, target_id, outcome, occurred_at_utc)
+            VALUES
+                ('00000000-0000-0000-0000-000000000000', 'admin-invalid', 'interactive_admin',
+                 'configuration.changed', 'configuration', 'smtp', 1, '2026-01-03 00:00:00');
+            """,
+            TestContext.Current.CancellationToken);
+        await context.Database.ExecuteSqlRawAsync(
+            "PRAGMA ignore_check_constraints = OFF",
+            TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
+                .QueryAsync(
+                    ManagementAuditQuery.Create(pageSize: 1),
+                    TestContext.Current.CancellationToken)
+                .AsTask());
 
         Assert.Equal("audit.entity_invalid", exception.ErrorCode);
     }

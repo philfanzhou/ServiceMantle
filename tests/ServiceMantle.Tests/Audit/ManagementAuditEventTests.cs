@@ -248,6 +248,40 @@ public sealed class ManagementAuditEventTests
     }
 
     [Theory]
+    [InlineData("setup code is alpha,beta")]
+    [InlineData("password=alpha;beta")]
+    [InlineData("{\"password\":\"alpha]beta\"}")]
+    [InlineData("{\"password\":\"alpha}beta\"}")]
+    public void Create_redacts_entire_description_when_a_sensitive_assignment_contains_delimiters(
+        string rawDescription)
+    {
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            securityDescription: rawDescription);
+
+        Assert.Equal("[REDACTED]", auditEvent.SecurityDescription);
+    }
+
+    [Theory]
+    [InlineData("setup code is alpha,beta")]
+    [InlineData("password=alpha;beta")]
+    [InlineData("{\"password\":\"alpha]beta\"}")]
+    [InlineData("{\"password\":\"alpha}beta\"}")]
+    public void Create_redacts_entire_metadata_value_when_a_sensitive_assignment_contains_delimiters(
+        string rawValue)
+    {
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            metadata: new Dictionary<string, string> { ["note"] = rawValue });
+
+        Assert.Equal("[REDACTED]", auditEvent.Metadata["note"]);
+    }
+
+    [Theory]
     [InlineData("redis://:redis-password@cache.internal:6379/0", "redis-password")]
     [InlineData("mongodb://admin:mongo-password@db.internal/audit", "mongo-password")]
     [InlineData("amqp://worker:rabbit-password@queue.internal/vhost", "rabbit-password")]

@@ -21,3 +21,9 @@ public enum ManagementAuditDatabaseDialect
     /// </summary>
     SqlServer = 2
 }
+
+internal static class ManagementAuditDatabaseFunctions
+{
+    internal static long? MetadataJsonByteLength(string? value) =>
+        throw new InvalidOperationException("This method may only be used in an EF Core query.");
+}

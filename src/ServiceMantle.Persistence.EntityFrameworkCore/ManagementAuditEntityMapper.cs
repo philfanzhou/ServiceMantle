@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using ServiceMantle.Audit;
@@ -6,7 +7,7 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 
 internal static class ManagementAuditEntityMapper
 {
-    internal const int MaxMetadataJsonLength = 256 * 1024;
+    internal const int MaxMetadataJsonByteLength = 256 * 1024;
 
     private static readonly JsonDocumentOptions MetadataDocumentOptions = new()
     {
@@ -24,11 +25,16 @@ internal static class ManagementAuditEntityMapper
     internal static ManagementAuditLogEntity ConvertToEntity(Guid id, ManagementAuditEvent auditEvent)
     {
         ArgumentNullException.ThrowIfNull(auditEvent);
+        if (id == Guid.Empty)
+        {
+            throw InvalidStoredEntity();
+        }
+
         var safeEvent = Revalidate(auditEvent);
         var metadataJson = safeEvent.Metadata.Count == 0
             ? null
             : JsonSerializer.Serialize(safeEvent.Metadata, MetadataJsonOptions);
-        if (metadataJson?.Length > MaxMetadataJsonLength)
+        if (metadataJson is not null && Encoding.UTF8.GetByteCount(metadataJson) > MaxMetadataJsonByteLength)
         {
             throw new ManagementAuditException(
                 "audit.metadata_invalid",
@@ -57,7 +63,8 @@ internal static class ManagementAuditEntityMapper
     {
         ArgumentNullException.ThrowIfNull(entity);
 
-        if (!ManagementAuditOperatorSource.TryParse(entity.OperatorSource, out var source) || source is null
+        if (entity.Id == Guid.Empty
+            || !ManagementAuditOperatorSource.TryParse(entity.OperatorSource, out var source) || source is null
             || !ManagementAuditAction.TryParse(entity.Action, out var action) || action is null
             || !ManagementAuditTargetType.TryParse(entity.TargetType, out var targetType) || targetType is null
             || !Enum.IsDefined(entity.Outcome))
@@ -140,7 +147,7 @@ internal static class ManagementAuditEntityMapper
             return new Dictionary<string, string>(0, StringComparer.Ordinal);
         }
 
-        if (metadataJson.Length > MaxMetadataJsonLength)
+        if (Encoding.UTF8.GetByteCount(metadataJson) > MaxMetadataJsonByteLength)
         {
             throw InvalidStoredEntity();
         }

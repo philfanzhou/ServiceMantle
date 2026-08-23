@@ -61,7 +61,8 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
             .Take(query.PageSize + 1)
             .AnyAsync(
                 item => item.MetadataJson != null
-                    && item.MetadataJson.Length > ManagementAuditEntityMapper.MaxMetadataJsonLength,
+                    && ManagementAuditDatabaseFunctions.MetadataJsonByteLength(item.MetadataJson)
+                        > ManagementAuditEntityMapper.MaxMetadataJsonByteLength,
                 cancellationToken)
             .ConfigureAwait(false))
         {

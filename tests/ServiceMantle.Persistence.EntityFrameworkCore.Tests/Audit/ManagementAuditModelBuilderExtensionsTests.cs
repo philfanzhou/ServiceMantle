@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using ServiceMantle.Audit;
 using ServiceMantle.Persistence.EntityFrameworkCore;
 using Xunit;
 
@@ -38,13 +39,17 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
             entityType, nameof(ManagementAuditLogEntity.SecurityDescription), "security_description", isRequired: false);
         AssertColumn(entityType, nameof(ManagementAuditLogEntity.MetadataJson), "metadata_json", isRequired: false);
         Assert.Equal(
-            ManagementAuditEntityMapper.MaxMetadataJsonLength,
+            ManagementAuditEntityMapper.MaxMetadataJsonByteLength,
             entityType.FindProperty(nameof(ManagementAuditLogEntity.MetadataJson))!.GetMaxLength());
         var designTimeEntityType = context.GetService<IDesignTimeModel>()
             .Model
             .FindEntityType(typeof(ManagementAuditLogEntity));
+        Assert.NotNull(designTimeEntityType);
         Assert.Contains(
-            designTimeEntityType!.GetCheckConstraints(),
+            designTimeEntityType.GetCheckConstraints(),
+            constraint => constraint.Name == "ck_service_audit_logs_id_not_empty");
+        Assert.Contains(
+            designTimeEntityType.GetCheckConstraints(),
             constraint => constraint.Name == "ck_service_audit_logs_metadata_json_length");
     }
 
@@ -62,8 +67,20 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
         Assert.Contains("ix_service_audit_logs_occurred_at_utc_id", indexNames);
         Assert.Contains("ix_service_audit_logs_action_occurred_at_utc_id", indexNames);
         Assert.Contains("ix_service_audit_logs_target_occurred_at_utc_id", indexNames);
+        Assert.Contains("ix_service_audit_logs_target_type_occurred_at_utc_id", indexNames);
         Assert.Contains("ix_service_audit_logs_target_id_occurred_at_utc_id", indexNames);
         Assert.Contains("ix_service_audit_logs_operator_id_occurred_at_utc_id", indexNames);
+
+        var targetTypeIndex = Assert.Single(
+            entityType.GetIndexes(),
+            index => index.GetDatabaseName() == "ix_service_audit_logs_target_type_occurred_at_utc_id");
+        Assert.Equal(
+            [
+                nameof(ManagementAuditLogEntity.TargetType),
+                nameof(ManagementAuditLogEntity.OccurredAtUtc),
+                nameof(ManagementAuditLogEntity.Id)
+            ],
+            targetTypeIndex.Properties.Select(property => property.Name));
     }
 
     [Fact]
@@ -89,9 +106,54 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
                 .Options);
 
         var createScript = context.Database.GenerateCreateScript();
+        var querySql = context.ServiceAuditLogs
+            .Where(item => ManagementAuditDatabaseFunctions.MetadataJsonByteLength(item.MetadataJson) > 0)
+            .ToQueryString();
 
         Assert.Contains("DATALENGTH(metadata_json)", createScript, StringComparison.Ordinal);
         Assert.DoesNotContain(" OR length(metadata_json)", createScript, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DATALENGTH", querySql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Sqlite_constraints_use_encoded_bytes_and_reject_empty_ids()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var context = CreateContext(connection);
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+
+        var emptyIdException = await Assert.ThrowsAsync<SqliteException>(() =>
+            context.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO service_audit_logs
+                    (id, operator_source, action, target_type, target_id, outcome, occurred_at_utc)
+                VALUES
+                    ('00000000-0000-0000-0000-000000000000', 'system', 'configuration.changed',
+                     'configuration', 'smtp', 1, '2026-01-01 00:00:00');
+                """,
+                TestContext.Current.CancellationToken));
+
+        var astralMetadata = "\"" + string.Concat(Enumerable.Repeat(
+            "\U0001F600",
+            (ManagementAuditEntityMapper.MaxMetadataJsonByteLength / 4) + 1)) + "\"";
+        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
+        {
+            Id = Guid.NewGuid(),
+            OperatorSource = "system",
+            Action = "configuration.changed",
+            TargetType = "configuration",
+            TargetId = "smtp",
+            Outcome = ManagementAuditOutcome.Success,
+            OccurredAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            MetadataJson = astralMetadata
+        });
+        var byteLengthException = await Assert.ThrowsAsync<DbUpdateException>(() =>
+            context.SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        Assert.Contains("ck_service_audit_logs_id_not_empty", emptyIdException.Message, StringComparison.Ordinal);
+        Assert.Contains("ck_service_audit_logs_metadata_json_length", byteLengthException.ToString(), StringComparison.Ordinal);
+        Assert.True(astralMetadata.Length < ManagementAuditEntityMapper.MaxMetadataJsonByteLength);
     }
 
     private static void AssertColumn(

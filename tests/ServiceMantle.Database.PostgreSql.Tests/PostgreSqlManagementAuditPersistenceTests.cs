@@ -91,7 +91,7 @@ public sealed class PostgreSqlManagementAuditPersistenceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PostgreSql_rejects_oversized_metadata_json_at_the_database_boundary()
+    public async Task PostgreSql_rejects_metadata_exceeding_the_utf8_byte_limit_at_the_database_boundary()
     {
         await using var context = await CreateResetContextAsync();
         context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
@@ -103,7 +103,9 @@ public sealed class PostgreSqlManagementAuditPersistenceTests : IAsyncLifetime
             TargetId = "smtp",
             Outcome = ManagementAuditOutcome.Success,
             OccurredAtUtc = Day(1).UtcDateTime,
-            MetadataJson = new string('x', (256 * 1024) + 1)
+            MetadataJson = "\"" + string.Concat(Enumerable.Repeat(
+                "\U0001F600",
+                ((256 * 1024) / 4) + 1)) + "\""
         });
 
         await Assert.ThrowsAsync<DbUpdateException>(() =>

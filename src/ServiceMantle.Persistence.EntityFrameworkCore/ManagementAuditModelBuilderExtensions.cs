@@ -22,13 +22,28 @@ public static class ManagementAuditModelBuilderExtensions
             throw new ArgumentNullException(nameof(modelBuilder));
         }
 
+        var byteLengthMethod = typeof(ManagementAuditDatabaseFunctions).GetMethod(
+            nameof(ManagementAuditDatabaseFunctions.MetadataJsonByteLength),
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        modelBuilder.HasDbFunction(byteLengthMethod)
+            .HasName(GetMetadataJsonByteLengthFunction(databaseDialect))
+            .IsBuiltIn()
+            .HasParameter("value")
+            .PropagatesNullability();
+
         modelBuilder.Entity<ManagementAuditLogEntity>(entity =>
         {
             entity.ToTable(
                 "service_audit_logs",
-                table => table.HasCheckConstraint(
-                    "ck_service_audit_logs_metadata_json_length",
-                    GetMetadataJsonLengthConstraint(databaseDialect)));
+                table =>
+                {
+                    table.HasCheckConstraint(
+                        "ck_service_audit_logs_id_not_empty",
+                        "id <> '00000000-0000-0000-0000-000000000000'");
+                    table.HasCheckConstraint(
+                        "ck_service_audit_logs_metadata_json_length",
+                        GetMetadataJsonLengthConstraint(databaseDialect));
+                });
 
             entity.HasKey(item => item.Id);
 
@@ -91,7 +106,7 @@ public static class ManagementAuditModelBuilderExtensions
 
             entity.Property(item => item.MetadataJson)
                 .HasColumnName("metadata_json")
-                .HasMaxLength(ManagementAuditEntityMapper.MaxMetadataJsonLength);
+                .HasMaxLength(ManagementAuditEntityMapper.MaxMetadataJsonByteLength);
 
             entity.HasIndex(item => new { item.OccurredAtUtc, item.Id })
                 .HasDatabaseName("ix_service_audit_logs_occurred_at_utc_id");
@@ -101,6 +116,9 @@ public static class ManagementAuditModelBuilderExtensions
 
             entity.HasIndex(item => new { item.TargetType, item.TargetId, item.OccurredAtUtc, item.Id })
                 .HasDatabaseName("ix_service_audit_logs_target_occurred_at_utc_id");
+
+            entity.HasIndex(item => new { item.TargetType, item.OccurredAtUtc, item.Id })
+                .HasDatabaseName("ix_service_audit_logs_target_type_occurred_at_utc_id");
 
             entity.HasIndex(item => new { item.TargetId, item.OccurredAtUtc, item.Id })
                 .HasDatabaseName("ix_service_audit_logs_target_id_occurred_at_utc_id");
@@ -116,11 +134,21 @@ public static class ManagementAuditModelBuilderExtensions
         databaseDialect switch
         {
             ManagementAuditDatabaseDialect.Sqlite =>
-                $"metadata_json IS NULL OR length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonLength}",
+                $"metadata_json IS NULL OR octet_length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonByteLength}",
             ManagementAuditDatabaseDialect.PostgreSql =>
-                $"metadata_json IS NULL OR char_length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonLength}",
+                $"metadata_json IS NULL OR octet_length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonByteLength}",
             ManagementAuditDatabaseDialect.SqlServer =>
-                $"metadata_json IS NULL OR DATALENGTH(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonLength * 2}",
+                $"metadata_json IS NULL OR DATALENGTH(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonByteLength}",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(databaseDialect), databaseDialect, "The management audit database dialect is not supported.")
+        };
+
+    private static string GetMetadataJsonByteLengthFunction(ManagementAuditDatabaseDialect databaseDialect) =>
+        databaseDialect switch
+        {
+            ManagementAuditDatabaseDialect.Sqlite => "octet_length",
+            ManagementAuditDatabaseDialect.PostgreSql => "octet_length",
+            ManagementAuditDatabaseDialect.SqlServer => "DATALENGTH",
             _ => throw new ArgumentOutOfRangeException(
                 nameof(databaseDialect), databaseDialect, "The management audit database dialect is not supported.")
         };

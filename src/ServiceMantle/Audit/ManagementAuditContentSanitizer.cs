@@ -42,11 +42,16 @@ internal static partial class ManagementAuditContentSanitizer
 
     internal static string Redact(string value)
     {
+        // A sensitive assignment can contain arbitrary punctuation, quoting, or an opaque format
+        // that this product-agnostic layer cannot parse reliably. Once the key is recognized, fail
+        // closed for the entire field rather than attempting to guess where the secret ends.
+        if (SensitiveKeyValuePattern().IsMatch(value))
+        {
+            return "[REDACTED]";
+        }
+
         var redacted = DatabaseUriPattern().Replace(value, "[REDACTED]");
         redacted = ConnectionStringPattern().Replace(redacted, "[REDACTED]");
-        redacted = SensitiveKeyValuePattern().Replace(
-            redacted,
-            match => $"{match.Groups["key"].Value}{match.Groups["separator"].Value}[REDACTED]");
         redacted = BearerTokenPattern().Replace(redacted, "Bearer [REDACTED]");
         redacted = JwtLikePattern().Replace(redacted, "[REDACTED_TOKEN]");
         redacted = PemBlockPattern().Replace(redacted, "[REDACTED_KEY]");
@@ -89,7 +94,7 @@ internal static partial class ManagementAuditContentSanitizer
     }
 
     [GeneratedRegex(
-        @"(?<key>pass(?:[\s_-]*word)?|pwd|secret|token|api[\s_-]*key|master[\s_-]*key|root[\s_-]*key|setup[\s_-]*code|connection[\s_-]*(?:string|str)|client[\s_-]*secret|access[\s_-]*key|credential|authorization|cookie)(?<separator>(?:\\?[""'])?\s*(?::|=|\bis\b)\s*)(?:\\?[""'][^}\]\r\n]*?\\?[""']|[^;,\r\n}\]]+)",
+        @"(?:pass(?:[\s_-]*word)?|pwd|secret|token|api[\s_-]*key|master[\s_-]*key|root[\s_-]*key|setup[\s_-]*code|connection[\s_-]*(?:string|str)|client[\s_-]*secret|access[\s_-]*key|credential|authorization|cookie)(?:\\?[""'])?\s*(?::|=|\bis\b)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveKeyValuePattern();
 
