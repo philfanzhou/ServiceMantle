@@ -150,6 +150,18 @@ public sealed class PostgreSqlBootstrapDatabaseProviderTests
     }
 
     [Fact]
+    public async Task ValidateAsync_maps_target_identity_mismatch_to_invalid_connection_string()
+    {
+        var provider = CreateProvider(new FakeProbe(PostgreSqlProbeOutcome.TargetIdentityMismatch));
+        var candidate = CreateCandidate();
+
+        var result = await provider.ValidateAsync(candidate.Database, TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsValid);
+        Assert.Equal("database.connection_string_invalid", result.ErrorCode);
+    }
+
+    [Fact]
     public async Task ValidateAsync_maps_target_not_found()
     {
         var provider = CreateProvider(new FakeProbe(PostgreSqlProbeOutcome.DatabaseNotFound));

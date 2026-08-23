@@ -79,6 +79,48 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
     }
 
     [Fact]
+    public async Task Observe_OverlongDatabaseName_DoesNotReportTruncatedTargetConnectable()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var requestedDatabaseName = new string('a', 64);
+        await CreateRealDatabaseAsync(requestedDatabaseName[..63]);
+        var target = CreateTargetConfiguration(requestedDatabaseName);
+
+        var observation = await new PostgreSqlDatabaseTargetPreparationProvider().ObserveAsync(
+            target,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(observation.IsServerReachable);
+        Assert.Null(observation.TargetExists);
+        Assert.False(observation.IsTargetConnectable);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, observation.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Observe_OverlongRoleName_DoesNotReportTruncatedRoleConnectable()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var requestedRoleName = new string('u', 64);
+        const string rolePassword = "truncated-role-password";
+        await CreateNonCreateDbRoleAsync(requestedRoleName[..63], rolePassword);
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.PostgreSql,
+            "16",
+            BuildConnectionString("postgres", requestedRoleName, rolePassword));
+
+        var observation = await new PostgreSqlDatabaseTargetPreparationProvider().ObserveAsync(
+            target,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(observation.IsServerReachable);
+        Assert.Null(observation.TargetExists);
+        Assert.False(observation.IsTargetConnectable);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, observation.ErrorCode);
+    }
+
+    [Fact]
     public async Task Observe_AuthenticationFailure_DoesNotClaimMissingTargetExists()
     {
         Assert.SkipUnless(CanRun, SkipReason);

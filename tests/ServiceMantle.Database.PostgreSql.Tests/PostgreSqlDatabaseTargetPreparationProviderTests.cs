@@ -106,6 +106,19 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     }
 
     [Fact]
+    public async Task ObserveAsync_maps_target_identity_mismatch_to_invalid_target()
+    {
+        var provider = CreateProvider(new FakeObservationProbe(PostgreSqlProbeOutcome.TargetIdentityMismatch));
+
+        var observation = await provider.ObserveAsync(CreateTarget(), TestContext.Current.CancellationToken);
+
+        Assert.True(observation.IsServerReachable);
+        Assert.Null(observation.TargetExists);
+        Assert.False(observation.IsTargetConnectable);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, observation.ErrorCode);
+    }
+
+    [Fact]
     public async Task ObserveAsync_maps_database_not_found_to_target_missing()
     {
         var provider = CreateProvider(new FakeObservationProbe(PostgreSqlProbeOutcome.DatabaseNotFound));

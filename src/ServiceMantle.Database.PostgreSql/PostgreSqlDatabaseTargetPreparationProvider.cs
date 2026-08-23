@@ -90,6 +90,8 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
             return outcome switch
             {
                 PostgreSqlProbeOutcome.Success => DatabaseTargetObservation.TargetConnectable(),
+                PostgreSqlProbeOutcome.TargetIdentityMismatch => DatabaseTargetObservation.TargetUnreachable(
+                    WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget),
                 PostgreSqlProbeOutcome.DatabaseNotFound => DatabaseTargetObservation.TargetMissing(),
                 PostgreSqlProbeOutcome.AuthenticationFailed => DatabaseTargetObservation.TargetUnreachable(
                     WellKnownDatabaseTargetPreparationErrorCodes.AuthenticationFailed),
