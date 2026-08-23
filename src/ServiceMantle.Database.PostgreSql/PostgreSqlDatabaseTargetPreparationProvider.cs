@@ -155,8 +155,11 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
         }
 
         // Administrative credentials are scoped to this call. Npgsql pooling would otherwise
-        // retain the privileged physical connection after DisposeAsync returns.
+        // retain the privileged physical connection after DisposeAsync returns. The connection
+        // must also remain outside any ambient transaction because PostgreSQL prohibits
+        // CREATE DATABASE inside a transaction block.
         administrativeBuilder.Pooling = false;
+        administrativeBuilder.Enlist = false;
 
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);

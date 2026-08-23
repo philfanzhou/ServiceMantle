@@ -346,7 +346,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     }
 
     [Fact]
-    public async Task PrepareAsync_disables_administrative_connection_pooling()
+    public async Task PrepareAsync_isolates_administrative_connection_from_pooling_and_ambient_transactions()
     {
         var probe = new FakeCreationProbe(
             (_, _, _, _) => ValueTask.FromResult(
@@ -359,6 +359,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
 
         Assert.True(result.Succeeded);
         Assert.False(probe.LastAdministrativeConnectionString!.Pooling);
+        Assert.False(probe.LastAdministrativeConnectionString.Enlist);
     }
 
     [Fact]

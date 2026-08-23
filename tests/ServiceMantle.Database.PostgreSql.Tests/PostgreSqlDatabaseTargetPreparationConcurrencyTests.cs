@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Transactions;
 using Npgsql;
 using ServiceMantle.Bootstrap;
 using Testcontainers.PostgreSql;
@@ -256,6 +257,34 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
 
         Assert.True(result.Succeeded);
         Assert.Equal(0, await CountSessionsByApplicationNameAsync(applicationName));
+    }
+
+    [Fact]
+    public async Task Prepare_CreatesDatabaseOutsideAmbientTransactionScope()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var databaseName = $"ambient_transaction_{UniqueSuffix()}";
+        var administrativeConnectionString = AdministrativeConnectionString();
+        Assert.True(new NpgsqlConnectionStringBuilder(administrativeConnectionString).Enlist);
+        var request = new DatabaseTargetPreparationRequest(
+            CreateTargetConfiguration(databaseName),
+            administrativeConnectionString);
+
+        DatabaseTargetPreparationResult result;
+        using (var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled))
+        {
+            Assert.NotNull(Transaction.Current);
+            result = await new PostgreSqlDatabaseTargetPreparationProvider().PrepareAsync(
+                request,
+                TimeSpan.FromSeconds(15),
+                TestContext.Current.CancellationToken);
+            scope.Complete();
+        }
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(DatabaseTargetPreparationOutcome.Created, result.Outcome);
+        Assert.True(await DatabaseExistsAsync(databaseName));
     }
 
     [Fact]
