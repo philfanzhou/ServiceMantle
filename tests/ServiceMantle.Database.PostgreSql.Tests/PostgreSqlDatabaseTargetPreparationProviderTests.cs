@@ -92,9 +92,22 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     }
 
     [Fact]
-    public async Task ObserveAsync_maps_authentication_failed_to_target_unreachable()
+    public async Task ObserveAsync_maps_authentication_failed_to_unknown_target_existence()
     {
         var provider = CreateProvider(new FakeObservationProbe(PostgreSqlProbeOutcome.AuthenticationFailed));
+
+        var observation = await provider.ObserveAsync(CreateTarget(), TestContext.Current.CancellationToken);
+
+        Assert.True(observation.IsServerReachable);
+        Assert.Null(observation.TargetExists);
+        Assert.False(observation.IsTargetConnectable);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.AuthenticationFailed, observation.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ObserveAsync_maps_target_access_denied_to_known_existing_target()
+    {
+        var provider = CreateProvider(new FakeObservationProbe(PostgreSqlProbeOutcome.TargetAccessDenied));
 
         var observation = await provider.ObserveAsync(CreateTarget(), TestContext.Current.CancellationToken);
 
@@ -146,8 +159,29 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
         var provider = CreateProvider();
         var request = CreateRequest();
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
             provider.PrepareAsync(request, TimeSpan.Zero, TestContext.Current.CancellationToken).AsTask());
+    }
+
+    [Fact]
+    public async Task PrepareAsync_rejects_timeout_above_cancellation_source_limit()
+    {
+        var provider = CreateProvider();
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            provider.PrepareAsync(CreateRequest(), TimeSpan.MaxValue, CancellationToken.None).AsTask());
+    }
+
+    [Fact]
+    public async Task PrepareAsync_caller_cancellation_precedes_invalid_timeout()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvider().PrepareAsync(CreateRequest(), TimeSpan.Zero, source.Token).AsTask());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvider().PrepareAsync(CreateRequest(), TimeSpan.MaxValue, source.Token).AsTask());
     }
 
     [Fact]
@@ -177,6 +211,63 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
 
         Assert.False(result.Succeeded);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("数据库数据库数据库数据库数据库数据库数据库数据库数据库数据库数据库")]
+    [InlineData("app\nname")]
+    public async Task PrepareAsync_rejects_database_name_postgresql_cannot_represent_safely(string databaseName)
+    {
+        var targetConnectionString = new NpgsqlConnectionStringBuilder(ValidTargetConnectionString)
+        {
+            Database = databaseName
+        }.ConnectionString;
+        var request = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                targetConnectionString),
+            ValidAdministrativeConnectionString);
+        var probe = new FakeCreationProbe(
+            (_, _, _) => ValueTask.FromResult(
+                DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)));
+
+        var result = await CreateProvider(creationProbe: probe).PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+        Assert.Null(probe.LastDatabaseName);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_preserves_valid_quoted_unicode_database_name()
+    {
+        const string databaseName = "app_\"_数据库";
+        var targetConnectionString = new NpgsqlConnectionStringBuilder(ValidTargetConnectionString)
+        {
+            Database = databaseName
+        }.ConnectionString;
+        var request = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                targetConnectionString),
+            ValidAdministrativeConnectionString);
+        var probe = new FakeCreationProbe(
+            (_, _, _) => ValueTask.FromResult(
+                DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)));
+
+        var result = await CreateProvider(creationProbe: probe).PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(databaseName, probe.LastDatabaseName);
     }
 
     [Fact]
@@ -280,6 +371,28 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
         // whether it is observed at an explicit check or propagated from an awaited Task.Delay.
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             provider.PrepareAsync(CreateRequest(), TimeSpan.FromSeconds(30), source.Token).AsTask());
+    }
+
+    [Fact]
+    public async Task PrepareAsync_caller_cancellation_discards_raw_database_exception()
+    {
+        const string secret = "admin-cancellation-secret";
+        using var source = new CancellationTokenSource();
+        var probe = new FakeCreationProbe((_, _, _) =>
+        {
+            source.Cancel();
+            throw new NpgsqlException($"Host=internal;Username=admin;Password={secret}");
+        });
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            CreateProvider(creationProbe: probe)
+                .PrepareAsync(CreateRequest(), TimeSpan.FromSeconds(30), source.Token)
+                .AsTask());
+
+        Assert.Null(exception.InnerException);
+        Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Host=internal", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Username=admin", exception.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]

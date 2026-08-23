@@ -28,6 +28,11 @@ public static class WellKnownDatabaseTargetPreparationErrorCodes
     public const string ServerUnreachable = "database_target_preparation.server_unreachable";
 
     /// <summary>
+    /// The database server responded but rejected the supplied credentials.
+    /// </summary>
+    public const string AuthenticationFailed = "database_target_preparation.authentication_failed";
+
+    /// <summary>
     /// The administrative connection succeeded but lacked permission to complete the operation.
     /// </summary>
     public const string PermissionDenied = "database_target_preparation.permission_denied";

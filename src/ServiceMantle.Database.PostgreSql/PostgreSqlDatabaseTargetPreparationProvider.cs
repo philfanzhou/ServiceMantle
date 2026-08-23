@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using Npgsql;
 using ServiceMantle.Bootstrap;
 
@@ -12,6 +13,10 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
 {
     private const int MaximumConnectTimeoutSeconds = 8;
     private const int CommandTimeoutSeconds = 5;
+    private const int MaximumDatabaseNameUtf8Bytes = 63;
+    private static readonly TimeSpan MaximumPreparationTimeout =
+        TimeSpan.FromMilliseconds(uint.MaxValue - 1D);
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     private readonly INpgsqlBootstrapProbe observationProbe;
     private readonly INpgsqlDatabaseCreationProbe creationProbe;
@@ -67,7 +72,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
         }
 
         if (!TryBuildConnectionString(target.ConnectionString, out var builder) ||
-            string.IsNullOrWhiteSpace(builder.Database))
+            !TryGetValidDatabaseName(builder, out _))
         {
             return DatabaseTargetObservation.ServerUnreachable(
                 WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
@@ -85,16 +90,19 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
                 PostgreSqlProbeOutcome.Success => DatabaseTargetObservation.TargetConnectable(),
                 PostgreSqlProbeOutcome.DatabaseNotFound => DatabaseTargetObservation.TargetMissing(),
                 PostgreSqlProbeOutcome.AuthenticationFailed => DatabaseTargetObservation.TargetUnreachable(
-                    WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied),
+                    WellKnownDatabaseTargetPreparationErrorCodes.AuthenticationFailed),
+                PostgreSqlProbeOutcome.TargetAccessDenied => DatabaseTargetObservation.TargetUnreachable(
+                    WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied,
+                    targetExists: true),
                 PostgreSqlProbeOutcome.ConnectionFailed => DatabaseTargetObservation.ServerUnreachable(
                     WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed),
                 _ => DatabaseTargetObservation.ServerUnreachable(
                     WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed)
             };
         }
-        catch (OperationCanceledException)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
-            throw;
+            throw CreateSafeCancellationException(cancellationToken);
         }
         catch (Exception)
         {
@@ -115,12 +123,15 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (timeout <= TimeSpan.Zero)
-        {
-            throw new ArgumentException("Preparation timeout must be positive.", nameof(timeout));
-        }
-
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (timeout <= TimeSpan.Zero || timeout > MaximumPreparationTimeout)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(timeout),
+                timeout,
+                $"Preparation timeout must be positive and no greater than {MaximumPreparationTimeout}.");
+        }
 
         if (!IsPostgreSqlProvider(request.Target.Provider))
         {
@@ -129,7 +140,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
         }
 
         if (!TryBuildConnectionString(request.Target.ConnectionString, out var targetBuilder) ||
-            string.IsNullOrWhiteSpace(targetBuilder.Database))
+            !TryGetValidDatabaseName(targetBuilder, out var databaseName))
         {
             return DatabaseTargetPreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
@@ -141,8 +152,6 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
                 WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
         }
 
-        var databaseName = targetBuilder.Database!;
-
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
@@ -151,13 +160,16 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
             return await creationProbe.CreateIfMissingAsync(databaseName, administrativeBuilder, linkedCts.Token)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-
+            throw CreateSafeCancellationException(cancellationToken);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.Timeout);
+        }
+        catch (Exception) when (timeoutCts.IsCancellationRequested)
+        {
             return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.Timeout);
         }
         catch (Exception)
@@ -184,6 +196,29 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
         }
     }
 
+    private static bool TryGetValidDatabaseName(
+        NpgsqlConnectionStringBuilder builder,
+        out string databaseName)
+    {
+        databaseName = builder.Database ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(databaseName) || databaseName.Any(char.IsControl))
+        {
+            return false;
+        }
+
+        try
+        {
+            return StrictUtf8.GetByteCount(databaseName) <= MaximumDatabaseNameUtf8Bytes;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
+    }
+
+    private static OperationCanceledException CreateSafeCancellationException(CancellationToken cancellationToken) =>
+        new("Database target preparation was cancelled by the caller.", cancellationToken);
+
     private static int ApplySafeConnectTimeout(int timeout)
     {
         if (timeout <= 0)
@@ -209,6 +244,15 @@ internal interface INpgsqlDatabaseCreationProbe
 
 internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
 {
+    private const int MaximumDatabaseNameBytes = 63;
+    private readonly Func<CancellationToken, ValueTask>? afterMissingTargetObserved;
+
+    internal NpgsqlDatabaseCreationProbe(
+        Func<CancellationToken, ValueTask>? afterMissingTargetObserved = null)
+    {
+        this.afterMissingTargetObserved = afterMissingTargetObserved;
+    }
+
     public async ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
         NpgsqlConnectionStringBuilder administrativeConnectionString,
@@ -220,19 +264,21 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
             connection = new NpgsqlConnection(administrativeConnectionString.ConnectionString);
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-            await using (var checkCommand = connection.CreateCommand())
+            if (!await IsDatabaseNameValidForServerAsync(connection, databaseName, cancellationToken)
+                .ConfigureAwait(false))
             {
-                checkCommand.CommandText = "SELECT 1 FROM pg_database WHERE datname = @name";
-                var parameter = checkCommand.CreateParameter();
-                parameter.ParameterName = "@name";
-                parameter.Value = databaseName;
-                checkCommand.Parameters.Add(parameter);
+                return DatabaseTargetPreparationResult.Failure(
+                    WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+            }
 
-                var existing = await checkCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-                if (existing is not null)
-                {
-                    return DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.AlreadyExists);
-                }
+            if (await DatabaseExistsAsync(connection, databaseName, cancellationToken).ConfigureAwait(false))
+            {
+                return DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.AlreadyExists);
+            }
+
+            if (afterMissingTargetObserved is not null)
+            {
+                await afterMissingTargetObserved(cancellationToken).ConfigureAwait(false);
             }
 
             await using (var createCommand = connection.CreateCommand())
@@ -252,13 +298,12 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
                     // the pg_database catalog's name index (23505); a race resolved by the time this
                     // statement runs is observed as the higher-level duplicate_database error
                     // (42P04). Both mean the target now exists and this call did not create it.
-                    return DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.AlreadyExists);
+                    return await DatabaseExistsAsync(connection, databaseName, cancellationToken).ConfigureAwait(false)
+                        ? DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.AlreadyExists)
+                        : DatabaseTargetPreparationResult.Failure(
+                            WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict);
                 }
             }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
         }
         catch (Exception exception)
         {
@@ -271,7 +316,6 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
             {
                 throw new OperationCanceledException(
                     "Database target preparation was cancelled.",
-                    exception,
                     cancellationToken);
             }
 
@@ -290,6 +334,43 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
                     // Suppress cleanup errors so they do not mask the primary result.
                 }
             }
+        }
+    }
+
+    private static async ValueTask<bool> DatabaseExistsAsync(
+        NpgsqlConnection connection,
+        string databaseName,
+        CancellationToken cancellationToken)
+    {
+        await using var checkCommand = connection.CreateCommand();
+        checkCommand.CommandText = "SELECT 1 FROM pg_database WHERE datname = @name";
+        var parameter = checkCommand.CreateParameter();
+        parameter.ParameterName = "@name";
+        parameter.Value = databaseName;
+        checkCommand.Parameters.Add(parameter);
+
+        return await checkCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+    }
+
+    private static async ValueTask<bool> IsDatabaseNameValidForServerAsync(
+        NpgsqlConnection connection,
+        string databaseName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT octet_length(convert_to(@name, current_setting('server_encoding'))) <= @maximumBytes";
+            command.Parameters.AddWithValue("@name", databaseName);
+            command.Parameters.AddWithValue("@maximumBytes", MaximumDatabaseNameBytes);
+
+            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+        }
+        catch (PostgresException exception) when (exception.SqlState.StartsWith("22", StringComparison.Ordinal))
+        {
+            // The target name cannot be represented by the server encoding.
+            return false;
         }
     }
 
@@ -316,7 +397,7 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
         var outcome = PostgreSqlProbeFailureClassifier.Classify(exception);
         return outcome switch
         {
-            PostgreSqlProbeOutcome.AuthenticationFailed => WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed,
+            PostgreSqlProbeOutcome.AuthenticationFailed => WellKnownDatabaseTargetPreparationErrorCodes.AuthenticationFailed,
             PostgreSqlProbeOutcome.ConnectionFailed => WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed,
             PostgreSqlProbeOutcome.DatabaseNotFound => WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed,
             _ => WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed

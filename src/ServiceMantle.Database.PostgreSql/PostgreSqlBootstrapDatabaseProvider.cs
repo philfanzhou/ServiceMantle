@@ -173,6 +173,7 @@ public sealed class PostgreSqlBootstrapDatabaseProvider : IBootstrapDatabaseProv
             PostgreSqlProbeOutcome.Success => BootstrapValidationResult.Success(),
             PostgreSqlProbeOutcome.DatabaseNotFound => BootstrapValidationResult.Failure("database.target_not_found"),
             PostgreSqlProbeOutcome.AuthenticationFailed => BootstrapValidationResult.Failure("database.authentication_failed"),
+            PostgreSqlProbeOutcome.TargetAccessDenied => BootstrapValidationResult.Failure("database.permission_denied"),
             PostgreSqlProbeOutcome.ConnectionFailed => BootstrapValidationResult.Failure("database.connection_failed"),
             _ => BootstrapValidationResult.Failure("database.provider_validation_failed")
         };
@@ -192,6 +193,7 @@ internal enum PostgreSqlProbeOutcome
     Success,
     DatabaseNotFound,
     AuthenticationFailed,
+    TargetAccessDenied,
     ConnectionFailed,
     ValidationFailed
 }
@@ -277,6 +279,11 @@ internal static class PostgreSqlProbeFailureClassifier
         if (exception.SqlState.StartsWith("28", StringComparison.Ordinal))
         {
             return PostgreSqlProbeOutcome.AuthenticationFailed;
+        }
+
+        if (string.Equals(exception.SqlState, PostgresErrorCodes.InsufficientPrivilege, StringComparison.Ordinal))
+        {
+            return PostgreSqlProbeOutcome.TargetAccessDenied;
         }
 
         if (exception.SqlState.StartsWith("08", StringComparison.Ordinal))

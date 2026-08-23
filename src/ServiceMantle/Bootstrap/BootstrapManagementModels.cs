@@ -362,7 +362,7 @@ public sealed class BootstrapDatabaseProviderDescriptor
         BootstrapServerVersionRequirement serverVersionRequirement,
         IEnumerable<string>? aliases = null)
     {
-        Id = NormalizeProviderId(id);
+        Id = DatabaseProviderId.Normalize(id, nameof(id));
 
         DisplayName = displayName?.Trim() ??
             throw new ArgumentNullException(nameof(displayName));
@@ -422,43 +422,6 @@ public sealed class BootstrapDatabaseProviderDescriptor
         $"TargetKind={TargetKind}, ServerVersionRequirement={ServerVersionRequirement}, " +
         $"Aliases={string.Join(',', Aliases)})";
 
-    private static string NormalizeProviderId(string id)
-    {
-        ArgumentNullException.ThrowIfNull(id);
-
-        var normalized = id.Trim();
-
-        if (normalized.Length is 0)
-        {
-            throw new ArgumentException("The provider id cannot be empty.", nameof(id));
-        }
-
-        if (normalized.Length > 64)
-        {
-            throw new ArgumentException("The provider id is too long.", nameof(id));
-        }
-
-        if (!IsAsciiLetterOrDigit(normalized[0]))
-        {
-            throw new ArgumentException(
-                "The provider id must start with an ASCII letter or digit.",
-                nameof(id));
-        }
-
-        for (var i = 1; i < normalized.Length; i++)
-        {
-            var character = normalized[i];
-            if (!IsAsciiLetterOrDigit(character) && character is not ('.' or '-' or '_'))
-            {
-                throw new ArgumentException(
-                    "The provider id contains invalid characters.",
-                    nameof(id));
-            }
-        }
-
-        return normalized;
-    }
-
     private static IReadOnlyList<string> NormalizeAliases(IEnumerable<string>? aliases)
     {
         if (aliases is null)
@@ -475,14 +438,11 @@ public sealed class BootstrapDatabaseProviderDescriptor
                 throw new ArgumentNullException(nameof(aliases));
             }
 
-            normalizedAliases.Add(NormalizeProviderId(alias));
+            normalizedAliases.Add(DatabaseProviderId.Normalize(alias, nameof(aliases)));
         }
 
         return normalizedAliases.AsReadOnly();
     }
-
-    private static bool IsAsciiLetterOrDigit(char character) =>
-        character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9';
 }
 
 /// <summary>

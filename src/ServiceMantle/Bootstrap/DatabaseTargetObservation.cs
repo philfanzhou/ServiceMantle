@@ -6,7 +6,7 @@ namespace ServiceMantle.Bootstrap;
 public enum DatabaseTargetObservationStatus
 {
     /// <summary>
-    /// The database server itself could not be reached or refused the supplied credentials.
+    /// The database server itself could not be reached or did not complete the connection protocol.
     /// </summary>
     ServerUnreachable,
 
@@ -16,7 +16,8 @@ public enum DatabaseTargetObservationStatus
     TargetMissing,
 
     /// <summary>
-    /// The server is reachable and the target exists, but a connection to the target itself failed.
+    /// The server is reachable, but a connection to the target itself failed. Target existence may
+    /// be known or unknown depending on the stage at which the server rejected the connection.
     /// </summary>
     TargetUnreachable,
 
@@ -33,9 +34,13 @@ public enum DatabaseTargetObservationStatus
 /// </summary>
 public sealed class DatabaseTargetObservation
 {
-    private DatabaseTargetObservation(DatabaseTargetObservationStatus status, string? errorCode)
+    private DatabaseTargetObservation(
+        DatabaseTargetObservationStatus status,
+        bool? targetExists,
+        string? errorCode)
     {
         Status = status;
+        TargetExists = targetExists;
         ErrorCode = errorCode;
     }
 
@@ -51,17 +56,16 @@ public sealed class DatabaseTargetObservation
     public string? ErrorCode { get; }
 
     /// <summary>
-    /// Gets a value indicating whether the database server accepted a connection.
+    /// Gets a value indicating whether the database server responded to the connection attempt.
     /// </summary>
     public bool IsServerReachable => Status != DatabaseTargetObservationStatus.ServerUnreachable;
 
     /// <summary>
-    /// Gets a value indicating whether the named target is not known to be missing. This is
-    /// conservative: for <see cref="DatabaseTargetObservationStatus.TargetUnreachable"/>, existence
-    /// could not be confirmed either way, so it is not reported as missing.
+    /// Gets whether the named target exists, or null when the observation could not establish
+    /// existence. Authentication can fail before PostgreSQL checks the database name, so an
+    /// authentication failure reports null rather than incorrectly claiming the target exists.
     /// </summary>
-    public bool TargetExists =>
-        Status is DatabaseTargetObservationStatus.TargetUnreachable or DatabaseTargetObservationStatus.TargetConnectable;
+    public bool? TargetExists { get; }
 
     /// <summary>
     /// Gets a value indicating whether a connection to the target itself succeeded.
@@ -73,26 +77,46 @@ public sealed class DatabaseTargetObservation
     /// </summary>
     /// <param name="errorCode">A safe, stable error code describing the failure.</param>
     public static DatabaseTargetObservation ServerUnreachable(string errorCode) =>
-        new(DatabaseTargetObservationStatus.ServerUnreachable, RequireErrorCode(errorCode));
+        new(
+            DatabaseTargetObservationStatus.ServerUnreachable,
+            null,
+            DatabaseTargetPreparationErrorCode.Validate(errorCode, nameof(errorCode)));
 
     /// <summary>
     /// Creates an observation indicating the server is reachable but the target does not exist.
     /// </summary>
     public static DatabaseTargetObservation TargetMissing() =>
-        new(DatabaseTargetObservationStatus.TargetMissing, null);
+        new(DatabaseTargetObservationStatus.TargetMissing, false, null);
 
     /// <summary>
-    /// Creates an observation indicating the target exists but could not itself be connected to.
+    /// Creates an observation indicating the target could not itself be connected to.
     /// </summary>
     /// <param name="errorCode">A safe, stable error code describing the failure.</param>
-    public static DatabaseTargetObservation TargetUnreachable(string errorCode) =>
-        new(DatabaseTargetObservationStatus.TargetUnreachable, RequireErrorCode(errorCode));
+    /// <param name="targetExists">
+    /// true when the server proved the target exists; null when existence could not be established.
+    /// </param>
+    public static DatabaseTargetObservation TargetUnreachable(
+        string errorCode,
+        bool? targetExists = null)
+    {
+        if (targetExists == false)
+        {
+            throw new ArgumentException(
+                "A target known to be missing must use the TargetMissing observation.",
+                nameof(targetExists));
+        }
+
+        return new DatabaseTargetObservation(
+            DatabaseTargetObservationStatus.TargetUnreachable,
+            targetExists,
+            DatabaseTargetPreparationErrorCode.Validate(errorCode, nameof(errorCode)));
+    }
 
     /// <summary>
     /// Creates an observation indicating the target exists and is connectable.
     /// </summary>
     public static DatabaseTargetObservation TargetConnectable() =>
-        new(DatabaseTargetObservationStatus.TargetConnectable, null);
+        new(DatabaseTargetObservationStatus.TargetConnectable, true, null);
 
     /// <summary>
     /// Returns safe observation information without secret values.
@@ -101,10 +125,4 @@ public sealed class DatabaseTargetObservation
         ErrorCode is null
             ? $"DatabaseTargetObservation(Status={Status})"
             : $"DatabaseTargetObservation(Status={Status}, ErrorCode={ErrorCode})";
-
-    private static string RequireErrorCode(string errorCode)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(errorCode);
-        return errorCode;
-    }
 }

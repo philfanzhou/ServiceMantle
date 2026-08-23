@@ -230,6 +230,16 @@ public sealed class PostgreSqlBootstrapDatabaseProviderTests
     }
 
     [Fact]
+    public void Classifier_maps_postgres_exception_insufficient_privilege_as_target_access_denied()
+    {
+        var exception = CreatePostgresException(PostgresErrorCodes.InsufficientPrivilege, "permission denied");
+
+        var outcome = PostgreSqlProbeFailureClassifier.Classify(exception);
+
+        Assert.Equal(PostgreSqlProbeOutcome.TargetAccessDenied, outcome);
+    }
+
+    [Fact]
     public void Classifier_maps_postgres_exception_connection_failed_class_08xx()
     {
         var exception = CreatePostgresException("08006", "Password=pst-secret");

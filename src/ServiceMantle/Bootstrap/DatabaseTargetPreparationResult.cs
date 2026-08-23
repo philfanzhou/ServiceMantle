@@ -64,11 +64,11 @@ public sealed class DatabaseTargetPreparationResult
     /// <summary>
     /// Creates a failed preparation result with a safe error code.
     /// </summary>
-    /// <param name="errorCode">A safe error code, typically from <see cref="WellKnownDatabaseTargetPreparationErrorCodes"/>.</param>
+    /// <param name="errorCode">A registered <see cref="WellKnownDatabaseTargetPreparationErrorCodes"/> value.</param>
     public static DatabaseTargetPreparationResult Failure(string errorCode)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(errorCode);
-        return new DatabaseTargetPreparationResult(false, null, errorCode);
+        var safeErrorCode = DatabaseTargetPreparationErrorCode.Validate(errorCode, nameof(errorCode));
+        return new DatabaseTargetPreparationResult(false, null, safeErrorCode);
     }
 
     /// <summary>

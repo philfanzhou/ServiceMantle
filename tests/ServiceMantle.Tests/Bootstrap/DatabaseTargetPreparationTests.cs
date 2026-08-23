@@ -12,7 +12,7 @@ public sealed class DatabaseTargetPreparationTests
 
         Assert.Equal(DatabaseTargetObservationStatus.ServerUnreachable, observation.Status);
         Assert.False(observation.IsServerReachable);
-        Assert.False(observation.TargetExists);
+        Assert.Null(observation.TargetExists);
         Assert.False(observation.IsTargetConnectable);
         Assert.Equal("database_target_preparation.connection_failed", observation.ErrorCode);
     }
@@ -29,14 +29,27 @@ public sealed class DatabaseTargetPreparationTests
     }
 
     [Fact]
-    public void Observation_target_unreachable_reports_server_reachable_and_target_not_confirmed_missing()
+    public void Observation_target_unreachable_reports_known_existing_target()
     {
-        var observation = DatabaseTargetObservation.TargetUnreachable("database_target_preparation.permission_denied");
+        var observation = DatabaseTargetObservation.TargetUnreachable(
+            WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied,
+            targetExists: true);
 
         Assert.True(observation.IsServerReachable);
         Assert.True(observation.TargetExists);
         Assert.False(observation.IsTargetConnectable);
         Assert.Equal("database_target_preparation.permission_denied", observation.ErrorCode);
+    }
+
+    [Fact]
+    public void Observation_target_unreachable_can_report_unknown_existence()
+    {
+        var observation = DatabaseTargetObservation.TargetUnreachable(
+            WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied);
+
+        Assert.True(observation.IsServerReachable);
+        Assert.Null(observation.TargetExists);
+        Assert.False(observation.IsTargetConnectable);
     }
 
     [Fact]
@@ -55,6 +68,17 @@ public sealed class DatabaseTargetPreparationTests
     {
         Assert.Throws<ArgumentException>(() => DatabaseTargetObservation.ServerUnreachable(" "));
         Assert.Throws<ArgumentException>(() => DatabaseTargetObservation.TargetUnreachable(""));
+    }
+
+    [Theory]
+    [InlineData("Password=admin-secret;Host=db")]
+    [InlineData("database_target_preparation.unknown")]
+    [InlineData("database_target_preparation.密码")]
+    [InlineData("database_target_preparation.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public void Observation_rejects_unregistered_or_unsafe_error_code(string errorCode)
+    {
+        Assert.Throws<ArgumentException>(() => DatabaseTargetObservation.ServerUnreachable(errorCode));
+        Assert.Throws<ArgumentException>(() => DatabaseTargetObservation.TargetUnreachable(errorCode));
     }
 
     [Fact]
@@ -102,6 +126,16 @@ public sealed class DatabaseTargetPreparationTests
     public void Preparation_result_rejects_empty_error_code()
     {
         Assert.Throws<ArgumentException>(() => DatabaseTargetPreparationResult.Failure(" "));
+    }
+
+    [Theory]
+    [InlineData("Password=admin-secret;Host=db")]
+    [InlineData("database_target_preparation.unknown")]
+    [InlineData("database_target_preparation.密码")]
+    [InlineData("database_target_preparation.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public void Preparation_result_rejects_unregistered_or_unsafe_error_code(string errorCode)
+    {
+        Assert.Throws<ArgumentException>(() => DatabaseTargetPreparationResult.Failure(errorCode));
     }
 
     [Fact]
@@ -195,6 +229,39 @@ public sealed class DatabaseTargetPreparationTests
     }
 
     [Fact]
+    public void Registry_normalizes_provider_id_before_duplicate_detection_and_lookup()
+    {
+        var provider = new FakeProvider(" PostgreSQL ");
+        var registry = new DatabaseTargetPreparationProviderRegistry([provider]);
+
+        Assert.True(registry.TryGetProvider(" postgresql ", out var resolved));
+        Assert.Same(provider, resolved);
+
+        Assert.Throws<ArgumentException>(() =>
+            new DatabaseTargetPreparationProviderRegistry(
+                [provider, new FakeProvider("postgresql")]));
+    }
+
+    [Theory]
+    [InlineData("invalid provider")]
+    [InlineData(".invalid")]
+    [InlineData("provider/password")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public void Registry_rejects_non_canonical_provider_id(string providerId)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new DatabaseTargetPreparationProviderRegistry([new FakeProvider(providerId)]));
+    }
+
+    [Fact]
+    public void Registry_rejects_undefined_target_kind()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new DatabaseTargetPreparationProviderRegistry(
+                [new FakeProvider("InvalidKind", (BootstrapDatabaseTargetKind)99)]));
+    }
+
+    [Fact]
     public void Registry_rejects_null_provider()
     {
         Assert.Throws<ArgumentNullException>(
@@ -215,14 +282,17 @@ public sealed class DatabaseTargetPreparationTests
 
     private sealed class FakeProvider : IDatabaseTargetPreparationProvider
     {
-        public FakeProvider(string providerId)
+        public FakeProvider(
+            string providerId,
+            BootstrapDatabaseTargetKind targetKind = BootstrapDatabaseTargetKind.ServerDatabase)
         {
             ProviderId = providerId;
+            TargetKind = targetKind;
         }
 
         public string ProviderId { get; }
 
-        public BootstrapDatabaseTargetKind TargetKind => BootstrapDatabaseTargetKind.ServerDatabase;
+        public BootstrapDatabaseTargetKind TargetKind { get; }
 
         public ValueTask<DatabaseTargetObservation> ObserveAsync(
             BootstrapDatabaseConfiguration target,

@@ -37,12 +37,14 @@ public sealed class DatabaseTargetPreparationProviderRegistry
                 throw new ArgumentNullException(nameof(providers), "Provider cannot be null.");
             }
 
-            var providerId = provider.ProviderId;
-            if (string.IsNullOrWhiteSpace(providerId))
+            var providerId = DatabaseProviderId.Normalize(provider.ProviderId, nameof(providers));
+
+            if (!Enum.IsDefined(provider.TargetKind))
             {
-                throw new ArgumentException(
-                    "Provider ID cannot be null or whitespace.",
-                    nameof(providers));
+                throw new ArgumentOutOfRangeException(
+                    nameof(providers),
+                    provider.TargetKind,
+                    "The database target preparation provider has an undefined target kind.");
             }
 
             if (registrations.ContainsKey(providerId))
@@ -66,11 +68,11 @@ public sealed class DatabaseTargetPreparationProviderRegistry
     {
         provider = null;
 
-        if (string.IsNullOrWhiteSpace(providerId))
+        if (!DatabaseProviderId.TryNormalize(providerId, out var normalizedProviderId))
         {
             return false;
         }
 
-        return registrations.TryGetValue(providerId, out provider);
+        return registrations.TryGetValue(normalizedProviderId, out provider);
     }
 }

@@ -118,10 +118,10 @@ Oracle is planned as a `ServerSchema`-style target provider; SQL Server and SQLi
 
 Database target preparation is a separate, optional capability from bootstrap validation. A provider that implements `IBootstrapDatabaseProvider` does not automatically support preparing (creating) a missing target; a provider opts in only by also registering an `IDatabaseTargetPreparationProvider` implementation. Callers resolve this capability through `DatabaseTargetPreparationProviderRegistry` and must fail closed with `database_target_preparation.capability_not_supported` when no preparation provider is registered for a database provider id, rather than treating an unsupported provider as already prepared.
 
-The capability models three target kinds via the existing `BootstrapDatabaseTargetKind` enum (`ServerDatabase`, `File`, `ServerSchema`), and distinguishes three observation states:
+The capability models three target kinds via the existing `BootstrapDatabaseTargetKind` enum (`ServerDatabase`, `File`, `ServerSchema`), and exposes three independent observation signals:
 
-- **Server reachable** (`DatabaseTargetObservation.IsServerReachable`) — the database server accepted a connection.
-- **Target exists** (`DatabaseTargetObservation.TargetExists`) — the named target is not known to be missing.
+- **Server reachable** (`DatabaseTargetObservation.IsServerReachable`) — the database server responded to the connection attempt.
+- **Target exists** (`DatabaseTargetObservation.TargetExists`) — `true` when existence was proved, `false` when absence was proved, and `null` when the connection failed before existence could be established.
 - **Target connectable** (`DatabaseTargetObservation.IsTargetConnectable`) — a connection to the target itself succeeded.
 
 ```csharp
@@ -155,22 +155,23 @@ if (!result.Succeeded)
 
 ### PostgreSQL target preparation
 
-`ServiceMantle.Database.PostgreSql.PostgreSqlDatabaseTargetPreparationProvider` observes a PostgreSQL target with a single connection attempt: a structured "database does not exist" response (SQLSTATE `3D000`) already proves the server is reachable, so no separate maintenance-database round trip is needed to distinguish an unreachable server from a missing target. `PrepareAsync` uses the caller-supplied administrative connection string to check `pg_database` and, only when the target is absent, issue `CREATE DATABASE`. A genuinely concurrent creation race — observed as either the `duplicate_database` error (`42P04`) or a unique-key violation on the `pg_database` name index (`23505`), depending on timing — is treated as success (`AlreadyExists`), not a failure.
+`ServiceMantle.Database.PostgreSql.PostgreSqlDatabaseTargetPreparationProvider` observes a PostgreSQL target with a single connection attempt. A structured "database does not exist" response (SQLSTATE `3D000`) proves the server is reachable and the target is missing. Authentication errors can occur before PostgreSQL checks the database name, so those observations report a reachable server with `TargetExists == null`; target-level `CONNECT` denial (`42501`) reports a known existing but unreachable target. `PrepareAsync` uses the caller-supplied administrative connection string to check `pg_database` and, only when the target is absent, issue `CREATE DATABASE`. Database names must be valid Unicode without control characters and no more than 63 UTF-8 bytes, preventing PostgreSQL's silent identifier truncation. A genuinely concurrent creation race — observed as either the `duplicate_database` error (`42P04`) or a unique-key violation on the `pg_database` name index (`23505`), depending on timing — is verified against `pg_database` and treated as `AlreadyExists`, not a failure.
 
 ### Error codes
 
-Safe error codes for database target preparation failures:
+Safe error codes for database target preparation failures are restricted to this allowlist; result and observation factories reject arbitrary text:
 - `database_target_preparation.capability_not_supported` - No preparation provider registered for the database provider.
 - `database_target_preparation.provider_mismatch` - The target does not identify this provider's database provider.
 - `database_target_preparation.invalid_target` - The target or administrative connection information is not usable.
 - `database_target_preparation.server_unreachable` - The database server could not be reached.
-- `database_target_preparation.permission_denied` - The administrative connection lacked permission to complete the operation.
+- `database_target_preparation.authentication_failed` - The server rejected the supplied credentials before target existence could be established.
+- `database_target_preparation.permission_denied` - The target connection or administrative operation lacked permission.
 - `database_target_preparation.target_conflict` - Creation collided with an existing, differently-owned object of the same name.
 - `database_target_preparation.connection_failed` - A connection could not be established or was lost while preparing the target.
 - `database_target_preparation.timeout` - The preparation operation exceeded its allotted timeout.
 - `database_target_preparation.preparation_failed` - Preparation failed for a provider-specific reason not covered by another code.
 
-Caller-requested cancellation is always propagated as `OperationCanceledException`, distinct from a timeout failure result.
+Caller-requested cancellation is always propagated as a sanitized `OperationCanceledException` without the underlying database exception, distinct from a timeout failure result. PostgreSQL preparation rejects infinite, non-positive, and timer-unsupported timeouts before starting work; an already-cancelled caller token takes precedence over timeout validation.
 
 ## Database migration orchestration
 

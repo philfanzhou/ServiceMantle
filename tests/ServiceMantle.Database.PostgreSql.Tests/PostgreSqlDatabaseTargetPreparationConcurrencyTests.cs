@@ -78,6 +78,55 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
     }
 
     [Fact]
+    public async Task Observe_AuthenticationFailure_DoesNotClaimMissingTargetExists()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var databaseName = $"missing_auth_{UniqueSuffix()}";
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.PostgreSql,
+            "16",
+            BuildConnectionString(databaseName, serverConnectionInfo!.Username!, "wrong-password"));
+
+        var observation = await new PostgreSqlDatabaseTargetPreparationProvider().ObserveAsync(
+            target,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(observation.IsServerReachable);
+        Assert.Null(observation.TargetExists);
+        Assert.False(observation.IsTargetConnectable);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.AuthenticationFailed, observation.ErrorCode);
+        Assert.False(await DatabaseExistsAsync(databaseName));
+    }
+
+    [Fact]
+    public async Task Observe_ExistingTargetWithoutConnectPrivilege_ReportsKnownTargetUnreachable()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var roleName = $"observe_role_{UniqueSuffix()}";
+        const string rolePassword = "observe-role-password";
+        var databaseName = $"no_connect_{UniqueSuffix()}";
+        await CreateNonCreateDbRoleAsync(roleName, rolePassword);
+        await CreateRealDatabaseAsync(databaseName);
+        await RevokePublicConnectAsync(databaseName);
+
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.PostgreSql,
+            "16",
+            BuildConnectionString(databaseName, roleName, rolePassword));
+
+        var observation = await new PostgreSqlDatabaseTargetPreparationProvider().ObserveAsync(
+            target,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(observation.IsServerReachable);
+        Assert.True(observation.TargetExists);
+        Assert.False(observation.IsTargetConnectable);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied, observation.ErrorCode);
+    }
+
+    [Fact]
     public async Task Observe_UnreachableServer_ReportsServerUnreachable()
     {
         Assert.SkipUnless(CanRun, SkipReason);
@@ -99,7 +148,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
     {
         Assert.SkipUnless(CanRun, SkipReason);
 
-        var databaseName = $"created_{UniqueSuffix()}";
+        var databaseName = $"created_\"_数据库_{UniqueSuffix()}";
         var provider = new PostgreSqlDatabaseTargetPreparationProvider();
         var request = new DatabaseTargetPreparationRequest(
             CreateTargetConfiguration(databaseName),
@@ -113,6 +162,28 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         Assert.True(result.Succeeded);
         Assert.Equal(DatabaseTargetPreparationOutcome.Created, result.Outcome);
         Assert.True(await DatabaseExistsAsync(databaseName));
+    }
+
+    [Fact]
+    public async Task Prepare_RejectsOverlongDatabaseNameWithoutCreatingTruncatedTarget()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var databaseName = new string('a', 64);
+        var truncatedName = databaseName[..63];
+        var request = new DatabaseTargetPreparationRequest(
+            CreateTargetConfiguration(databaseName),
+            AdministrativeConnectionString());
+
+        var result = await new PostgreSqlDatabaseTargetPreparationProvider().PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(15),
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+        Assert.False(await DatabaseExistsAsync(databaseName));
+        Assert.False(await DatabaseExistsAsync(truncatedName));
     }
 
     [Fact]
@@ -140,10 +211,8 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
     }
 
     /// <summary>
-    /// Deterministic proof that two concurrent Prepare calls for the same missing database never
-    /// result in a destructive failure: exactly one database ends up existing, and both callers
-    /// observe success (one Created, and the other either Created or AlreadyExists depending on
-    /// the exact race, since PostgreSQL's own duplicate_database error is treated as success).
+    /// Deterministic proof that both calls observe the target as missing before either issues
+    /// CREATE DATABASE. Exactly one caller creates it and the racing caller reports AlreadyExists.
     /// </summary>
     [Fact]
     public async Task Prepare_ConcurrentCreation_BothSucceed_DatabaseCreatedExactlyOnce()
@@ -152,8 +221,13 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
 
         var databaseName = $"concurrent_{UniqueSuffix()}";
         var testToken = TestContext.Current.CancellationToken;
-        var provider1 = new PostgreSqlDatabaseTargetPreparationProvider();
-        var provider2 = new PostgreSqlDatabaseTargetPreparationProvider();
+        var barrier = new AsyncArrivalBarrier(2);
+        var provider1 = new PostgreSqlDatabaseTargetPreparationProvider(
+            new NpgsqlBootstrapProbe(),
+            new NpgsqlDatabaseCreationProbe(barrier.SignalAndWaitAsync));
+        var provider2 = new PostgreSqlDatabaseTargetPreparationProvider(
+            new NpgsqlBootstrapProbe(),
+            new NpgsqlDatabaseCreationProbe(barrier.SignalAndWaitAsync));
 
         var request1 = new DatabaseTargetPreparationRequest(
             CreateTargetConfiguration(databaseName),
@@ -173,9 +247,14 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         Assert.True(result1.Succeeded);
         Assert.True(result2.Succeeded);
 
-        var createdCount = new[] { result1.Outcome, result2.Outcome }
-            .Count(outcome => outcome == DatabaseTargetPreparationOutcome.Created);
-        Assert.True(createdCount is 1 or 2);
+        Assert.Equal(
+            1,
+            new[] { result1.Outcome, result2.Outcome }
+                .Count(outcome => outcome == DatabaseTargetPreparationOutcome.Created));
+        Assert.Equal(
+            1,
+            new[] { result1.Outcome, result2.Outcome }
+                .Count(outcome => outcome == DatabaseTargetPreparationOutcome.AlreadyExists));
 
         Assert.Equal(1, await CountDatabasesNamedAsync(databaseName));
     }
@@ -211,20 +290,59 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
     }
 
     [Fact]
-    public async Task Prepare_Cancellation_ThrowsOperationCanceledException()
+    public async Task Prepare_AuthenticationFailure_IsClassifiedWithoutLeakingCredentials()
     {
         Assert.SkipUnless(CanRun, SkipReason);
 
-        using var source = new CancellationTokenSource();
-        source.Cancel();
+        const string wrongPassword = "administrative-auth-secret";
+        var databaseName = $"auth_failed_{UniqueSuffix()}";
+        var request = new DatabaseTargetPreparationRequest(
+            CreateTargetConfiguration(databaseName),
+            BuildConnectionString("postgres", serverConnectionInfo!.Username!, wrongPassword));
 
+        var result = await new PostgreSqlDatabaseTargetPreparationProvider().PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(15),
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.AuthenticationFailed, result.ErrorCode);
+        Assert.DoesNotContain(wrongPassword, result.ToString(), StringComparison.Ordinal);
+        Assert.False(await DatabaseExistsAsync(databaseName));
+    }
+
+    [Fact]
+    public async Task Prepare_InFlightNpgsqlCancellation_IsSafeAndDoesNotCreateTarget()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        const string administrativePassword = "in-flight-cancellation-secret";
+        using var source = new CancellationTokenSource();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var acceptTask = listener.AcceptTcpClientAsync(TestContext.Current.CancellationToken).AsTask();
+
+        var databaseName = $"cancelled_{UniqueSuffix()}";
         var provider = new PostgreSqlDatabaseTargetPreparationProvider();
         var request = new DatabaseTargetPreparationRequest(
-            CreateTargetConfiguration($"cancelled_{UniqueSuffix()}"),
-            AdministrativeConnectionString());
+            CreateTargetConfiguration(databaseName),
+            $"Host=127.0.0.1;Port={port};Database=postgres;Username=cancel-admin;" +
+            $"Password={administrativePassword};Timeout=60;Command Timeout=60;Pooling=false");
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            provider.PrepareAsync(request, TimeSpan.FromSeconds(15), source.Token).AsTask());
+        var preparationTask = provider.PrepareAsync(request, TimeSpan.FromSeconds(30), source.Token).AsTask();
+        using var accepted = await acceptTask.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+        source.Cancel();
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() => preparationTask);
+
+        Assert.Null(exception.InnerException);
+        Assert.DoesNotContain(administrativePassword, exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("cancel-admin", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("127.0.0.1", exception.ToString(), StringComparison.Ordinal);
+        Assert.False(await DatabaseExistsAsync(databaseName));
     }
 
     /// <summary>
@@ -349,6 +467,17 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
+    private async Task RevokePublicConnectAsync(string databaseName)
+    {
+        await using var connection = new NpgsqlConnection(AdministrativeConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            $"REVOKE CONNECT ON DATABASE \"{databaseName.Replace("\"", "\"\"", StringComparison.Ordinal)}\" FROM PUBLIC";
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
     private async Task InsertMarkerRowAsync(string databaseName, string markerValue)
     {
         await using var connection = new NpgsqlConnection(
@@ -411,5 +540,28 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
     {
         var envVar = Environment.GetEnvironmentVariable("SERVICEMANTLE_POSTGRES_IMAGE");
         return envVar ?? "postgres:15-alpine";
+    }
+
+    private sealed class AsyncArrivalBarrier
+    {
+        private readonly int participantCount;
+        private readonly TaskCompletionSource allArrived =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int arrivals;
+
+        public AsyncArrivalBarrier(int participantCount)
+        {
+            this.participantCount = participantCount;
+        }
+
+        public async ValueTask SignalAndWaitAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref arrivals) == participantCount)
+            {
+                allArrived.TrySetResult();
+            }
+
+            await allArrived.Task.WaitAsync(cancellationToken);
+        }
     }
 }
