@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ServiceMantle.Audit;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore;
 
@@ -23,10 +24,10 @@ public static class ManagementAuditModelBuilderExtensions
         }
 
         var byteLengthMethod = typeof(ManagementAuditDatabaseFunctions).GetMethod(
-            nameof(ManagementAuditDatabaseFunctions.MetadataJsonByteLength),
+            nameof(ManagementAuditDatabaseFunctions.TextByteLength),
             System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
         modelBuilder.HasDbFunction(byteLengthMethod)
-            .HasName(GetMetadataJsonByteLengthFunction(databaseDialect))
+            .HasName(GetTextByteLengthFunction(databaseDialect))
             .IsBuiltIn()
             .HasParameter("value")
             .PropagatesNullability();
@@ -40,9 +41,30 @@ public static class ManagementAuditModelBuilderExtensions
                     table.HasCheckConstraint(
                         "ck_service_audit_logs_id_not_empty",
                         "id <> '00000000-0000-0000-0000-000000000000'");
-                    table.HasCheckConstraint(
-                        "ck_service_audit_logs_metadata_json_length",
-                        GetMetadataJsonLengthConstraint(databaseDialect));
+                    AddTextLengthConstraint(table, databaseDialect, "id", 36);
+                    AddTextLengthConstraint(
+                        table, databaseDialect, "operator_id", ManagementAuditOperator.MaxOperatorIdLength);
+                    AddTextLengthConstraint(
+                        table, databaseDialect, "operator_display_name", ManagementAuditOperator.MaxDisplayNameLength);
+                    AddTextLengthConstraint(
+                        table, databaseDialect, "operator_source", ManagementAuditOperatorSource.MaxLength);
+                    AddTextLengthConstraint(table, databaseDialect, "action", ManagementAuditAction.MaxLength);
+                    AddTextLengthConstraint(
+                        table, databaseDialect, "target_type", ManagementAuditTargetType.MaxLength);
+                    AddTextLengthConstraint(
+                        table, databaseDialect, "target_id", ManagementAuditTarget.MaxTargetIdLength);
+                    AddTextLengthConstraint(
+                        table, databaseDialect, "client_ip", ManagementAuditEvent.MaxClientIpLength);
+                    AddTextLengthConstraint(
+                        table, databaseDialect, "correlation_id", ManagementAuditEvent.MaxCorrelationIdLength);
+                    AddTextLengthConstraint(
+                        table, databaseDialect, "security_description", ManagementAuditEvent.MaxDescriptionLength);
+                    AddTextLengthConstraint(
+                        table,
+                        databaseDialect,
+                        "metadata_json",
+                        ManagementAuditEntityMapper.MaxMetadataJsonByteLength,
+                        limitIsAlreadyBytes: true);
                 });
 
             entity.HasKey(item => item.Id);
@@ -130,20 +152,22 @@ public static class ManagementAuditModelBuilderExtensions
         return modelBuilder;
     }
 
-    private static string GetMetadataJsonLengthConstraint(ManagementAuditDatabaseDialect databaseDialect) =>
-        databaseDialect switch
-        {
-            ManagementAuditDatabaseDialect.Sqlite =>
-                $"metadata_json IS NULL OR octet_length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonByteLength}",
-            ManagementAuditDatabaseDialect.PostgreSql =>
-                $"metadata_json IS NULL OR octet_length(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonByteLength}",
-            ManagementAuditDatabaseDialect.SqlServer =>
-                $"metadata_json IS NULL OR DATALENGTH(metadata_json) <= {ManagementAuditEntityMapper.MaxMetadataJsonByteLength}",
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(databaseDialect), databaseDialect, "The management audit database dialect is not supported.")
-        };
+    private static void AddTextLengthConstraint(
+        Microsoft.EntityFrameworkCore.Metadata.Builders.TableBuilder<ManagementAuditLogEntity> table,
+        ManagementAuditDatabaseDialect databaseDialect,
+        string columnName,
+        int maximumLength,
+        bool limitIsAlreadyBytes = false)
+    {
+        var maximumBytes = limitIsAlreadyBytes
+            ? maximumLength
+            : ManagementAuditEntityMapper.MaxPersistedTextByteLength(maximumLength);
+        table.HasCheckConstraint(
+            $"ck_service_audit_logs_{columnName}_length",
+            $"{columnName} IS NULL OR {GetTextByteLengthFunction(databaseDialect)}({columnName}) <= {maximumBytes}");
+    }
 
-    private static string GetMetadataJsonByteLengthFunction(ManagementAuditDatabaseDialect databaseDialect) =>
+    private static string GetTextByteLengthFunction(ManagementAuditDatabaseDialect databaseDialect) =>
         databaseDialect switch
         {
             ManagementAuditDatabaseDialect.Sqlite => "octet_length",

@@ -24,6 +24,6 @@ public enum ManagementAuditDatabaseDialect
 
 internal static class ManagementAuditDatabaseFunctions
 {
-    internal static long? MetadataJsonByteLength(string? value) =>
+    internal static long? TextByteLength(string? value) =>
         throw new InvalidOperationException("This method may only be used in an EF Core query.");
 }

@@ -173,6 +173,11 @@ public sealed class ManagementAuditEventTests
     [Theory]
     [InlineData("password")]
     [InlineData("Password")]
+    [InlineData("pass")]
+    [InlineData("db_pass")]
+    [InlineData("passwd")]
+    [InlineData("passphrase")]
+    [InlineData("account_key")]
     [InlineData("db_password")]
     [InlineData("setup-code")]
     [InlineData("connection-string")]
@@ -296,6 +301,24 @@ public sealed class ManagementAuditEventTests
 
         Assert.DoesNotContain(secret, auditEvent.SecurityDescription, StringComparison.Ordinal);
         Assert.Contains("[REDACTED]", auditEvent.SecurityDescription, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("postgresql://admin:alpha,beta@db.internal/prod")]
+    [InlineData("mysql://root:alpha;beta@db.internal/prod")]
+    [InlineData("postgresql://admin:alpha%2Cbeta@db.internal/prod")]
+    [InlineData("mysql://root:alpha%3Bbeta@db.internal/prod")]
+    public void Create_redacts_entire_field_for_database_uris_with_sub_delimiters(string uri)
+    {
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            securityDescription: uri,
+            metadata: new Dictionary<string, string> { ["note"] = uri });
+
+        Assert.Equal("[REDACTED]", auditEvent.SecurityDescription);
+        Assert.Equal("[REDACTED]", auditEvent.Metadata["note"]);
     }
 
     [Fact]

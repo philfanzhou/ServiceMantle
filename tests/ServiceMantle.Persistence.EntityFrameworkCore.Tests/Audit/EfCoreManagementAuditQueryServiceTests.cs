@@ -482,6 +482,38 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     }
 
     [Fact]
+    public async Task QueryAsync_preflights_oversized_non_metadata_text_with_stable_error()
+    {
+        await using var context = await SeedAsync();
+        await context.Database.ExecuteSqlRawAsync(
+            "PRAGMA ignore_check_constraints = ON",
+            TestContext.Current.CancellationToken);
+        var connection = Assert.IsType<SqliteConnection>(context.Database.GetDbConnection());
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO service_audit_logs
+                (id, operator_id, operator_source, action, target_type, target_id, outcome,
+                 occurred_at_utc, security_description)
+            VALUES
+                ($id, 'admin-1', 'interactive_admin', 'configuration.changed', 'configuration',
+                 'smtp', 1, '2026-01-02 00:00:00', char(0) || printf('%.*c', 1000000, 'x'));
+            """;
+        command.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        await context.Database.ExecuteSqlRawAsync(
+            "PRAGMA ignore_check_constraints = OFF",
+            TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
+                .QueryAsync(ManagementAuditQuery.Create(pageSize: 1), TestContext.Current.CancellationToken)
+                .AsTask());
+
+        Assert.Equal("audit.entity_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
     public async Task QueryAsync_rejects_empty_id_at_a_page_boundary_instead_of_emitting_an_invalid_cursor()
     {
         await using var context = await SeedAsync(

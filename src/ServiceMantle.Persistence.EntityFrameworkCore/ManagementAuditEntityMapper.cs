@@ -9,6 +9,12 @@ internal static class ManagementAuditEntityMapper
 {
     internal const int MaxMetadataJsonByteLength = 256 * 1024;
 
+    // Four bytes per UTF-16 code unit is deliberately conservative. Domain validation still
+    // enforces the exact character limits; this ceiling bounds transfer/allocation for dirty rows
+    // before EF materializes their text values.
+    internal static int MaxPersistedTextByteLength(int maxCharacterLength) =>
+        checked(maxCharacterLength * 4);
+
     private static readonly JsonDocumentOptions MetadataDocumentOptions = new()
     {
         AllowTrailingCommas = false,
@@ -116,7 +122,7 @@ internal static class ManagementAuditEntityMapper
                 safeEvent.SecurityDescription,
                 safeEvent.Metadata);
         }
-        catch (ManagementAuditException exception)
+        catch (Exception exception) when (exception is ManagementAuditException or ArgumentException)
         {
             throw InvalidStoredEntity(exception);
         }

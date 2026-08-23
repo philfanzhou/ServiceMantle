@@ -60,9 +60,44 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
         if (await ordered
             .Take(query.PageSize + 1)
             .AnyAsync(
-                item => item.MetadataJson != null
-                    && ManagementAuditDatabaseFunctions.MetadataJsonByteLength(item.MetadataJson)
-                        > ManagementAuditEntityMapper.MaxMetadataJsonByteLength,
+                item => item.Id == Guid.Empty
+                    || item.OperatorSource == null
+                    || item.Action == null
+                    || item.TargetType == null
+                    || item.TargetId == null
+                    || (item.OperatorId != null
+                        && ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorId)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                ManagementAuditOperator.MaxOperatorIdLength))
+                    || (item.OperatorDisplayName != null
+                        && ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorDisplayName)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                ManagementAuditOperator.MaxDisplayNameLength))
+                    || ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorSource)
+                        > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                            ManagementAuditOperatorSource.MaxLength)
+                    || ManagementAuditDatabaseFunctions.TextByteLength(item.Action)
+                        > ManagementAuditEntityMapper.MaxPersistedTextByteLength(ManagementAuditAction.MaxLength)
+                    || ManagementAuditDatabaseFunctions.TextByteLength(item.TargetType)
+                        > ManagementAuditEntityMapper.MaxPersistedTextByteLength(ManagementAuditTargetType.MaxLength)
+                    || ManagementAuditDatabaseFunctions.TextByteLength(item.TargetId)
+                        > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                            ManagementAuditTarget.MaxTargetIdLength)
+                    || (item.ClientIp != null
+                        && ManagementAuditDatabaseFunctions.TextByteLength(item.ClientIp)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                ManagementAuditEvent.MaxClientIpLength))
+                    || (item.CorrelationId != null
+                        && ManagementAuditDatabaseFunctions.TextByteLength(item.CorrelationId)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                ManagementAuditEvent.MaxCorrelationIdLength))
+                    || (item.SecurityDescription != null
+                        && ManagementAuditDatabaseFunctions.TextByteLength(item.SecurityDescription)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                ManagementAuditEvent.MaxDescriptionLength))
+                    || (item.MetadataJson != null
+                        && ManagementAuditDatabaseFunctions.TextByteLength(item.MetadataJson)
+                            > ManagementAuditEntityMapper.MaxMetadataJsonByteLength),
                 cancellationToken)
             .ConfigureAwait(false))
         {

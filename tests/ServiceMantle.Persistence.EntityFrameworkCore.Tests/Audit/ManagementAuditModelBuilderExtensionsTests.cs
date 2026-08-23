@@ -51,6 +51,12 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
         Assert.Contains(
             designTimeEntityType.GetCheckConstraints(),
             constraint => constraint.Name == "ck_service_audit_logs_metadata_json_length");
+        Assert.Contains(
+            designTimeEntityType.GetCheckConstraints(),
+            constraint => constraint.Name == "ck_service_audit_logs_security_description_length");
+        Assert.Contains(
+            designTimeEntityType.GetCheckConstraints(),
+            constraint => constraint.Name == "ck_service_audit_logs_target_id_length");
     }
 
     [Fact]
@@ -107,16 +113,17 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
 
         var createScript = context.Database.GenerateCreateScript();
         var querySql = context.ServiceAuditLogs
-            .Where(item => ManagementAuditDatabaseFunctions.MetadataJsonByteLength(item.MetadataJson) > 0)
+            .Where(item => ManagementAuditDatabaseFunctions.TextByteLength(item.MetadataJson) > 0)
             .ToQueryString();
 
         Assert.Contains("DATALENGTH(metadata_json)", createScript, StringComparison.Ordinal);
+        Assert.Contains("DATALENGTH(security_description)", createScript, StringComparison.Ordinal);
         Assert.DoesNotContain(" OR length(metadata_json)", createScript, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("DATALENGTH", querySql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Sqlite_constraints_use_encoded_bytes_and_reject_empty_ids()
+    public async Task Sqlite_constraints_use_encoded_bytes_and_reject_empty_ids_or_oversized_text()
     {
         using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -150,9 +157,32 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
         });
         var byteLengthException = await Assert.ThrowsAsync<DbUpdateException>(() =>
             context.SaveChangesAsync(TestContext.Current.CancellationToken));
+        context.ChangeTracker.Clear();
+
+        await using var oversizedDescriptionCommand = connection.CreateCommand();
+        oversizedDescriptionCommand.CommandText =
+            """
+            INSERT INTO service_audit_logs
+                (id, operator_source, action, target_type, target_id, outcome, occurred_at_utc,
+                 security_description)
+            VALUES
+                ($id, 'system', 'configuration.changed', 'configuration', 'smtp', 1,
+                 '2026-01-01 00:00:00', char(0) || printf('%.*c', $length, 'x'));
+            """;
+        oversizedDescriptionCommand.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
+        oversizedDescriptionCommand.Parameters.AddWithValue(
+            "$length",
+            ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                ManagementAuditEvent.MaxDescriptionLength));
+        var descriptionLengthException = await Assert.ThrowsAsync<SqliteException>(() =>
+            oversizedDescriptionCommand.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
 
         Assert.Contains("ck_service_audit_logs_id_not_empty", emptyIdException.Message, StringComparison.Ordinal);
         Assert.Contains("ck_service_audit_logs_metadata_json_length", byteLengthException.ToString(), StringComparison.Ordinal);
+        Assert.Contains(
+            "ck_service_audit_logs_security_description_length",
+            descriptionLengthException.Message,
+            StringComparison.Ordinal);
         Assert.True(astralMetadata.Length < ManagementAuditEntityMapper.MaxMetadataJsonByteLength);
     }
 

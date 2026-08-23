@@ -6,8 +6,9 @@ namespace ServiceMantle.Audit;
 /// <summary>
 /// A validated, sanitized management audit event ready to be written. Instances are only created
 /// through <see cref="Create"/>, which enforces the sensitive-content policy: metadata keys naming a
-/// secret are rejected, and secret-shaped substrings in the description or metadata values are
-/// redacted before the event is constructed.
+/// secret are rejected, and supported secret-shaped formats in the description or metadata values
+/// are redacted before the event is constructed. Callers must never provide opaque secrets as free
+/// text; sanitization is a defense-in-depth boundary rather than a general-purpose DLP engine.
 /// </summary>
 public sealed record ManagementAuditEvent
 {

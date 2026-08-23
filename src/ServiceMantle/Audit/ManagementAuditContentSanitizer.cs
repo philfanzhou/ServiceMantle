@@ -7,16 +7,15 @@ namespace ServiceMantle.Audit;
 /// Applies the sensitive-content policy for audit descriptions and structured metadata:
 /// metadata keys that name a secret are rejected outright, and free-text values are scanned for
 /// secret-shaped substrings (connection strings, bearer tokens, JWTs, PEM key blocks) that are
-/// redacted in place so audit content can never carry connection strings, root keys, database
-/// administrator credentials, setup codes, passwords, tokens, or other sensitive configuration values.
+/// redacted according to the documented supported-format contract.
 /// </summary>
 internal static partial class ManagementAuditContentSanitizer
 {
     private static readonly string[] BlockedMetadataKeyTokens =
     [
-        "password", "pwd", "secret", "token", "apikey",
+        "pass", "passwd", "password", "passphrase", "pwd", "secret", "token", "apikey",
         "connectionstring", "connstr", "credential", "privatekey", "rootkey", "masterkey",
-        "setupcode", "clientsecret", "accesskey", "authorization", "cookie"
+        "setupcode", "clientsecret", "accesskey", "accountkey", "authorization", "cookie"
     ];
 
     internal static void EnsureMetadataKeyAllowed(string key)
@@ -45,13 +44,12 @@ internal static partial class ManagementAuditContentSanitizer
         // A sensitive assignment can contain arbitrary punctuation, quoting, or an opaque format
         // that this product-agnostic layer cannot parse reliably. Once the key is recognized, fail
         // closed for the entire field rather than attempting to guess where the secret ends.
-        if (SensitiveKeyValuePattern().IsMatch(value))
+        if (SensitiveKeyValuePattern().IsMatch(value) || DatabaseUriPattern().IsMatch(value))
         {
             return "[REDACTED]";
         }
 
-        var redacted = DatabaseUriPattern().Replace(value, "[REDACTED]");
-        redacted = ConnectionStringPattern().Replace(redacted, "[REDACTED]");
+        var redacted = ConnectionStringPattern().Replace(value, "[REDACTED]");
         redacted = BearerTokenPattern().Replace(redacted, "Bearer [REDACTED]");
         redacted = JwtLikePattern().Replace(redacted, "[REDACTED_TOKEN]");
         redacted = PemBlockPattern().Replace(redacted, "[REDACTED_KEY]");
