@@ -27,6 +27,10 @@ public static class ManagementAuditModelBuilderExtensions
 
             entity.Property(item => item.Id)
                 .HasColumnName("id")
+                .HasConversion(
+                    value => value.ToString("D"),
+                    value => Guid.Parse(value))
+                .HasMaxLength(36)
                 .IsRequired();
 
             entity.Property(item => item.OperatorId)
@@ -81,17 +85,20 @@ public static class ManagementAuditModelBuilderExtensions
             entity.Property(item => item.MetadataJson)
                 .HasColumnName("metadata_json");
 
-            entity.HasIndex(item => item.OccurredAtUtc)
-                .HasDatabaseName("ix_service_audit_logs_occurred_at_utc");
+            entity.HasIndex(item => new { item.OccurredAtUtc, item.Id })
+                .HasDatabaseName("ix_service_audit_logs_occurred_at_utc_id");
 
-            entity.HasIndex(item => item.Action)
-                .HasDatabaseName("ix_service_audit_logs_action");
+            entity.HasIndex(item => new { item.Action, item.OccurredAtUtc, item.Id })
+                .HasDatabaseName("ix_service_audit_logs_action_occurred_at_utc_id");
 
-            entity.HasIndex(item => new { item.TargetType, item.TargetId })
-                .HasDatabaseName("ix_service_audit_logs_target");
+            entity.HasIndex(item => new { item.TargetType, item.TargetId, item.OccurredAtUtc, item.Id })
+                .HasDatabaseName("ix_service_audit_logs_target_occurred_at_utc_id");
 
-            entity.HasIndex(item => item.OperatorId)
-                .HasDatabaseName("ix_service_audit_logs_operator_id");
+            entity.HasIndex(item => new { item.TargetId, item.OccurredAtUtc, item.Id })
+                .HasDatabaseName("ix_service_audit_logs_target_id_occurred_at_utc_id");
+
+            entity.HasIndex(item => new { item.OperatorId, item.OccurredAtUtc, item.Id })
+                .HasDatabaseName("ix_service_audit_logs_operator_id_occurred_at_utc_id");
         });
 
         return modelBuilder;

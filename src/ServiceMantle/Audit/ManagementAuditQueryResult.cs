@@ -1,7 +1,9 @@
 namespace ServiceMantle.Audit;
 
 /// <summary>
-/// A stable, bounded page of management audit records.
+/// A stable, bounded page of management audit records. The continuation cursor provides keyset
+/// pagination across concurrent inserts; <see cref="TotalCount"/> is a weakly consistent count from
+/// the query execution and may change if rows are deleted concurrently.
 /// </summary>
 public sealed record ManagementAuditQueryResult
 {
@@ -26,15 +28,22 @@ public sealed record ManagementAuditQueryResult
     public long TotalCount { get; }
 
     /// <summary>
+    /// Gets the opaque keyset cursor for the next page, or null when there are no more records.
+    /// </summary>
+    public string? ContinuationCursor { get; }
+
+    /// <summary>
     /// Gets a value indicating whether a subsequent page contains further records.
     /// </summary>
-    public bool HasNextPage => (long)Page * PageSize < TotalCount;
+    public bool HasNextPage => ContinuationCursor is not null
+        || (ContinuationCursor is null && (long)Page * PageSize < TotalCount);
 
     public ManagementAuditQueryResult(
         IReadOnlyList<ManagementAuditRecord> items,
         int page,
         int pageSize,
-        long totalCount)
+        long totalCount,
+        string? continuationCursor = null)
     {
         ArgumentNullException.ThrowIfNull(items);
 
@@ -42,5 +51,6 @@ public sealed record ManagementAuditQueryResult
         Page = page;
         PageSize = pageSize;
         TotalCount = totalCount;
+        ContinuationCursor = continuationCursor;
     }
 }

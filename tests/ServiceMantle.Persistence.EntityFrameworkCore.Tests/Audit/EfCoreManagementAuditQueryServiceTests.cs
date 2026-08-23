@@ -121,9 +121,11 @@ public sealed class EfCoreManagementAuditQueryServiceTests
         var firstPage = await service.QueryAsync(
             ManagementAuditQuery.Create(page: 1, pageSize: 2), TestContext.Current.CancellationToken);
         var secondPage = await service.QueryAsync(
-            ManagementAuditQuery.Create(page: 2, pageSize: 2), TestContext.Current.CancellationToken);
+            ManagementAuditQuery.Create(page: 2, pageSize: 2, cursor: firstPage.ContinuationCursor),
+            TestContext.Current.CancellationToken);
         var thirdPage = await service.QueryAsync(
-            ManagementAuditQuery.Create(page: 3, pageSize: 2), TestContext.Current.CancellationToken);
+            ManagementAuditQuery.Create(page: 3, pageSize: 2, cursor: secondPage.ContinuationCursor),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(5, firstPage.TotalCount);
         Assert.Equal(2, firstPage.Items.Count);
@@ -152,10 +154,50 @@ public sealed class EfCoreManagementAuditQueryServiceTests
         var firstPage = await service.QueryAsync(
             ManagementAuditQuery.Create(page: 1, pageSize: 2), TestContext.Current.CancellationToken);
         var secondPage = await service.QueryAsync(
-            ManagementAuditQuery.Create(page: 2, pageSize: 2), TestContext.Current.CancellationToken);
+            ManagementAuditQuery.Create(page: 2, pageSize: 2, cursor: firstPage.ContinuationCursor),
+            TestContext.Current.CancellationToken);
 
         var seenIds = firstPage.Items.Concat(secondPage.Items).Select(item => item.Id).ToList();
         Assert.Equal(4, seenIds.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task QueryAsync_cursor_excludes_records_inserted_after_first_page()
+    {
+        await using var context = await SeedAsync(
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(1)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(2)),
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(3)));
+
+        var service = new EfCoreManagementAuditQueryService<AuditTestDbContext>(context);
+        var firstPage = await service.QueryAsync(
+            ManagementAuditQuery.Create(pageSize: 1), TestContext.Current.CancellationToken);
+
+        var writer = new EfCoreManagementAuditWriter<AuditTestDbContext>(context);
+        await writer.RecordAsync(
+            Record("admin-new", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(4)),
+            TestContext.Current.CancellationToken);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var secondPage = await service.QueryAsync(
+            ManagementAuditQuery.Create(page: 2, pageSize: 1, cursor: firstPage.ContinuationCursor),
+            TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(secondPage.Items, item => item.Operator.OperatorId == "admin-new");
+        Assert.DoesNotContain(firstPage.Items.Select(item => item.Id), id => secondPage.Items.Any(item => item.Id == id));
+    }
+
+    [Fact]
+    public async Task QueryAsync_rejects_offset_pages_without_a_continuation_cursor()
+    {
+        await using var context = await SeedAsync(
+            Record("admin-1", WellKnownManagementAuditActions.AdminLoginSucceeded, ServiceTarget, Day(1)));
+        var service = new EfCoreManagementAuditQueryService<AuditTestDbContext>(context);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            service.QueryAsync(ManagementAuditQuery.Create(page: 2), TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.query_cursor_required", exception.ErrorCode);
     }
 
     [Fact]
@@ -182,6 +224,109 @@ public sealed class EfCoreManagementAuditQueryServiceTests
         var description = result.Items.Single().SecurityDescription;
         Assert.DoesNotContain("super-secret", description);
         Assert.Contains("[REDACTED]", description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task QueryAsync_revalidates_and_redacts_legacy_free_text_rows()
+    {
+        await using var context = await SeedAsync();
+        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
+        {
+            Id = Guid.NewGuid(),
+            OperatorId = "admin-1",
+            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
+            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
+            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
+            TargetId = "smtp",
+            Outcome = ManagementAuditOutcome.Success,
+            OccurredAtUtc = Day(1).UtcDateTime,
+            SecurityDescription = "password: clear-text",
+            MetadataJson = "{\"note\":\"token: clear-text\"}"
+        });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var result = await new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
+            .QueryAsync(ManagementAuditQuery.Create(), TestContext.Current.CancellationToken);
+
+        var item = Assert.Single(result.Items);
+        Assert.DoesNotContain("clear-text", item.SecurityDescription, StringComparison.Ordinal);
+        Assert.DoesNotContain("clear-text", item.Metadata["note"], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task QueryAsync_rejects_legacy_sensitive_metadata_keys_with_stable_error()
+    {
+        await using var context = await SeedAsync();
+        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
+        {
+            Id = Guid.NewGuid(),
+            OperatorId = "admin-1",
+            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
+            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
+            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
+            TargetId = "smtp",
+            Outcome = ManagementAuditOutcome.Success,
+            OccurredAtUtc = Day(1).UtcDateTime,
+            MetadataJson = "{\"password\":\"clear-text\"}"
+        });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
+                .QueryAsync(ManagementAuditQuery.Create(), TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.entity_invalid", exception.ErrorCode);
+        Assert.DoesNotContain("clear-text", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task QueryAsync_rejects_oversized_metadata_json_with_stable_error()
+    {
+        await using var context = await SeedAsync();
+        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
+        {
+            Id = Guid.NewGuid(),
+            OperatorId = "admin-1",
+            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
+            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
+            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
+            TargetId = "smtp",
+            Outcome = ManagementAuditOutcome.Success,
+            OccurredAtUtc = Day(1).UtcDateTime,
+            MetadataJson = new string('x', ManagementAuditEntityMapper.MaxMetadataJsonLength + 1)
+        });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
+                .QueryAsync(ManagementAuditQuery.Create(), TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.entity_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryAsync_rejects_malformed_metadata_json_with_stable_error()
+    {
+        await using var context = await SeedAsync();
+        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
+        {
+            Id = Guid.NewGuid(),
+            OperatorId = "admin-1",
+            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
+            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
+            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
+            TargetId = "smtp",
+            Outcome = ManagementAuditOutcome.Success,
+            OccurredAtUtc = Day(1).UtcDateTime,
+            MetadataJson = "{not-json"
+        });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
+                .QueryAsync(ManagementAuditQuery.Create(), TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.entity_invalid", exception.ErrorCode);
     }
 
     private static DateTimeOffset Day(int offset) =>

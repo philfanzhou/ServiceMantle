@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace ServiceMantle.Audit;
@@ -13,16 +14,21 @@ internal static partial class ManagementAuditContentSanitizer
 {
     private static readonly string[] BlockedMetadataKeyTokens =
     [
-        "password", "pwd", "secret", "token", "apikey", "api_key", "api-key",
-        "connectionstring", "connection_string", "connstr", "credential",
-        "privatekey", "private_key", "rootkey", "root_key", "masterkey", "master_key",
-        "setupcode", "setup_code", "clientsecret", "client_secret",
-        "accesskey", "access_key", "authorization", "cookie"
+        "password", "pwd", "secret", "token", "apikey",
+        "connectionstring", "connstr", "credential", "privatekey", "rootkey", "masterkey",
+        "setupcode", "clientsecret", "accesskey", "authorization", "cookie"
     ];
 
     internal static void EnsureMetadataKeyAllowed(string key)
     {
-        var normalizedKey = key.ToLowerInvariant();
+        var normalizedKey = NormalizeKey(key);
+        if (normalizedKey.Length == 0)
+        {
+            throw new ManagementAuditException(
+                "audit.metadata_key_rejected",
+                "The audit metadata key could not be normalized safely.");
+        }
+
         foreach (var blockedToken in BlockedMetadataKeyTokens)
         {
             if (normalizedKey.Contains(blockedToken, StringComparison.Ordinal))
@@ -36,17 +42,44 @@ internal static partial class ManagementAuditContentSanitizer
 
     internal static string Redact(string value)
     {
-        var redacted = KeyValueSecretPattern().Replace(value, match => $"{match.Groups["key"].Value}=[REDACTED]");
+        var redacted = ConnectionStringPattern().Replace(value, "[REDACTED]");
+        redacted = SensitiveKeyValuePattern().Replace(
+            redacted,
+            match => $"{match.Groups["key"].Value}{match.Groups["separator"].Value}[REDACTED]");
         redacted = BearerTokenPattern().Replace(redacted, "Bearer [REDACTED]");
         redacted = JwtLikePattern().Replace(redacted, "[REDACTED_TOKEN]");
         redacted = PemBlockPattern().Replace(redacted, "[REDACTED_KEY]");
         return redacted;
     }
 
+    private static string NormalizeKey(string key)
+    {
+        var normalized = key.Normalize(NormalizationForm.FormKC);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var character in normalized)
+        {
+            if (character is >= 'A' and <= 'Z')
+            {
+                builder.Append((char)(character + ('a' - 'A')));
+            }
+            else if (character is >= 'a' and <= 'z' or >= '0' and <= '9')
+            {
+                builder.Append(character);
+            }
+        }
+
+        return builder.ToString();
+    }
+
     [GeneratedRegex(
-        @"(?<key>(password|pwd|secret|token|apikey|api_key|masterkey|master_key))\s*=\s*[^;\s]+",
+        @"(?<key>pass(?:[\s_-]*word)?|pwd|secret|token|api[\s_-]*key|master[\s_-]*key|root[\s_-]*key|setup[\s_-]*code|connection[\s_-]*(?:string|str)|client[\s_-]*secret|access[\s_-]*key|credential|authorization|cookie)(?<separator>[""']?\s*[:=]\s*)(?:(?<quote>[""'])(?:(?!\k<quote>)[\s\S])*?\k<quote>|[^;,\r\n}\]]+)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex KeyValueSecretPattern();
+    private static partial Regex SensitiveKeyValuePattern();
+
+    [GeneratedRegex(
+        @"(?<![A-Za-z0-9_])(?:host|server|data[\s_-]*source|address)\s*=\s*[^;\r\n]+(?:;\s*[A-Za-z][A-Za-z0-9 _-]*\s*=\s*[^;\r\n]*)+",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ConnectionStringPattern();
 
     [GeneratedRegex(@"Bearer\s+[A-Za-z0-9\-_.~+/]+=*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BearerTokenPattern();

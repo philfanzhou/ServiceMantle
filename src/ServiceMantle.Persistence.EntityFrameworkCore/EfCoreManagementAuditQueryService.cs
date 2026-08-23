@@ -4,9 +4,9 @@ using ServiceMantle.Audit;
 namespace ServiceMantle.Persistence.EntityFrameworkCore;
 
 /// <summary>
-/// EF Core-based <see cref="IManagementAuditQueryService"/> providing stable, bounded pagination over
-/// <c>service_audit_logs</c>. Results are ordered by occurrence time with the record identifier as a
-/// tiebreaker so pages stay stable even when multiple records share the same timestamp.
+/// EF Core-based <see cref="IManagementAuditQueryService"/> providing bounded keyset pagination over
+/// <c>service_audit_logs</c>. A continuation cursor carries the snapshot boundary and the last
+/// occurrence/id key, so inserts after the first page cannot shift later pages and duplicate records.
 /// </summary>
 public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementAuditQueryService
     where TDbContext : DbContext, IServiceMantleAuditDbContext
@@ -31,25 +31,119 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
         ArgumentNullException.ThrowIfNull(query);
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (query.Cursor is null && query.Page != 1)
+        {
+            throw new ManagementAuditException(
+                "audit.query_cursor_required",
+                "A continuation cursor is required for pages after the first page.");
+        }
+
         var filtered = Filter(dbContext.ServiceAuditLogs.AsNoTracking(), query);
+        var cursor = query.Cursor is null
+            ? (ManagementAuditContinuationCursor?)null
+            : ManagementAuditContinuationCursor.Decode(query.Cursor);
 
-        var totalCount = await filtered.LongCountAsync(cancellationToken).ConfigureAwait(false);
+        if (cursor.HasValue && cursor.Value.SortOrder != query.SortOrder)
+        {
+            throw new ManagementAuditException(
+                "audit.query_cursor_invalid",
+                "The audit query continuation cursor does not match the requested sort order.");
+        }
 
-        var ordered = query.SortOrder == ManagementAuditSortOrder.Oldest
-            ? filtered.OrderBy(item => item.OccurredAtUtc).ThenBy(item => item.Id)
-            : filtered.OrderByDescending(item => item.OccurredAtUtc).ThenByDescending(item => item.Id);
+        var snapshot = cursor ?? await FindSnapshotAsync(filtered, query.SortOrder, cancellationToken)
+            .ConfigureAwait(false);
 
-        var skip = (query.Page - 1) * query.PageSize;
+        if (!snapshot.HasValue)
+        {
+            return new ManagementAuditQueryResult([], query.Page, query.PageSize, 0);
+        }
+
+        var snapshotFiltered = ApplySnapshot(filtered, snapshot.Value);
+        var totalCount = await snapshotFiltered.LongCountAsync(cancellationToken).ConfigureAwait(false);
+        var pageSource = cursor.HasValue
+            ? ApplyCursor(snapshotFiltered, cursor.Value)
+            : snapshotFiltered;
+        var ordered = Order(pageSource, query.SortOrder);
         var entities = await ordered
-            .Skip(skip)
-            .Take(query.PageSize)
+            .Take(query.PageSize + 1)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        var items = entities.Select(ManagementAuditEntityMapper.ConvertToRecord).ToList();
+        var hasNext = entities.Count > query.PageSize;
+        if (hasNext)
+        {
+            entities.RemoveAt(query.PageSize);
+        }
 
-        return new ManagementAuditQueryResult(items, query.Page, query.PageSize, totalCount);
+        var items = entities.Select(ManagementAuditEntityMapper.ConvertToRecord).ToList();
+        var continuationCursor = hasNext && entities.Count > 0
+            ? ManagementAuditContinuationCursor.Encode(
+                new ManagementAuditContinuationCursor(
+                    snapshot.Value.SnapshotOccurredAtUtc,
+                    snapshot.Value.SnapshotId,
+                    new DateTimeOffset(DateTime.SpecifyKind(entities[^1].OccurredAtUtc, DateTimeKind.Utc)),
+                    entities[^1].Id,
+                    query.SortOrder))
+            : null;
+
+        return new ManagementAuditQueryResult(
+            items,
+            query.Page,
+            query.PageSize,
+            totalCount,
+            continuationCursor);
     }
+
+    private static async Task<ManagementAuditContinuationCursor?> FindSnapshotAsync(
+        IQueryable<ManagementAuditLogEntity> filtered,
+        ManagementAuditSortOrder sortOrder,
+        CancellationToken cancellationToken)
+    {
+        var latest = await filtered
+            .OrderByDescending(item => item.OccurredAtUtc)
+            .ThenByDescending(item => item.Id)
+            .Select(item => new { item.OccurredAtUtc, item.Id })
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return latest is null
+            ? null
+            : new ManagementAuditContinuationCursor(
+                new DateTimeOffset(DateTime.SpecifyKind(latest.OccurredAtUtc, DateTimeKind.Utc)),
+                latest.Id,
+                default,
+                Guid.Empty,
+                sortOrder);
+    }
+
+    private static IQueryable<ManagementAuditLogEntity> ApplySnapshot(
+        IQueryable<ManagementAuditLogEntity> source,
+        ManagementAuditContinuationCursor cursor)
+    {
+        return source.Where(item => item.OccurredAtUtc < cursor.SnapshotOccurredAtUtc.UtcDateTime
+            || (item.OccurredAtUtc == cursor.SnapshotOccurredAtUtc.UtcDateTime
+                && item.Id.CompareTo(cursor.SnapshotId) <= 0));
+    }
+
+    private static IQueryable<ManagementAuditLogEntity> ApplyCursor(
+        IQueryable<ManagementAuditLogEntity> source,
+        ManagementAuditContinuationCursor cursor)
+    {
+        return cursor.SortOrder == ManagementAuditSortOrder.Oldest
+            ? source.Where(item => item.OccurredAtUtc > cursor.LastOccurredAtUtc.UtcDateTime
+                || (item.OccurredAtUtc == cursor.LastOccurredAtUtc.UtcDateTime
+                    && item.Id.CompareTo(cursor.LastId) > 0))
+            : source.Where(item => item.OccurredAtUtc < cursor.LastOccurredAtUtc.UtcDateTime
+                || (item.OccurredAtUtc == cursor.LastOccurredAtUtc.UtcDateTime
+                    && item.Id.CompareTo(cursor.LastId) < 0));
+    }
+
+    private static IOrderedQueryable<ManagementAuditLogEntity> Order(
+        IQueryable<ManagementAuditLogEntity> source,
+        ManagementAuditSortOrder sortOrder) =>
+        sortOrder == ManagementAuditSortOrder.Oldest
+            ? source.OrderBy(item => item.OccurredAtUtc).ThenBy(item => item.Id)
+            : source.OrderByDescending(item => item.OccurredAtUtc).ThenByDescending(item => item.Id);
 
     private static IQueryable<ManagementAuditLogEntity> Filter(
         IQueryable<ManagementAuditLogEntity> source,

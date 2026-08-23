@@ -19,7 +19,11 @@ internal static class AuditTextSanitizer
         var builder = new StringBuilder(value.Length);
         foreach (var character in value)
         {
-            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.Control)
+            var category = CharUnicodeInfo.GetUnicodeCategory(character);
+            if (category is UnicodeCategory.Control
+                or UnicodeCategory.Format
+                or UnicodeCategory.LineSeparator
+                or UnicodeCategory.ParagraphSeparator)
             {
                 builder.Append(' ');
                 continue;

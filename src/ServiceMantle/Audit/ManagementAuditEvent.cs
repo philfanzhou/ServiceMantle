@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace ServiceMantle.Audit;
 
 /// <summary>
@@ -170,11 +172,18 @@ public sealed record ManagementAuditEvent
             sanitizedMetadata);
     }
 
+    /// <summary>
+    /// Returns a safe projection that excludes descriptions, metadata, client IPs, and correlation
+    /// identifiers so interpolating an event into a log cannot disclose audit content.
+    /// </summary>
+    public override string ToString() =>
+        $"ManagementAuditEvent(Action={Action}, Outcome={Outcome}, OccurredAtUtc={OccurredAtUtc:O})";
+
     private static IReadOnlyDictionary<string, string> SanitizeMetadata(IReadOnlyDictionary<string, string>? metadata)
     {
         if (metadata is null || metadata.Count == 0)
         {
-            return new Dictionary<string, string>(0);
+            return FrozenDictionary<string, string>.Empty;
         }
 
         if (metadata.Count > MaxMetadataEntries)
@@ -196,6 +205,6 @@ public sealed record ManagementAuditEvent
             sanitized[cleanedKey] = ManagementAuditContentSanitizer.Redact(cleanedValue);
         }
 
-        return sanitized;
+        return sanitized.ToFrozenDictionary(StringComparer.Ordinal);
     }
 }

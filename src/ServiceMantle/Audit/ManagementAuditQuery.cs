@@ -1,9 +1,10 @@
 namespace ServiceMantle.Audit;
 
 /// <summary>
-/// A validated, bounded filter and paging request for querying management audit records.
+/// A validated, bounded filter and keyset paging request for querying management audit records.
 /// Instances are only created through <see cref="Create"/>, which enforces explicit limits on page
-/// size, sorting, time range, and filter values so queries stay predictable and safe to execute.
+/// size, sorting, time range, and filter values so queries stay predictable and safe to execute. The
+/// first request uses page 1; later pages must carry the opaque cursor returned by the prior result.
 /// </summary>
 public sealed record ManagementAuditQuery
 {
@@ -16,6 +17,17 @@ public sealed record ManagementAuditQuery
     /// The maximum number of records allowed per page.
     /// </summary>
     public const int MaxPageSize = 200;
+
+    /// <summary>
+    /// The maximum ordinal page accepted for the first request. Subsequent pages use the opaque
+    /// continuation cursor returned by the previous result instead of an unbounded offset.
+    /// </summary>
+    public const int MaxPage = 10_000;
+
+    /// <summary>
+    /// The maximum length of an opaque continuation cursor.
+    /// </summary>
+    public const int MaxCursorLength = 512;
 
     /// <summary>
     /// The maximum span, in days, allowed between <see cref="FromUtc"/> and <see cref="ToUtc"/> when
@@ -54,7 +66,7 @@ public sealed record ManagementAuditQuery
     public DateTimeOffset? ToUtc { get; }
 
     /// <summary>
-    /// Gets the requested one-based page number.
+    /// Gets the requested one-based page number used for display and continuation sequencing.
     /// </summary>
     public int Page { get; }
 
@@ -68,6 +80,11 @@ public sealed record ManagementAuditQuery
     /// </summary>
     public ManagementAuditSortOrder SortOrder { get; }
 
+    /// <summary>
+    /// Gets the opaque keyset continuation cursor from a previous result, or null for the first page.
+    /// </summary>
+    public string? Cursor { get; }
+
     private ManagementAuditQuery(
         ManagementAuditAction? action,
         ManagementAuditTargetType? targetType,
@@ -77,7 +94,8 @@ public sealed record ManagementAuditQuery
         DateTimeOffset? toUtc,
         int page,
         int pageSize,
-        ManagementAuditSortOrder sortOrder)
+        ManagementAuditSortOrder sortOrder,
+        string? cursor)
     {
         Action = action;
         TargetType = targetType;
@@ -88,10 +106,12 @@ public sealed record ManagementAuditQuery
         Page = page;
         PageSize = pageSize;
         SortOrder = sortOrder;
+        Cursor = cursor;
     }
 
     /// <summary>
-    /// Creates a validated, bounded audit query.
+    /// Creates a validated, bounded audit query. For page numbers greater than one, callers must
+    /// pass the continuation cursor returned by the preceding result to avoid offset pagination.
     /// </summary>
     /// <exception cref="ManagementAuditException">A filter, page, page size, sort order, or time range value is invalid.</exception>
     public static ManagementAuditQuery Create(
@@ -103,13 +123,21 @@ public sealed record ManagementAuditQuery
         DateTimeOffset? toUtc = null,
         int page = 1,
         int pageSize = DefaultPageSize,
-        ManagementAuditSortOrder sortOrder = ManagementAuditSortOrder.Newest)
+        ManagementAuditSortOrder sortOrder = ManagementAuditSortOrder.Newest,
+        string? cursor = null)
     {
         if (page < 1)
         {
             throw new ManagementAuditException(
                 "audit.query_page_invalid",
                 "The audit query page number must be at least 1.");
+        }
+
+        if (page > MaxPage)
+        {
+            throw new ManagementAuditException(
+                "audit.query_page_invalid",
+                $"The audit query page number must not exceed {MaxPage}.");
         }
 
         if (pageSize is < 1 or > MaxPageSize)
@@ -153,6 +181,11 @@ public sealed record ManagementAuditQuery
             ManagementAuditOperator.MaxOperatorIdLength,
             "audit.query_filter_invalid",
             "operator identifier filter");
+        var cleanedCursor = AuditTextSanitizer.Clean(
+            cursor,
+            MaxCursorLength,
+            "audit.query_cursor_invalid",
+            "continuation cursor");
 
         return new ManagementAuditQuery(
             action,
@@ -163,6 +196,7 @@ public sealed record ManagementAuditQuery
             toUtc,
             page,
             pageSize,
-            sortOrder);
+            sortOrder,
+            cleanedCursor);
     }
 }

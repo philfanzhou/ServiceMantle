@@ -48,10 +48,11 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
         var entityType = context.Model.FindEntityType(typeof(ManagementAuditLogEntity));
         var indexNames = entityType!.GetIndexes().Select(index => index.GetDatabaseName()).ToHashSet();
 
-        Assert.Contains("ix_service_audit_logs_occurred_at_utc", indexNames);
-        Assert.Contains("ix_service_audit_logs_action", indexNames);
-        Assert.Contains("ix_service_audit_logs_target", indexNames);
-        Assert.Contains("ix_service_audit_logs_operator_id", indexNames);
+        Assert.Contains("ix_service_audit_logs_occurred_at_utc_id", indexNames);
+        Assert.Contains("ix_service_audit_logs_action_occurred_at_utc_id", indexNames);
+        Assert.Contains("ix_service_audit_logs_target_occurred_at_utc_id", indexNames);
+        Assert.Contains("ix_service_audit_logs_target_id_occurred_at_utc_id", indexNames);
+        Assert.Contains("ix_service_audit_logs_operator_id_occurred_at_utc_id", indexNames);
     }
 
     [Fact]

@@ -159,6 +159,11 @@ public sealed class ManagementAuditEventTests
     [InlineData("password")]
     [InlineData("Password")]
     [InlineData("db_password")]
+    [InlineData("setup-code")]
+    [InlineData("connection-string")]
+    [InlineData("client-secret")]
+    [InlineData("pass_word")]
+    [InlineData("pass\u200Bword")]
     [InlineData("apiKey")]
     [InlineData("connectionString")]
     [InlineData("SetupCode")]
@@ -187,6 +192,76 @@ public sealed class ManagementAuditEventTests
             Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target, metadata: metadata);
 
         Assert.DoesNotContain("super-secret", auditEvent.Metadata["connection_note"]);
+    }
+
+    [Theory]
+    [InlineData("{\"password\":\"hunter2\"}", "hunter2")]
+    [InlineData("password: hunter2", "hunter2")]
+    [InlineData("rootKey: root-secret", "root-secret")]
+    [InlineData("setupCode: setup-secret", "setup-secret")]
+    [InlineData("connectionString: Host=db;Database=prod", "Host=db")]
+    [InlineData("Password=\"abc def\"", "abc def")]
+    [InlineData("Host=db;Database=prod;Username=admin", "Username=admin")]
+    public void Create_redacts_common_sensitive_formats_in_description(string rawDescription, string secret)
+    {
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            securityDescription: rawDescription);
+
+        Assert.DoesNotContain(secret, auditEvent.SecurityDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(secret.Replace(" ", string.Empty), auditEvent.SecurityDescription, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Create_removes_format_and_line_separator_characters()
+    {
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            securityDescription: "before\u200B\u2028after");
+
+        Assert.DoesNotContain('\u200B', auditEvent.SecurityDescription ?? string.Empty);
+        Assert.DoesNotContain('\u2028', auditEvent.SecurityDescription ?? string.Empty);
+    }
+
+    [Fact]
+    public void Create_returns_immutable_metadata_snapshot()
+    {
+        var input = new Dictionary<string, string> { ["note"] = "before" };
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            metadata: input);
+
+        input["note"] = "after";
+
+        Assert.Equal("before", auditEvent.Metadata["note"]);
+        var dictionary = Assert.IsAssignableFrom<IDictionary<string, string>>(auditEvent.Metadata);
+        Assert.Throws<NotSupportedException>(() => dictionary["password"] = "clear-text");
+    }
+
+    [Fact]
+    public void ToString_does_not_include_sensitive_or_free_text_fields()
+    {
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            clientIp: "203.0.113.7",
+            correlationId: "corr-secret",
+            securityDescription: "password: hunter2",
+            metadata: new Dictionary<string, string> { ["note"] = "private note" });
+
+        var text = auditEvent.ToString();
+
+        Assert.DoesNotContain("hunter2", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("private note", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("203.0.113.7", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("corr-secret", text, StringComparison.Ordinal);
     }
 
     [Fact]

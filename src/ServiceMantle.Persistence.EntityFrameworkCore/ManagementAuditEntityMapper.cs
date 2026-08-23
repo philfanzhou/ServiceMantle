@@ -5,6 +5,15 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 
 internal static class ManagementAuditEntityMapper
 {
+    internal const int MaxMetadataJsonLength = 64 * 1024;
+
+    private static readonly JsonDocumentOptions MetadataDocumentOptions = new()
+    {
+        AllowTrailingCommas = false,
+        CommentHandling = JsonCommentHandling.Disallow,
+        MaxDepth = 8
+    };
+
     private static readonly JsonSerializerOptions MetadataJsonOptions = new()
     {
         WriteIndented = false
@@ -12,73 +21,138 @@ internal static class ManagementAuditEntityMapper
 
     internal static ManagementAuditLogEntity ConvertToEntity(Guid id, ManagementAuditEvent auditEvent)
     {
+        ArgumentNullException.ThrowIfNull(auditEvent);
+        var safeEvent = Revalidate(auditEvent);
+
         return new ManagementAuditLogEntity
         {
             Id = id,
-            OperatorId = auditEvent.Operator.OperatorId,
-            OperatorDisplayName = auditEvent.Operator.DisplayName,
-            OperatorSource = auditEvent.Operator.Source.Value,
-            Action = auditEvent.Action.Value,
-            TargetType = auditEvent.Target.Type.Value,
-            TargetId = auditEvent.Target.Id,
-            Outcome = auditEvent.Outcome,
-            OccurredAtUtc = auditEvent.OccurredAtUtc.UtcDateTime,
-            ClientIp = auditEvent.ClientIp,
-            CorrelationId = auditEvent.CorrelationId,
-            SecurityDescription = auditEvent.SecurityDescription,
-            MetadataJson = auditEvent.Metadata.Count == 0
+            OperatorId = safeEvent.Operator.OperatorId,
+            OperatorDisplayName = safeEvent.Operator.DisplayName,
+            OperatorSource = safeEvent.Operator.Source.Value,
+            Action = safeEvent.Action.Value,
+            TargetType = safeEvent.Target.Type.Value,
+            TargetId = safeEvent.Target.Id,
+            Outcome = safeEvent.Outcome,
+            OccurredAtUtc = safeEvent.OccurredAtUtc.UtcDateTime,
+            ClientIp = safeEvent.ClientIp,
+            CorrelationId = safeEvent.CorrelationId,
+            SecurityDescription = safeEvent.SecurityDescription,
+            MetadataJson = safeEvent.Metadata.Count == 0
                 ? null
-                : JsonSerializer.Serialize(auditEvent.Metadata, MetadataJsonOptions)
+                : JsonSerializer.Serialize(safeEvent.Metadata, MetadataJsonOptions)
         };
     }
 
     internal static ManagementAuditRecord ConvertToRecord(ManagementAuditLogEntity entity)
     {
-        if (!ManagementAuditOperatorSource.TryParse(entity.OperatorSource, out var source) || source is null)
+        ArgumentNullException.ThrowIfNull(entity);
+
+        if (!ManagementAuditOperatorSource.TryParse(entity.OperatorSource, out var source) || source is null
+            || !ManagementAuditAction.TryParse(entity.Action, out var action) || action is null
+            || !ManagementAuditTargetType.TryParse(entity.TargetType, out var targetType) || targetType is null
+            || !Enum.IsDefined(entity.Outcome))
         {
-            throw new ManagementAuditException(
-                "audit.entity_invalid",
-                "The stored audit operator source is invalid.");
+            throw InvalidStoredEntity();
         }
 
-        if (!ManagementAuditAction.TryParse(entity.Action, out var action) || action is null)
+        Dictionary<string, string> metadata;
+        try
         {
-            throw new ManagementAuditException(
-                "audit.entity_invalid",
-                "The stored audit action is invalid.");
+            metadata = ParseMetadata(entity.MetadataJson);
+        }
+        catch (ManagementAuditException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or ArgumentException)
+        {
+            throw InvalidStoredEntity(exception);
         }
 
-        if (!ManagementAuditTargetType.TryParse(entity.TargetType, out var targetType) || targetType is null)
+        try
         {
-            throw new ManagementAuditException(
-                "audit.entity_invalid",
-                "The stored audit target type is invalid.");
+            var operatorInfo = ManagementAuditOperator.Create(
+                source,
+                entity.OperatorId,
+                entity.OperatorDisplayName);
+            var target = ManagementAuditTarget.Create(targetType, entity.TargetId);
+            var safeEvent = ManagementAuditEvent.Create(
+                operatorInfo,
+                action,
+                target,
+                entity.Outcome,
+                new DateTimeOffset(DateTime.SpecifyKind(entity.OccurredAtUtc, DateTimeKind.Utc)),
+                entity.ClientIp,
+                entity.CorrelationId,
+                entity.SecurityDescription,
+                metadata);
+
+            return new ManagementAuditRecord(
+                entity.Id,
+                safeEvent.Operator,
+                safeEvent.Action,
+                safeEvent.Target,
+                safeEvent.Outcome,
+                safeEvent.OccurredAtUtc,
+                safeEvent.ClientIp,
+                safeEvent.CorrelationId,
+                safeEvent.SecurityDescription,
+                safeEvent.Metadata);
+        }
+        catch (ManagementAuditException exception)
+        {
+            throw InvalidStoredEntity(exception);
+        }
+    }
+
+    private static ManagementAuditException InvalidStoredEntity(Exception? innerException = null) =>
+        new(
+            "audit.entity_invalid",
+            "The stored audit entity failed validation.",
+            innerException);
+
+    private static ManagementAuditEvent Revalidate(ManagementAuditEvent auditEvent) =>
+        ManagementAuditEvent.Create(
+            auditEvent.Operator,
+            auditEvent.Action,
+            auditEvent.Target,
+            auditEvent.Outcome,
+            auditEvent.OccurredAtUtc,
+            auditEvent.ClientIp,
+            auditEvent.CorrelationId,
+            auditEvent.SecurityDescription,
+            new Dictionary<string, string>(auditEvent.Metadata, StringComparer.Ordinal));
+
+    private static Dictionary<string, string> ParseMetadata(string? metadataJson)
+    {
+        if (string.IsNullOrEmpty(metadataJson))
+        {
+            return new Dictionary<string, string>(0, StringComparer.Ordinal);
         }
 
-        if (!Enum.IsDefined(entity.Outcome))
+        if (metadataJson.Length > MaxMetadataJsonLength)
         {
-            throw new ManagementAuditException(
-                "audit.entity_invalid",
-                "The stored audit outcome value is invalid.");
+            throw InvalidStoredEntity();
         }
 
-        var operatorInfo = ManagementAuditOperator.Create(source, entity.OperatorId, entity.OperatorDisplayName);
-        var target = ManagementAuditTarget.Create(targetType, entity.TargetId);
-        var metadata = string.IsNullOrEmpty(entity.MetadataJson)
-            ? new Dictionary<string, string>(0)
-            : JsonSerializer.Deserialize<Dictionary<string, string>>(entity.MetadataJson, MetadataJsonOptions)
-              ?? new Dictionary<string, string>(0);
+        using var document = JsonDocument.Parse(metadataJson, MetadataDocumentOptions);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw InvalidStoredEntity();
+        }
 
-        return new ManagementAuditRecord(
-            entity.Id,
-            operatorInfo,
-            action,
-            target,
-            entity.Outcome,
-            new DateTimeOffset(DateTime.SpecifyKind(entity.OccurredAtUtc, DateTimeKind.Utc)),
-            entity.ClientIp,
-            entity.CorrelationId,
-            entity.SecurityDescription,
-            metadata);
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            if (metadata.Count >= ManagementAuditEvent.MaxMetadataEntries
+                || property.Value.ValueKind != JsonValueKind.String
+                || !metadata.TryAdd(property.Name, property.Value.GetString() ?? string.Empty))
+            {
+                throw InvalidStoredEntity();
+            }
+        }
+
+        return metadata;
     }
 }

@@ -100,7 +100,9 @@ Shared migration ownership is intentionally moved to the consuming service. In d
 - `IServiceMantleAuditDbContext` contract that business DbContexts implement (separate from `IServiceMantleDbContext` so consumers can adopt installation persistence, audit persistence, or both independently).
 - `ModelBuilder` extension `AddServiceMantleManagementAudit()` for model registration.
 - `EfCoreManagementAuditWriter<TDbContext>` implementing `IManagementAuditWriter`. It only stages the entity on the caller's `DbSet` — it never calls `SaveChangesAsync` and never commits a transaction. The write participates in whatever unit of work or explicit transaction the caller already owns, and future Setup/configuration flows can call it before their own `SaveChangesAsync` to persist an audit record atomically with their own changes.
-- `EfCoreManagementAuditQueryService<TDbContext>` implementing `IManagementAuditQueryService`, providing stable paginated queries filtered by action, target, operator, and time range, ordered by occurrence time with the record identifier as a tiebreaker.
+- `EfCoreManagementAuditQueryService<TDbContext>` implementing `IManagementAuditQueryService`, providing bounded keyset-paginated queries filtered by action, target, operator, and time range. The first result returns an opaque `ContinuationCursor`; pass it to the next `ManagementAuditQuery` rather than using an unbounded offset. The cursor carries the occurrence/id boundary and a read snapshot watermark so inserts after the first page cannot duplicate or shift later pages.
+
+`TotalCount` is the count observed while each query executes and is therefore weakly consistent if rows are deleted concurrently; the cursor, ordering, and snapshot watermark provide stable continuation semantics without requiring the query service to own a transaction.
 
 ```csharp
 public sealed class MyDbContext : DbContext, IServiceMantleDbContext, IServiceMantleAuditDbContext

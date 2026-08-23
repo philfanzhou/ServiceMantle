@@ -46,6 +46,24 @@ public sealed class ManagementAuditQueryTests
     }
 
     [Fact]
+    public void Create_rejects_page_exceeding_maximum()
+    {
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditQuery.Create(page: ManagementAuditQuery.MaxPage + 1));
+
+        Assert.Equal("audit.query_page_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
+    public void Create_rejects_cursor_exceeding_maximum_length()
+    {
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditQuery.Create(cursor: new string('a', ManagementAuditQuery.MaxCursorLength + 1)));
+
+        Assert.Equal("audit.query_cursor_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
     public void Create_accepts_maximum_page_size()
     {
         var query = ManagementAuditQuery.Create(pageSize: ManagementAuditQuery.MaxPageSize);

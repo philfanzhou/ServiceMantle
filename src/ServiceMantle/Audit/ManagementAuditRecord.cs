@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace ServiceMantle.Audit;
 
 /// <summary>
@@ -81,7 +83,9 @@ public sealed record ManagementAuditRecord
         ClientIp = clientIp;
         CorrelationId = correlationId;
         SecurityDescription = securityDescription;
-        Metadata = metadata;
+        Metadata = metadata.Count == 0
+            ? FrozenDictionary<string, string>.Empty
+            : metadata.ToFrozenDictionary(StringComparer.Ordinal);
     }
 
     /// <summary>
