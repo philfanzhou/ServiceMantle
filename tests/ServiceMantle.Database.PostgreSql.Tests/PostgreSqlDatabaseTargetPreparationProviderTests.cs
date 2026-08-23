@@ -35,6 +35,18 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     }
 
     [Fact]
+    public async Task ObserveAsync_pre_cancellation_precedes_provider_mismatch()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+        var provider = CreateProvider(new FakeObservationProbe(PostgreSqlProbeOutcome.Success));
+        var target = new BootstrapDatabaseConfiguration("MySQL", "8.0", ValidTargetConnectionString);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            provider.ObserveAsync(target, source.Token).AsTask());
+    }
+
+    [Fact]
     public async Task ObserveAsync_rejects_invalid_connection_string()
     {
         var provider = CreateProvider(new FakeObservationProbe(PostgreSqlProbeOutcome.Success));
@@ -47,6 +59,21 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
 
         Assert.False(observation.IsServerReachable);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, observation.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ObserveAsync_pre_cancellation_precedes_invalid_connection_string()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+        var provider = CreateProvider(new FakeObservationProbe(PostgreSqlProbeOutcome.Success));
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.PostgreSql,
+            "16",
+            "Host==localhost;Database=app;");
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            provider.ObserveAsync(target, source.Token).AsTask());
     }
 
     [Fact]

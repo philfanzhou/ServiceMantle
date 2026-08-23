@@ -63,6 +63,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (!IsPostgreSqlProvider(target.Provider))
         {
