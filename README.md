@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, and the instance-local Bootstrap file model are implemented; database integration, management authentication, auditing, observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, and the PostgreSQL advisory lock provider are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management authentication, auditing, observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -101,7 +101,7 @@ The core library now provides a provider SPI so validation can be extended witho
 
 Current and planned provider packages are:
 
-- `ServiceMantle.Database.PostgreSql` validates PostgreSQL settings and performs a minimum read probe (`SELECT 1`) against the target database.
+- `ServiceMantle.Database.PostgreSql` validates PostgreSQL settings, performs a minimum read probe (`SELECT 1`) against the target database, and provides session-level advisory lock capability for multi-instance migration coordination (implementation complete, pending CI container verification).
 - `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
 - `ServiceMantle.Database.SQLite`
 - `ServiceMantle.Database.MySql`
@@ -109,10 +109,74 @@ Current and planned provider packages are:
 - `ServiceMantle.Database.Oracle`
 - `ServiceMantle.Database.SqlServer`
 
-The PostgreSQL provider only validates configuration and target connectivity. It does not create databases, migrate schemas, manage history tables, or provide multi-instance locking.
+The PostgreSQL provider validates configuration and target connectivity. It also provides session-level advisory lock capability for safe multi-instance migration coordination.
 
 MySQL and MariaDB keep independent provider IDs even if they can share lower-level behavior.
 Oracle is planned as a `ServerSchema`-style target provider; SQL Server and SQLite follow their own target semantics.
+
+## Database migration orchestration
+
+ServiceMantle provides provider-agnostic migration orchestration that ensures safe multi-instance execution of consuming service migrations under an optional provider-specific lock.
+
+The orchestration flow:
+1. Acquire a provider-specific migration lock (e.g., PostgreSQL advisory lock).
+2. Inspect the current database state.
+3. Skip migration if the database is already at the current compatible version (allowing waiting instances to pass without re-executing).
+4. Fail closed if the database version is newer than the application supports.
+5. Execute the consuming service's complete migration workflow exactly once.
+6. Re-inspect the database state to ensure migration succeeded.
+7. Always release the lock, even on failure or cancellation.
+
+The consuming service implements `IDatabaseMigrationExecutor` to define its migration logic:
+
+```csharp
+public interface IDatabaseMigrationExecutor
+{
+    // Inspect database state: Empty, CurrentVersionCompatible, PendingMigration, VersionTooNew, or InspectionFailed
+    ValueTask<MigrationObservationState> InspectAsync(CancellationToken cancellationToken = default);
+
+    // Execute the complete migration workflow
+    ValueTask ExecuteAsync(CancellationToken cancellationToken = default);
+}
+```
+
+The `DatabaseMigrationOrchestrator` is instantiated with the executor and a lock provider registry:
+
+```csharp
+var executor = new MyServiceMigrationExecutor(dbContext);
+var lockProviders = new DatabaseMigrationLockProviderRegistry([new PostgreSqlMigrationLockProvider()]);
+var orchestrator = new DatabaseMigrationOrchestrator(executor, lockProviders);
+
+var result = await orchestrator.OrchestrateMigrationAsync(
+    serviceId,
+    bootstrapDatabaseConfiguration,
+    lockAcquireTimeout: TimeSpan.FromSeconds(30));
+
+if (!result.Succeeded)
+{
+    // Safe error code and message without exposing secrets
+    logger.LogError("Migration failed: {ErrorCode}: {Message}", result.ErrorCode, result.ErrorMessage);
+}
+```
+
+### PostgreSQL advisory lock
+
+`ServiceMantle.Database.PostgreSql.Migration.PostgreSqlMigrationLockProvider` provides session-level advisory locks using `pg_try_advisory_lock` with bounded polling. The lock key is derived from the service identifier using SHA-256, ensuring stability across processes, machines, and restarts.
+
+Lock acquisition respects both the caller-provided timeout and cancellation token. The lock is held for the lifetime of the returned lease object, and is released either explicitly (DisposeAsync) or implicitly when the connection closes.
+
+No other lock providers (SQLite, MySQL, etc.) are implemented in this release. Multi-instance migrations without registered lock support fail closed with `migration.lock_not_supported`.
+
+### Error codes
+
+Safe error codes for migration failures:
+- `migration.lock_not_supported` - No lock provider registered for the database.
+- `migration.lock_timeout` - Lock acquisition exceeded the timeout.
+- `migration.lock_failed` - Lock acquisition failed (provider-specific).
+- `migration.inspection_failed` - Database state could not be determined.
+- `migration.version_too_new` - Database schema is newer than the application.
+- `migration.execution_failed` - The consuming service's migration executor failed.
+- `migration.final_state_invalid` - Database state after migration is not compatible.
 
 ## Non-goals (first version)
 
@@ -143,10 +207,31 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 
 ## Local build commands
 
+Standard build and test:
+
 ```bash
-dotnet restore
-dotnet build -c Release
-dotnet test -c Release
+dotnet restore ServiceMantle.slnx
+dotnet build ServiceMantle.slnx -c Release
+dotnet test --solution ServiceMantle.slnx -c Release
 dotnet pack src/ServiceMantle/ServiceMantle.csproj -c Release --no-build
+dotnet pack src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj -c Release --no-build
+```
+
+With PostgreSQL Testcontainers (requires Docker):
+
+```bash
+RUN_SERVICEMANTLE_POSTGRES_TESTS=true dotnet test --solution ServiceMantle.slnx -c Release
+```
+
+To run only PostgreSQL container tests:
+
+```bash
+RUN_SERVICEMANTLE_POSTGRES_TESTS=true dotnet test --project tests/ServiceMantle.Database.PostgreSql.Tests -c Release
+```
+
+To override PostgreSQL image:
+
+```bash
+SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true dotnet test --solution ServiceMantle.slnx -c Release
 ```
