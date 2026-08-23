@@ -176,6 +176,17 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     }
 
     [Fact]
+    public void ContinuationCursor_reports_a_stable_error_when_page_number_cannot_advance()
+    {
+        var query = ManagementAuditQuery.Create(page: int.MaxValue, cursor: "opaque-continuation");
+
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditContinuationCursor.Create(query, Day(1), Guid.NewGuid()));
+
+        Assert.Equal("audit.query_page_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
     public async Task QueryAsync_uses_id_as_stable_tiebreaker_for_equal_timestamps()
     {
         var sameInstant = Day(1);
@@ -485,6 +496,31 @@ public sealed class EfCoreManagementAuditQueryServiceTests
             Outcome = ManagementAuditOutcome.Success,
             OccurredAtUtc = Day(1).UtcDateTime,
             MetadataJson = "{not-json"
+        });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
+                .QueryAsync(ManagementAuditQuery.Create(), TestContext.Current.CancellationToken).AsTask());
+
+        Assert.Equal("audit.entity_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryAsync_rejects_empty_metadata_json_with_stable_error()
+    {
+        await using var context = await SeedAsync();
+        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
+        {
+            Id = Guid.NewGuid(),
+            OperatorId = "admin-1",
+            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
+            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
+            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
+            TargetId = "smtp",
+            Outcome = ManagementAuditOutcome.Success,
+            OccurredAtUtc = Day(1).UtcDateTime,
+            MetadataJson = string.Empty
         });
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 

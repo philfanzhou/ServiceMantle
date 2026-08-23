@@ -135,7 +135,7 @@ internal static class ManagementAuditEntityMapper
 
     private static Dictionary<string, string> ParseMetadata(string? metadataJson)
     {
-        if (string.IsNullOrEmpty(metadataJson))
+        if (metadataJson is null)
         {
             return new Dictionary<string, string>(0, StringComparer.Ordinal);
         }

@@ -17,8 +17,27 @@ internal readonly record struct ManagementAuditContinuationCursor(
     internal static ManagementAuditContinuationCursor Create(
         ManagementAuditQuery query,
         DateTimeOffset lastOccurredAtUtc,
-        Guid lastId) =>
-        new(lastOccurredAtUtc, lastId, checked(query.Page + 1), ComputeQueryFingerprint(query));
+        Guid lastId)
+    {
+        int nextPage;
+        try
+        {
+            nextPage = checked(query.Page + 1);
+        }
+        catch (OverflowException exception)
+        {
+            throw new ManagementAuditException(
+                "audit.query_page_invalid",
+                "The audit query page number cannot be advanced further.",
+                exception);
+        }
+
+        return new ManagementAuditContinuationCursor(
+            lastOccurredAtUtc,
+            lastId,
+            nextPage,
+            ComputeQueryFingerprint(query));
+    }
 
     internal static string Encode(ManagementAuditContinuationCursor cursor)
     {
