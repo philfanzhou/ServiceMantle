@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, and the PostgreSQL advisory lock provider are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management authentication, auditing, observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, and the optional database target preparation capability (PostgreSQL server-database preparation) are implementation-complete and verified against real PostgreSQL via Testcontainers. Management authentication, auditing, observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -113,6 +113,64 @@ The PostgreSQL provider validates configuration and target connectivity. It also
 
 MySQL and MariaDB keep independent provider IDs even if they can share lower-level behavior.
 Oracle is planned as a `ServerSchema`-style target provider; SQL Server and SQLite follow their own target semantics.
+
+## Database target preparation
+
+Database target preparation is a separate, optional capability from bootstrap validation. A provider that implements `IBootstrapDatabaseProvider` does not automatically support preparing (creating) a missing target; a provider opts in only by also registering an `IDatabaseTargetPreparationProvider` implementation. Callers resolve this capability through `DatabaseTargetPreparationProviderRegistry` and must fail closed with `database_target_preparation.capability_not_supported` when no preparation provider is registered for a database provider id, rather than treating an unsupported provider as already prepared.
+
+The capability models three target kinds via the existing `BootstrapDatabaseTargetKind` enum (`ServerDatabase`, `File`, `ServerSchema`), and distinguishes three observation states:
+
+- **Server reachable** (`DatabaseTargetObservation.IsServerReachable`) — the database server accepted a connection.
+- **Target exists** (`DatabaseTargetObservation.TargetExists`) — the named target is not known to be missing.
+- **Target connectable** (`DatabaseTargetObservation.IsTargetConnectable`) — a connection to the target itself succeeded.
+
+```csharp
+var preparationProviders = new DatabaseTargetPreparationProviderRegistry(
+    [new PostgreSqlDatabaseTargetPreparationProvider()]);
+
+if (!preparationProviders.TryGetProvider(bootstrapDatabaseConfiguration.Provider, out var provider))
+{
+    // Fail closed: this provider does not support target preparation.
+    return;
+}
+
+var observation = await provider!.ObserveAsync(bootstrapDatabaseConfiguration, cancellationToken);
+if (observation.IsTargetConnectable)
+{
+    return; // Already ready; nothing to prepare.
+}
+
+// AdministrativeConnectionString is used only for the duration of this call. It is never
+// persisted, logged, included in diagnostics, or returned in any result.
+var request = new DatabaseTargetPreparationRequest(bootstrapDatabaseConfiguration, administrativeConnectionString);
+var result = await provider.PrepareAsync(request, timeout: TimeSpan.FromSeconds(30), cancellationToken);
+
+if (!result.Succeeded)
+{
+    logger.LogError("Target preparation failed: {ErrorCode}", result.ErrorCode);
+}
+```
+
+`DatabaseTargetPreparationResult.Outcome` reports `Created` or `AlreadyExists`. Implementations must never overwrite, drop, recreate, or otherwise destructively modify a target that already exists.
+
+### PostgreSQL target preparation
+
+`ServiceMantle.Database.PostgreSql.PostgreSqlDatabaseTargetPreparationProvider` observes a PostgreSQL target with a single connection attempt: a structured "database does not exist" response (SQLSTATE `3D000`) already proves the server is reachable, so no separate maintenance-database round trip is needed to distinguish an unreachable server from a missing target. `PrepareAsync` uses the caller-supplied administrative connection string to check `pg_database` and, only when the target is absent, issue `CREATE DATABASE`. A genuinely concurrent creation race — observed as either the `duplicate_database` error (`42P04`) or a unique-key violation on the `pg_database` name index (`23505`), depending on timing — is treated as success (`AlreadyExists`), not a failure.
+
+### Error codes
+
+Safe error codes for database target preparation failures:
+- `database_target_preparation.capability_not_supported` - No preparation provider registered for the database provider.
+- `database_target_preparation.provider_mismatch` - The target does not identify this provider's database provider.
+- `database_target_preparation.invalid_target` - The target or administrative connection information is not usable.
+- `database_target_preparation.server_unreachable` - The database server could not be reached.
+- `database_target_preparation.permission_denied` - The administrative connection lacked permission to complete the operation.
+- `database_target_preparation.target_conflict` - Creation collided with an existing, differently-owned object of the same name.
+- `database_target_preparation.connection_failed` - A connection could not be established or was lost while preparing the target.
+- `database_target_preparation.timeout` - The preparation operation exceeded its allotted timeout.
+- `database_target_preparation.preparation_failed` - Preparation failed for a provider-specific reason not covered by another code.
+
+Caller-requested cancellation is always propagated as `OperationCanceledException`, distinct from a timeout failure result.
 
 ## Database migration orchestration
 
