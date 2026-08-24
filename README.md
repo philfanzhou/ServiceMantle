@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, and the optional database target preparation capability (PostgreSQL server-database preparation) are implementation-complete and verified against real PostgreSQL via Testcontainers. Management authentication, auditing, observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, the optional database target preparation capability (PostgreSQL server-database preparation), and product-agnostic management audit persistence are implementation-complete and verified against real PostgreSQL via Testcontainers. Management authentication, observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -79,15 +79,58 @@ public sealed class MyDbContext : DbContext, IServiceMantleDbContext
 }
 ```
 
-For now, only `service_installations` is defined. Planned future tables (not in this release):
+`service_installations` and `service_audit_logs` (see below) are defined. Planned future tables (not in this release):
 
 - `service_settings`
-- `service_audit_logs`
 - `service_data_protection_keys`
 - Setup code metadata
 - administrator identity/state tables
 
 Shared migration ownership is intentionally moved to the consuming service. In deployments against existing business databases, services must create migration entries and keep installation table ownership in their own startup/deployment process.
+
+## Management audit persistence
+
+`ServiceMantle.Audit` (in the core `ServiceMantle` package) defines a product-agnostic management audit domain: `ManagementAuditEvent` (write contract input), `ManagementAuditRecord` (read model), `ManagementAuditQuery`/`ManagementAuditQueryResult` (query contract), and bounded value types `ManagementAuditAction`, `ManagementAuditTargetType`, `ManagementAuditTarget`, `ManagementAuditOperator`, `ManagementAuditOperatorSource`, and the `ManagementAuditOutcome` security result enum (`Unknown`/`Success`/`Failure`/`Denied`). `WellKnownManagementAuditActions`, `WellKnownManagementAuditTargetTypes`, and `WellKnownManagementAuditOperatorSources` provide reusable conventions for installation, administrator login, and configuration-change events; consuming services define additional actions and target types with the same `Parse` pattern (for example `signacore.account_created`). ServiceMantle does not define SignaCore-specific identity, application, credential, signing-key, or OAuth semantics.
+
+`ManagementAuditEvent.Create(...)` enforces the sensitive-content policy before an event can be constructed: metadata keys must normalize to ASCII under NFKC so mixed-script confusables cannot hide a sensitive name; keys that name a secret (`password`, `passwd`, `passphrase`, `accountkey`, `privatekey`, `token`, `connectionstring`, `apikey`, `setupcode`, `authorization`, and similar) are rejected outright. When a description, display name, or metadata value contains a recognized secret assignment or database/credential-bearing URI, the entire free-text field is replaced with `[REDACTED]` so punctuation or opaque quoting cannot expose a suffix; bearer tokens, JWT-like strings, PEM private key blocks, and recognized connection strings are also redacted. Client IPs and correlation IDs use strict format allowlists; opaque operator and target identifiers that contain a supported secret-shaped format are rejected because modifying them would destroy identity semantics.
+
+This sanitization is a defense-in-depth contract for the formats listed above, not a general-purpose data-loss-prevention engine: an opaque bare value has no intrinsic signal that distinguishes a secret from ordinary audit text. Callers **must not** place connection strings, external root keys, database administrator credentials, setup codes, passwords, tokens, or other sensitive configuration values in any audit field. Consumption-specific metadata should use an explicit non-secret allowlist before calling ServiceMantle. The persistence write guarantee applies to records staged through `EfCoreManagementAuditWriter<TDbContext>`: the writer reapplies the supported-format policy before the caller saves the shared unit of work. The mapped audit entity is internal and no writable audit `DbSet` is exposed by the package. Direct SQL, imports, and administrative database writes are outside that write guarantee; the query boundary still revalidates such legacy rows so recognized sensitive content is not returned unchanged.
+
+`ServiceMantle.Persistence.EntityFrameworkCore` adds:
+
+- Internal entity mapping for `service_audit_logs`; consumers do not expose a writable audit `DbSet`.
+- `ModelBuilder` extension `AddServiceMantleManagementAudit(...)` for model registration. Pass the
+  consuming database's `ManagementAuditDatabaseDialect` so every persisted text column is bounded by the provider's encoded-byte function and the generated constraints use valid SQL. Query pages preflight the same resource ceilings before EF materializes text, while domain validation continues to enforce the exact character and format limits.
+- `EfCoreManagementAuditWriter<TDbContext>` implementing `IManagementAuditWriter`. It only stages the internal entity on the caller's configured `DbContext` — it never calls `SaveChangesAsync` and never commits a transaction. The write participates in whatever unit of work or explicit transaction the caller already owns, and future Setup/configuration flows can call it before their own `SaveChangesAsync` to persist an audit record atomically with their own changes.
+- `EfCoreManagementAuditQueryService<TDbContext>` implementing `IManagementAuditQueryService`, providing bounded keyset-paginated queries filtered by action, target, operator, and time range. The first result returns an opaque `ContinuationCursor`; pass it unchanged to the immediately following `ManagementAuditQuery` rather than using an unbounded offset. The cursor is bound to the normalized filters, sort order, page size, and next page number, so it cannot be silently reused with a different query.
+
+`TotalCount` is the count observed while each query executes and may change when rows are inserted or deleted concurrently. Continuations have ordinary keyset semantics: they avoid offset drift and repeated rows already passed in the ordering, but they do not represent a database snapshot. A concurrently inserted backfilled record whose ordering key lies after the cursor can therefore appear on a later page.
+
+```csharp
+public sealed class MyDbContext : DbContext, IServiceMantleDbContext
+{
+    public DbSet<ServiceInstallationEntity> ServiceInstallations { get; set; } = null!;
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.AddServiceMantleInstallation();
+        modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.PostgreSql);
+    }
+}
+
+var writer = new EfCoreManagementAuditWriter<MyDbContext>(dbContext);
+var auditEvent = ManagementAuditEvent.Create(
+    ManagementAuditOperator.Create(WellKnownManagementAuditOperatorSources.InteractiveAdmin, operatorId: "admin-1"),
+    WellKnownManagementAuditActions.ConfigurationChanged,
+    ManagementAuditTarget.Create(WellKnownManagementAuditTargetTypes.Configuration, "smtp"),
+    outcome: ManagementAuditOutcome.Success);
+
+await writer.RecordAsync(auditEvent);
+// ... stage other business changes on the same dbContext ...
+await dbContext.SaveChangesAsync(); // caller owns save/commit
+```
+
+Authentication, admin cookies, log storage/shipping, an HTTP API surface, Setup, and shared configuration are out of scope for this layer; `service_audit_logs` rows are owned by the consuming service database, the same as `service_installations`.
 
 ## Provider SPI and validation dispatch
 
@@ -310,4 +353,16 @@ To override PostgreSQL image:
 
 ```bash
 SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true dotnet test --solution ServiceMantle.slnx -c Release
+```
+
+With SQL Server Testcontainers (requires Docker on a supported Linux/AMD64 host):
+
+```bash
+RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests -c Release
+```
+
+To override the SQL Server image:
+
+```bash
+SERVICEMANTLE_SQLSERVER_IMAGE=mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04 RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests -c Release
 ```

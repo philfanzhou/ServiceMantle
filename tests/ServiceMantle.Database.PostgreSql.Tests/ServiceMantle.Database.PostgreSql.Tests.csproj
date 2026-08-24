@@ -10,10 +10,12 @@
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\\..\\src\\ServiceMantle.Database.PostgreSql\\ServiceMantle.Database.PostgreSql.csproj" />
+    <ProjectReference Include="..\\..\\src\\ServiceMantle.Persistence.EntityFrameworkCore\\ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
   </ItemGroup>
 
 </Project>

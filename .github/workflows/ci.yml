@@ -64,6 +64,16 @@ jobs:
         env:
           RUN_SERVICEMANTLE_POSTGRES_TESTS: true
 
+      - name: Test (SQL Server with containers)
+        run: >-
+          dotnet test --project tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          --minimum-expected-tests 1
+        env:
+          RUN_SERVICEMANTLE_SQLSERVER_TESTS: true
+
       - name: Pack ServiceMantle
         run: >-
           dotnet pack src/ServiceMantle/ServiceMantle.csproj
