@@ -59,62 +59,66 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
             ? ApplyCursor(filtered, cursor.Value, query.SortOrder)
             : filtered;
         var ordered = Order(pageSource, query.SortOrder);
-        if (await ordered
-            .Take(query.PageSize + 1)
-            .AnyAsync(
-                item => item.Id == Guid.Empty
-                    || item.OperatorSource == null
-                    || item.Action == null
-                    || item.TargetType == null
-                    || item.TargetId == null
-                    || (item.OperatorId != null
-                        && ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorId)
-                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
-                                ManagementAuditOperator.MaxOperatorIdLength))
-                    || (item.OperatorDisplayName != null
-                        && ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorDisplayName)
-                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
-                                ManagementAuditOperator.MaxDisplayNameLength))
-                    || ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorSource)
-                        > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
-                            ManagementAuditOperatorSource.MaxLength)
-                    || ManagementAuditDatabaseFunctions.TextByteLength(item.Action)
-                        > ManagementAuditEntityMapper.MaxPersistedTextByteLength(ManagementAuditAction.MaxLength)
-                    || ManagementAuditDatabaseFunctions.TextByteLength(item.TargetType)
-                        > ManagementAuditEntityMapper.MaxPersistedTextByteLength(ManagementAuditTargetType.MaxLength)
-                    || ManagementAuditDatabaseFunctions.TextByteLength(item.TargetId)
-                        > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
-                            ManagementAuditTarget.MaxTargetIdLength)
-                    || (item.ClientIp != null
-                        && ManagementAuditDatabaseFunctions.TextByteLength(item.ClientIp)
-                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
-                                ManagementAuditEvent.MaxClientIpLength))
-                    || (item.CorrelationId != null
-                        && ManagementAuditDatabaseFunctions.TextByteLength(item.CorrelationId)
-                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
-                                ManagementAuditEvent.MaxCorrelationIdLength))
-                    || (item.SecurityDescription != null
-                        && ManagementAuditDatabaseFunctions.TextByteLength(item.SecurityDescription)
-                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
-                                ManagementAuditEvent.MaxDescriptionLength))
-                    || (item.MetadataJson != null
-                        && ManagementAuditDatabaseFunctions.TextByteLength(item.MetadataJson)
-                            > ManagementAuditEntityMapper.MaxMetadataJsonByteLength),
-                cancellationToken)
-            .ConfigureAwait(false))
-        {
-            throw new ManagementAuditException(
-                "audit.entity_invalid",
-                "The stored audit entity failed validation.");
-        }
 
+        // Persisted byte ceilings are evaluated as part of the same SQL statement that loads the
+        // page: there is no separate precheck round trip for a concurrently written oversized row
+        // to slip through. Required text columns cannot be null at the store level (their guards
+        // would be pruned from the SQL anyway); anything else a dirty row contains is rejected by
+        // ConvertToRecord below, which stays the authoritative validation boundary.
         List<ManagementAuditLogEntity> entities;
         try
         {
-            entities = await ordered
+            var page = await ordered
                 .Take(query.PageSize + 1)
+                .Select(item => new
+                {
+                    item,
+                    ViolatesPersistedLimits =
+                        item.Id == Guid.Empty
+                        || ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorId)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                ManagementAuditOperator.MaxOperatorIdLength)
+                        || (item.OperatorDisplayName != null
+                            && ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorDisplayName)
+                                > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                    ManagementAuditOperator.MaxDisplayNameLength))
+                        || ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorSource)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                ManagementAuditOperatorSource.MaxLength)
+                        || ManagementAuditDatabaseFunctions.TextByteLength(item.Action)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(ManagementAuditAction.MaxLength)
+                        || ManagementAuditDatabaseFunctions.TextByteLength(item.TargetType)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(ManagementAuditTargetType.MaxLength)
+                        || ManagementAuditDatabaseFunctions.TextByteLength(item.TargetId)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                ManagementAuditTarget.MaxTargetIdLength)
+                        || (item.ClientIp != null
+                            && ManagementAuditDatabaseFunctions.TextByteLength(item.ClientIp)
+                                > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                    ManagementAuditEvent.MaxClientIpLength))
+                        || (item.CorrelationId != null
+                            && ManagementAuditDatabaseFunctions.TextByteLength(item.CorrelationId)
+                                > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                    ManagementAuditEvent.MaxCorrelationIdLength))
+                        || (item.SecurityDescription != null
+                            && ManagementAuditDatabaseFunctions.TextByteLength(item.SecurityDescription)
+                                > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                                    ManagementAuditEvent.MaxDescriptionLength))
+                        || (item.MetadataJson != null
+                            && ManagementAuditDatabaseFunctions.TextByteLength(item.MetadataJson)
+                                > ManagementAuditEntityMapper.MaxMetadataJsonByteLength)
+                })
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
+            foreach (var row in page)
+            {
+                if (row.ViolatesPersistedLimits)
+                {
+                    throw ManagementAuditEntityMapper.InvalidStoredEntity();
+                }
+            }
+
+            entities = page.Select(row => row.item).ToList();
         }
         catch (FormatException exception)
         {

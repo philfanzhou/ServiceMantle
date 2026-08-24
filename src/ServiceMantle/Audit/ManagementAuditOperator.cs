@@ -72,6 +72,14 @@ public sealed record ManagementAuditOperator
         if (cleanedDisplayName is not null)
         {
             cleanedDisplayName = ManagementAuditContentSanitizer.Redact(cleanedDisplayName);
+            if (cleanedDisplayName.Length > MaxDisplayNameLength)
+            {
+                // Redaction can expand text, so the persisted length contract is enforced on the
+                // final sanitized value instead of failing later with a misleading stored-data error.
+                throw new ManagementAuditException(
+                    "audit.operator_display_name_invalid",
+                    $"The audit operator display name exceeds the maximum allowed length of {MaxDisplayNameLength} characters after sensitive-content redaction.");
+            }
         }
 
         return new ManagementAuditOperator(cleanedOperatorId, cleanedDisplayName, source);

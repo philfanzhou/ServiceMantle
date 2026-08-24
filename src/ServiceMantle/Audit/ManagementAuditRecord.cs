@@ -93,4 +93,72 @@ public sealed record ManagementAuditRecord
     /// </summary>
     public override string ToString() =>
         $"ManagementAuditRecord(Id={Id}, Action={Action}, Target={Target}, Outcome={Outcome})";
+
+    /// <summary>
+    /// Compares records by value, including structural comparison of metadata. The default record
+    /// equality would fall back to reference comparison for <see cref="Metadata"/>, producing
+    /// results that flip depending on whether metadata is empty.
+    /// </summary>
+    public bool Equals(ManagementAuditRecord? other)
+    {
+        if (other is null)
+        {
+            return false;
+        }
+
+        return Id == other.Id
+            && Operator.Equals(other.Operator)
+            && Action.Equals(other.Action)
+            && Target.Equals(other.Target)
+            && Outcome == other.Outcome
+            && OccurredAtUtc.Equals(other.OccurredAtUtc)
+            && string.Equals(ClientIp, other.ClientIp, StringComparison.Ordinal)
+            && string.Equals(CorrelationId, other.CorrelationId, StringComparison.Ordinal)
+            && string.Equals(SecurityDescription, other.SecurityDescription, StringComparison.Ordinal)
+            && MetadataEquals(other.Metadata);
+    }
+
+    /// <summary>
+    /// Computes a hash code that is independent of metadata enumeration order.
+    /// </summary>
+    public override int GetHashCode()
+    {
+        var metadataHash = 0;
+        foreach (var (key, value) in Metadata)
+        {
+            metadataHash ^= HashCode.Combine(key, value);
+        }
+
+        return HashCode.Combine(
+            Id,
+            HashCode.Combine(
+                Operator,
+                Action,
+                Target,
+                Outcome,
+                OccurredAtUtc,
+                ClientIp,
+                CorrelationId,
+                SecurityDescription),
+            metadataHash);
+    }
+
+    private bool MetadataEquals(IReadOnlyDictionary<string, string> otherMetadata)
+    {
+        if (Metadata.Count != otherMetadata.Count)
+        {
+            return false;
+        }
+
+        foreach (var (key, value) in Metadata)
+        {
+            if (!otherMetadata.TryGetValue(key, out var otherValue)
+                || !string.Equals(value, otherValue, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

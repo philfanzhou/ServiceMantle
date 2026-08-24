@@ -238,7 +238,7 @@ public sealed class ManagementAuditEventTests
     [InlineData("Password=\"abc def\"", "abc def")]
     [InlineData("Host=db;Database=prod;Username=admin", "Username=admin")]
     [InlineData("postgresql://admin:uri-secret@db/prod", "uri-secret")]
-    [InlineData("setup code is natural-secret", "natural-secret")]
+    [InlineData("setup code=natural-secret", "natural-secret")]
     [InlineData("{\\\"password\\\":\\\"escaped-secret\\\"}", "escaped-secret")]
     public void Create_redacts_common_sensitive_formats_in_description(string rawDescription, string secret)
     {
@@ -253,7 +253,7 @@ public sealed class ManagementAuditEventTests
     }
 
     [Theory]
-    [InlineData("setup code is alpha,beta")]
+    [InlineData("setup code=alpha,beta")]
     [InlineData("password=alpha;beta")]
     [InlineData("{\"password\":\"alpha]beta\"}")]
     [InlineData("{\"password\":\"alpha}beta\"}")]
@@ -270,7 +270,7 @@ public sealed class ManagementAuditEventTests
     }
 
     [Theory]
-    [InlineData("setup code is alpha,beta")]
+    [InlineData("setup code=alpha,beta")]
     [InlineData("password=alpha;beta")]
     [InlineData("{\"password\":\"alpha]beta\"}")]
     [InlineData("{\"password\":\"alpha}beta\"}")]
@@ -498,6 +498,110 @@ public sealed class ManagementAuditEventTests
                 correlationId: correlationId));
 
         Assert.Equal("audit.correlation_id_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
+    public void Create_rejects_description_that_exceeds_max_length_only_after_redaction()
+    {
+        // Each "Bearer a " (9 chars) redacts to "Bearer [REDACTED] " (18 chars), so 400 repetitions
+        // pass the raw length check but previously came back at ~7200 characters, nearly twice
+        // MaxDescriptionLength and far past what consumers sizing columns on that constant expect.
+        var nearLimit = string.Concat(Enumerable.Repeat("Bearer a ", 400));
+        Assert.True(nearLimit.Length <= ManagementAuditEvent.MaxDescriptionLength);
+
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditEvent.Create(
+                Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target,
+                securityDescription: nearLimit));
+
+        Assert.Equal("audit.description_invalid", exception.ErrorCode);
+        Assert.Contains(
+            "after sensitive-content redaction",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Create_rejects_metadata_value_that_exceeds_max_length_only_after_redaction()
+    {
+        var nearLimitValue =
+            new string('x', ManagementAuditEvent.MaxMetadataValueLength - 10) + "Bearer ab";
+
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditEvent.Create(
+                Operator,
+                WellKnownManagementAuditActions.ConfigurationChanged,
+                Target,
+                metadata: new Dictionary<string, string> { ["note"] = nearLimitValue }));
+
+        Assert.Equal("audit.metadata_invalid", exception.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("organizations.subscription.entitlement")]
+    [InlineData("ServiceMantle.Persistence.EntityFrameworkCore")]
+    public void Create_accepts_dotted_composite_target_ids_without_token_redaction(string compositeId)
+    {
+        var target = ManagementAuditTarget.Create(
+            WellKnownManagementAuditTargetTypes.Configuration, compositeId);
+
+        Assert.Equal(compositeId, target.Id);
+
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            target,
+            securityDescription: $"Updated setting in {compositeId}");
+
+        Assert.Contains(compositeId, auditEvent.SecurityDescription, StringComparison.Ordinal);
+        Assert.DoesNotContain("[REDACTED_TOKEN]", auditEvent.SecurityDescription, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Create_still_redacts_real_jwt_shaped_tokens()
+    {
+        const string jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0b2tlbi12YWx1ZSJ0.A_bC-dE_fG-hI_jK";
+
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target,
+            securityDescription: $"Rotated token {jwt} for client");
+
+        Assert.DoesNotContain(jwt, auditEvent.SecurityDescription);
+        Assert.Contains("[REDACTED_TOKEN]", auditEvent.SecurityDescription, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Create_preserves_prose_that_merely_contains_the_word_is_near_a_sensitive_noun()
+    {
+        const string prose = "The session token is now invalid.";
+
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target,
+            securityDescription: prose);
+
+        Assert.Equal(prose, auditEvent.SecurityDescription);
+    }
+
+    [Fact]
+    public void Events_with_identical_metadata_compare_equal_regardless_of_instance()
+    {
+        var occurredAt = new DateTimeOffset(2026, 8, 1, 10, 0, 0, TimeSpan.Zero);
+        var first = ManagementAuditEvent.Create(
+            Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target,
+            ManagementAuditOutcome.Success, occurredAt,
+            metadata: new Dictionary<string, string> { ["reason"] = "rotation" });
+        var second = ManagementAuditEvent.Create(
+            Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target,
+            ManagementAuditOutcome.Success, occurredAt,
+            metadata: new Dictionary<string, string> { ["reason"] = "rotation" });
+        var withoutMetadata = ManagementAuditEvent.Create(
+            Operator, WellKnownManagementAuditActions.ConfigurationChanged, Target,
+            ManagementAuditOutcome.Success, occurredAt);
+
+        Assert.Equal(first, second);
+        Assert.True(first == second);
+        Assert.Equal(first.GetHashCode(), second.GetHashCode());
+        Assert.NotEqual(withoutMetadata, second);
     }
 
     private sealed class FixedTimeProvider : TimeProvider

@@ -94,8 +94,10 @@ internal static partial class ManagementAuditContentSanitizer
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveKeyPattern();
 
+    // Only real assignment syntax (`:` / `=`) counts as a key/value separator. Natural-language
+    // prose such as "the session token is now invalid" must not trip whole-field redaction.
     [GeneratedRegex(
-        @"(?:" + SensitiveKeyExpression + @")(?:\\?[""'])?\s*(?::|=|\bis\b)",
+        @"(?:" + SensitiveKeyExpression + @")(?:\\?[""'])?\s*(?::|=)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveKeyValuePattern();
 
@@ -112,8 +114,11 @@ internal static partial class ManagementAuditContentSanitizer
     [GeneratedRegex(@"Bearer\s+[A-Za-z0-9\-_.~+/]+=*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BearerTokenPattern();
 
+    // A real JWT/JWE header is the base64url encoding of a JSON object, so it always starts with
+    // "eyJ" (the encoding of `{"`). Anchoring on that prefix keeps ordinary dotted composite
+    // identifiers (e.g. "organizations.subscription.entitlement") from being mistaken for tokens.
     [GeneratedRegex(
-        @"[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+        @"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
         RegexOptions.CultureInvariant)]
     private static partial Regex JwtLikePattern();
 

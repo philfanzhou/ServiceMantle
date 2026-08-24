@@ -71,6 +71,23 @@ public sealed class ManagementAuditOperatorTests
     }
 
     [Fact]
+    public void Create_rejects_display_name_that_exceeds_max_length_only_after_redaction()
+    {
+        // 28 repetitions of "Bearer a " (252 chars) pass the raw length check but expand to ~504
+        // chars once each becomes "Bearer [REDACTED] ", well past MaxDisplayNameLength.
+        var nearLimit = string.Concat(Enumerable.Repeat("Bearer a ", 28));
+        Assert.True(nearLimit.Length <= ManagementAuditOperator.MaxDisplayNameLength);
+
+        var exception = Assert.Throws<ManagementAuditException>(() =>
+            ManagementAuditOperator.Create(
+                WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+                operatorId: "admin-42",
+                displayName: nearLimit));
+
+        Assert.Equal("audit.operator_display_name_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
     public void ToString_never_includes_display_name()
     {
         var operatorInfo = ManagementAuditOperator.Create(

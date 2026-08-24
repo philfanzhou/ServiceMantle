@@ -175,6 +175,14 @@ public sealed record ManagementAuditEvent
         if (cleanedDescription is not null)
         {
             cleanedDescription = ManagementAuditContentSanitizer.Redact(cleanedDescription);
+            if (cleanedDescription.Length > MaxDescriptionLength)
+            {
+                // Redaction can expand text (for example "Bearer a" becomes "Bearer [REDACTED]"),
+                // so the persisted length contract is enforced on the final sanitized value.
+                throw new ManagementAuditException(
+                    "audit.description_invalid",
+                    $"The audit security description exceeds the maximum allowed length of {MaxDescriptionLength} characters after sensitive-content redaction.");
+            }
         }
 
         var sanitizedMetadata = SanitizeMetadata(metadata);
@@ -201,6 +209,72 @@ public sealed record ManagementAuditEvent
     public override string ToString() =>
         $"ManagementAuditEvent(Action={Action}, Outcome={Outcome}, OccurredAtUtc={OccurredAtUtc:O})";
 
+    /// <summary>
+    /// Compares events by value, including structural comparison of metadata. The default record
+    /// equality would fall back to reference comparison for <see cref="Metadata"/>, producing
+    /// results that flip depending on whether metadata is empty.
+    /// </summary>
+    public bool Equals(ManagementAuditEvent? other)
+    {
+        if (other is null)
+        {
+            return false;
+        }
+
+        return Operator.Equals(other.Operator)
+            && Action.Equals(other.Action)
+            && Target.Equals(other.Target)
+            && Outcome == other.Outcome
+            && OccurredAtUtc.Equals(other.OccurredAtUtc)
+            && string.Equals(ClientIp, other.ClientIp, StringComparison.Ordinal)
+            && string.Equals(CorrelationId, other.CorrelationId, StringComparison.Ordinal)
+            && string.Equals(SecurityDescription, other.SecurityDescription, StringComparison.Ordinal)
+            && MetadataEquals(other.Metadata);
+    }
+
+    /// <summary>
+    /// Computes a hash code that is independent of metadata enumeration order.
+    /// </summary>
+    public override int GetHashCode()
+    {
+        var metadataHash = 0;
+        foreach (var (key, value) in Metadata)
+        {
+            metadataHash ^= HashCode.Combine(key, value);
+        }
+
+        return HashCode.Combine(
+            HashCode.Combine(
+                Operator,
+                Action,
+                Target,
+                Outcome,
+                OccurredAtUtc,
+                ClientIp,
+                CorrelationId,
+                SecurityDescription),
+            metadataHash);
+    }
+
+    private bool MetadataEquals(IReadOnlyDictionary<string, string> other)
+    {
+        if (Metadata.Count != other.Count)
+        {
+            return false;
+        }
+
+        foreach (var (key, value) in Metadata)
+        {
+            if (!other.TryGetValue(key, out var otherValue)
+                || !string.Equals(value, otherValue, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static IReadOnlyDictionary<string, string> SanitizeMetadata(IReadOnlyDictionary<string, string>? metadata)
     {
         if (metadata is null || metadata.Count == 0)
@@ -224,7 +298,15 @@ public sealed record ManagementAuditEvent
 
             var cleanedValue = AuditTextSanitizer.CleanRequired(
                 value, MaxMetadataValueLength, "audit.metadata_invalid", "metadata value");
-            if (!sanitized.TryAdd(cleanedKey, ManagementAuditContentSanitizer.Redact(cleanedValue)))
+            var redactedValue = ManagementAuditContentSanitizer.Redact(cleanedValue);
+            if (redactedValue.Length > MaxMetadataValueLength)
+            {
+                throw new ManagementAuditException(
+                    "audit.metadata_invalid",
+                    $"The audit metadata value exceeds the maximum allowed length of {MaxMetadataValueLength} characters after sensitive-content redaction.");
+            }
+
+            if (!sanitized.TryAdd(cleanedKey, redactedValue))
             {
                 throw new ManagementAuditException(
                     "audit.metadata_invalid",
