@@ -13,7 +13,10 @@ namespace ServiceMantle.Audit;
 public sealed record ManagementAuditEvent
 {
     /// <summary>
-    /// The maximum length allowed for a security description.
+    /// The maximum length allowed for a security description. The limit is enforced on the final
+    /// sanitized value, after sensitive-content redaction has run. Redaction can make text longer
+    /// (for example "Bearer a" becomes "Bearer [REDACTED]"), so a description that is within this
+    /// limit before the call can still be rejected by <see cref="Create"/>.
     /// </summary>
     public const int MaxDescriptionLength = 4000;
 
@@ -38,7 +41,9 @@ public sealed record ManagementAuditEvent
     public const int MaxMetadataKeyLength = 64;
 
     /// <summary>
-    /// The maximum length allowed for a metadata value.
+    /// The maximum length allowed for a metadata value. As with <see cref="MaxDescriptionLength"/>,
+    /// the limit is enforced after sensitive-content redaction, which can make a value longer than
+    /// the string originally supplied.
     /// </summary>
     public const int MaxMetadataValueLength = 1024;
 
@@ -122,7 +127,12 @@ public sealed record ManagementAuditEvent
     /// <param name="securityDescription">A human-readable description of the security-relevant event.</param>
     /// <param name="metadata">Structured metadata for the event.</param>
     /// <param name="timeProvider">Time provider used when <paramref name="occurredAtUtc"/> is not supplied.</param>
-    /// <exception cref="ManagementAuditException">A field is invalid or names a sensitive value.</exception>
+    /// <exception cref="ManagementAuditException">
+    /// A field is invalid or names a sensitive value, or <paramref name="securityDescription"/> or a
+    /// metadata value exceeds its length limit once sensitive-content redaction has been applied.
+    /// Redaction can expand text, so callers must treat these limits as bounds on the sanitized
+    /// value rather than on the string they supply.
+    /// </exception>
     public static ManagementAuditEvent Create(
         ManagementAuditOperator operatorInfo,
         ManagementAuditAction action,
@@ -229,21 +239,14 @@ public sealed record ManagementAuditEvent
             && string.Equals(ClientIp, other.ClientIp, StringComparison.Ordinal)
             && string.Equals(CorrelationId, other.CorrelationId, StringComparison.Ordinal)
             && string.Equals(SecurityDescription, other.SecurityDescription, StringComparison.Ordinal)
-            && MetadataEquals(other.Metadata);
+            && AuditMetadataEquality.AreEqual(Metadata, other.Metadata);
     }
 
     /// <summary>
     /// Computes a hash code that is independent of metadata enumeration order.
     /// </summary>
-    public override int GetHashCode()
-    {
-        var metadataHash = 0;
-        foreach (var (key, value) in Metadata)
-        {
-            metadataHash ^= HashCode.Combine(key, value);
-        }
-
-        return HashCode.Combine(
+    public override int GetHashCode() =>
+        HashCode.Combine(
             HashCode.Combine(
                 Operator,
                 Action,
@@ -253,27 +256,7 @@ public sealed record ManagementAuditEvent
                 ClientIp,
                 CorrelationId,
                 SecurityDescription),
-            metadataHash);
-    }
-
-    private bool MetadataEquals(IReadOnlyDictionary<string, string> other)
-    {
-        if (Metadata.Count != other.Count)
-        {
-            return false;
-        }
-
-        foreach (var (key, value) in Metadata)
-        {
-            if (!other.TryGetValue(key, out var otherValue)
-                || !string.Equals(value, otherValue, StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+            AuditMetadataEquality.GetHashCode(Metadata));
 
     private static IReadOnlyDictionary<string, string> SanitizeMetadata(IReadOnlyDictionary<string, string>? metadata)
     {

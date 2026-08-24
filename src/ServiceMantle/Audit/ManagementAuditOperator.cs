@@ -12,7 +12,10 @@ public sealed record ManagementAuditOperator
     public const int MaxOperatorIdLength = 256;
 
     /// <summary>
-    /// The maximum length allowed for an operator display name.
+    /// The maximum length allowed for an operator display name. The limit is enforced on the final
+    /// sanitized value, after sensitive-content redaction has run. Redaction can make text longer,
+    /// so a display name that is within this limit before the call can still be rejected by
+    /// <see cref="Create"/>.
     /// </summary>
     public const int MaxDisplayNameLength = 256;
 
@@ -42,7 +45,10 @@ public sealed record ManagementAuditOperator
     /// <summary>
     /// Creates a validated audit operator.
     /// </summary>
-    /// <exception cref="ManagementAuditException">The operator identifier or display name is invalid.</exception>
+    /// <exception cref="ManagementAuditException">
+    /// The operator identifier or display name is invalid, or <paramref name="displayName"/> exceeds
+    /// <see cref="MaxDisplayNameLength"/> once sensitive-content redaction has been applied.
+    /// </exception>
     public static ManagementAuditOperator Create(
         ManagementAuditOperatorSource source,
         string? operatorId = null,

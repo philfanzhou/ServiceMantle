@@ -115,21 +115,14 @@ public sealed record ManagementAuditRecord
             && string.Equals(ClientIp, other.ClientIp, StringComparison.Ordinal)
             && string.Equals(CorrelationId, other.CorrelationId, StringComparison.Ordinal)
             && string.Equals(SecurityDescription, other.SecurityDescription, StringComparison.Ordinal)
-            && MetadataEquals(other.Metadata);
+            && AuditMetadataEquality.AreEqual(Metadata, other.Metadata);
     }
 
     /// <summary>
     /// Computes a hash code that is independent of metadata enumeration order.
     /// </summary>
-    public override int GetHashCode()
-    {
-        var metadataHash = 0;
-        foreach (var (key, value) in Metadata)
-        {
-            metadataHash ^= HashCode.Combine(key, value);
-        }
-
-        return HashCode.Combine(
+    public override int GetHashCode() =>
+        HashCode.Combine(
             Id,
             HashCode.Combine(
                 Operator,
@@ -140,25 +133,5 @@ public sealed record ManagementAuditRecord
                 ClientIp,
                 CorrelationId,
                 SecurityDescription),
-            metadataHash);
-    }
-
-    private bool MetadataEquals(IReadOnlyDictionary<string, string> otherMetadata)
-    {
-        if (Metadata.Count != otherMetadata.Count)
-        {
-            return false;
-        }
-
-        foreach (var (key, value) in Metadata)
-        {
-            if (!otherMetadata.TryGetValue(key, out var otherValue)
-                || !string.Equals(value, otherValue, StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+            AuditMetadataEquality.GetHashCode(Metadata));
 }
