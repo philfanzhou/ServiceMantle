@@ -545,6 +545,29 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     }
 
     [Fact]
+    public async Task QueryAsync_wraps_malformed_persisted_id_with_stable_error()
+    {
+        await using var context = await SeedAsync();
+        await context.Database.ExecuteSqlRawAsync(
+            """
+            INSERT INTO service_audit_logs
+                (id, operator_id, operator_source, action, target_type, target_id, outcome, occurred_at_utc)
+            VALUES
+                ('not-a-guid', 'admin-invalid', 'interactive_admin', 'configuration.changed',
+                 'configuration', 'smtp', 1, '2026-01-03 00:00:00');
+            """,
+            TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
+            new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
+                .QueryAsync(ManagementAuditQuery.Create(), TestContext.Current.CancellationToken)
+                .AsTask());
+
+        Assert.Equal("audit.entity_invalid", exception.ErrorCode);
+        Assert.DoesNotContain("not-a-guid", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task QueryAsync_rejects_malformed_metadata_json_with_stable_error()
     {
         await using var context = await SeedAsync();

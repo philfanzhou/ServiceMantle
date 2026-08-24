@@ -287,6 +287,29 @@ public sealed class ManagementAuditEventTests
     }
 
     [Theory]
+    [InlineData("passwd=alpha,beta")]
+    [InlineData("passphrase: gamma")]
+    [InlineData("account_key=delta")]
+    [InlineData("private_key=epsilon")]
+    public void Create_redacts_sensitive_key_aliases_across_all_free_text_fields(string rawValue)
+    {
+        var operatorInfo = ManagementAuditOperator.Create(
+            WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+            operatorId: "admin-1",
+            displayName: rawValue);
+        var auditEvent = ManagementAuditEvent.Create(
+            operatorInfo,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            securityDescription: rawValue,
+            metadata: new Dictionary<string, string> { ["note"] = rawValue });
+
+        Assert.Equal("[REDACTED]", auditEvent.Operator.DisplayName);
+        Assert.Equal("[REDACTED]", auditEvent.SecurityDescription);
+        Assert.Equal("[REDACTED]", auditEvent.Metadata["note"]);
+    }
+
+    [Theory]
     [InlineData("redis://:redis-password@cache.internal:6379/0", "redis-password")]
     [InlineData("mongodb://admin:mongo-password@db.internal/audit", "mongo-password")]
     [InlineData("amqp://worker:rabbit-password@queue.internal/vhost", "rabbit-password")]

@@ -11,12 +11,13 @@ namespace ServiceMantle.Audit;
 /// </summary>
 internal static partial class ManagementAuditContentSanitizer
 {
-    private static readonly string[] BlockedMetadataKeyTokens =
-    [
-        "pass", "passwd", "password", "passphrase", "pwd", "secret", "token", "apikey",
-        "connectionstring", "connstr", "credential", "privatekey", "rootkey", "masterkey",
-        "setupcode", "clientsecret", "accesskey", "accountkey", "authorization", "cookie"
-    ];
+    // Keep metadata-key rejection and free-text assignment detection on the same vocabulary so a
+    // supported secret alias cannot be blocked as a key while remaining visible in another field.
+    private const string SensitiveKeyExpression =
+        @"pass(?:wd|[\s_-]*(?:word|phrase))?|pwd|secret|token|api[\s_-]*key|" +
+        @"connection[\s_-]*(?:string|str)|conn[\s_-]*str|credential|private[\s_-]*key|" +
+        @"root[\s_-]*key|master[\s_-]*key|setup[\s_-]*code|client[\s_-]*secret|" +
+        @"access[\s_-]*key|account[\s_-]*key|authorization|cookie";
 
     internal static void EnsureMetadataKeyAllowed(string key)
     {
@@ -28,14 +29,11 @@ internal static partial class ManagementAuditContentSanitizer
                 "The audit metadata key could not be normalized safely.");
         }
 
-        foreach (var blockedToken in BlockedMetadataKeyTokens)
+        if (SensitiveKeyPattern().IsMatch(normalizedKey))
         {
-            if (normalizedKey.Contains(blockedToken, StringComparison.Ordinal))
-            {
-                throw new ManagementAuditException(
-                    "audit.metadata_key_rejected",
-                    "The audit metadata key names a sensitive value and is not allowed.");
-            }
+            throw new ManagementAuditException(
+                "audit.metadata_key_rejected",
+                "The audit metadata key names a sensitive value and is not allowed.");
         }
     }
 
@@ -92,7 +90,12 @@ internal static partial class ManagementAuditContentSanitizer
     }
 
     [GeneratedRegex(
-        @"(?:pass(?:[\s_-]*word)?|pwd|secret|token|api[\s_-]*key|master[\s_-]*key|root[\s_-]*key|setup[\s_-]*code|connection[\s_-]*(?:string|str)|client[\s_-]*secret|access[\s_-]*key|credential|authorization|cookie)(?:\\?[""'])?\s*(?::|=|\bis\b)",
+        SensitiveKeyExpression,
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SensitiveKeyPattern();
+
+    [GeneratedRegex(
+        @"(?:" + SensitiveKeyExpression + @")(?:\\?[""'])?\s*(?::|=|\bis\b)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveKeyValuePattern();
 

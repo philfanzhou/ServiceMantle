@@ -106,10 +106,18 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
                 "The stored audit entity failed validation.");
         }
 
-        var entities = await ordered
-            .Take(query.PageSize + 1)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
+        List<ManagementAuditLogEntity> entities;
+        try
+        {
+            entities = await ordered
+                .Take(query.PageSize + 1)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (FormatException exception)
+        {
+            throw ManagementAuditEntityMapper.InvalidStoredEntity(exception);
+        }
 
         var hasNext = entities.Count > query.PageSize;
         if (hasNext)

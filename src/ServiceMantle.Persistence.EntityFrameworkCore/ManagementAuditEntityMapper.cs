@@ -128,7 +128,7 @@ internal static class ManagementAuditEntityMapper
         }
     }
 
-    private static ManagementAuditException InvalidStoredEntity(Exception? innerException = null) =>
+    internal static ManagementAuditException InvalidStoredEntity(Exception? innerException = null) =>
         new(
             "audit.entity_invalid",
             "The stored audit entity failed validation.",
