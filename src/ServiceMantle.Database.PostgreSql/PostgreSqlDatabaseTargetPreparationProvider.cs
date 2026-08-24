@@ -283,7 +283,8 @@ internal interface INpgsqlDatabaseCreationProbe
 
 internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
 {
-    private const int MaximumDatabaseNameBytes = 63;
+    private const int MaximumIdentifierBytes = 63;
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private readonly Func<CancellationToken, ValueTask>? afterMissingTargetObserved;
 
     internal NpgsqlDatabaseCreationProbe(
@@ -304,19 +305,29 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
             connection = new NpgsqlConnection(administrativeConnectionString.ConnectionString);
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-            if (!await IsDatabaseNameValidForServerAsync(connection, databaseName, cancellationToken)
-                .ConfigureAwait(false))
+            var serverEncoding = await GetServerEncodingAsync(connection, cancellationToken).ConfigureAwait(false);
+
+            // Validate before any side effect: the created database must be reachable through the
+            // same driver that prepared it.
+            if (!IsIdentitySupportedByDriver(databaseName, serverEncoding))
             {
                 return DatabaseTargetPreparationResult.Failure(
                     WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
             }
 
-            if (await DatabaseExistsAsync(connection, databaseName, cancellationToken).ConfigureAwait(false))
+            var existingOwner =
+                await GetExistingDatabaseOwnerAsync(connection, databaseName, cancellationToken)
+                    .ConfigureAwait(false);
+            if (existingOwner is not null)
             {
-                return DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.AlreadyExists);
+                return string.Equals(existingOwner, ownerName, StringComparison.Ordinal)
+                    ? DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.AlreadyExists)
+                    : DatabaseTargetPreparationResult.Failure(
+                        WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict);
             }
 
-            if (!await IsRoleValidForServerAsync(connection, ownerName, cancellationToken).ConfigureAwait(false))
+            if (!await IsExistingRoleSupportedByDriverAsync(
+                    connection, ownerName, serverEncoding, cancellationToken).ConfigureAwait(false))
             {
                 return DatabaseTargetPreparationResult.Failure(
                     WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
@@ -343,8 +354,12 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
                     // DATABASE. A genuinely concurrent race is observed as a unique-key violation on
                     // the pg_database catalog's name index (23505); a race resolved by the time this
                     // statement runs is observed as the higher-level duplicate_database error
-                    // (42P04). Both mean the target now exists and this call did not create it.
-                    return await DatabaseExistsAsync(connection, databaseName, cancellationToken).ConfigureAwait(false)
+                    // (42P04). Both only mean the target now exists; whether this call can treat it
+                    // as ready still depends on who owns it.
+                    var raceOwner = await GetExistingDatabaseOwnerAsync(
+                            connection, databaseName, cancellationToken).ConfigureAwait(false);
+
+                    return string.Equals(raceOwner, ownerName, StringComparison.Ordinal)
                         ? DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.AlreadyExists)
                         : DatabaseTargetPreparationResult.Failure(
                             WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict);
@@ -383,64 +398,80 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
         }
     }
 
-    private static async ValueTask<bool> DatabaseExistsAsync(
+    private static async ValueTask<string?> GetExistingDatabaseOwnerAsync(
         NpgsqlConnection connection,
         string databaseName,
         CancellationToken cancellationToken)
     {
         await using var checkCommand = connection.CreateCommand();
-        checkCommand.CommandText = "SELECT 1 FROM pg_database WHERE datname = @name";
+        checkCommand.CommandText =
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = @name";
         var parameter = checkCommand.CreateParameter();
         parameter.ParameterName = "@name";
         parameter.Value = databaseName;
         checkCommand.Parameters.Add(parameter);
 
-        return await checkCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+        var owner = await checkCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return owner?.ToString();
     }
 
-    private static async ValueTask<bool> IsDatabaseNameValidForServerAsync(
+    private static async ValueTask<string> GetServerEncodingAsync(
         NpgsqlConnection connection,
-        string databaseName,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText =
-                "SELECT octet_length(convert_to(@name, current_setting('server_encoding'))) <= @maximumBytes";
-            command.Parameters.AddWithValue("@name", databaseName);
-            command.Parameters.AddWithValue("@maximumBytes", MaximumDatabaseNameBytes);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT current_setting('server_encoding')";
 
-            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
-        }
-        catch (PostgresException exception) when (exception.SqlState.StartsWith("22", StringComparison.Ordinal))
-        {
-            // The target name cannot be represented by the server encoding.
-            return false;
-        }
+        return (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))?.ToString() ?? string.Empty;
     }
 
-    private static async ValueTask<bool> IsRoleValidForServerAsync(
+    /// <summary>
+    /// Npgsql writes the startup-packet database and user names as UTF-8, and PostgreSQL silently
+    /// truncates them at its NAMEDATALEN limit. The server stores identifiers converted from the
+    /// client encoding into server_encoding but matches the incoming startup name by raw bytes, so
+    /// an identifier is only reachable end-to-end when its UTF-8 form fits the identifier limit
+    /// and is byte-identical to its stored form: either the server stores UTF-8, or the identifier
+    /// is pure ASCII. Anything else would let preparation succeed while the application can never
+    /// connect to the result.
+    /// </summary>
+    private static bool IsIdentitySupportedByDriver(string identifier, string serverEncoding)
+    {
+        int byteCount;
+        try
+        {
+            byteCount = StrictUtf8.GetByteCount(identifier);
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
+
+        return byteCount <= MaximumIdentifierBytes &&
+            (string.Equals(serverEncoding, "UTF8", StringComparison.OrdinalIgnoreCase) || IsAscii(identifier));
+    }
+
+    private static bool IsAscii(string value) =>
+        !value.Any(character => character > 127);
+
+    private static async ValueTask<bool> IsExistingRoleSupportedByDriverAsync(
         NpgsqlConnection connection,
         string roleName,
+        string serverEncoding,
         CancellationToken cancellationToken)
     {
-        try
+        if (!IsIdentitySupportedByDriver(roleName, serverEncoding))
         {
-            await using var command = connection.CreateCommand();
-            command.CommandText =
-                "SELECT octet_length(convert_to(@name, current_setting('server_encoding'))) <= @maximumBytes " +
-                "AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @name)";
-            command.Parameters.AddWithValue("@name", roleName);
-            command.Parameters.AddWithValue("@maximumBytes", MaximumDatabaseNameBytes);
-
-            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
-        }
-        catch (PostgresException exception) when (exception.SqlState.StartsWith("22", StringComparison.Ordinal))
-        {
-            // The target owner cannot be represented by the server encoding.
             return false;
         }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = @name)";
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "@name";
+        parameter.Value = roleName;
+        command.Parameters.Add(parameter);
+
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
     }
 
     private static string QuoteIdentifier(string identifier) =>

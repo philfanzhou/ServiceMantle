@@ -351,8 +351,13 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         Assert.False(await DatabaseExistsAsync(truncatedName));
     }
 
+    /// <summary>
+    /// On a LATIN1 server a non-ASCII name can be legal server-side while being unreachable
+    /// through Npgsql, whose startup packet always carries UTF-8 bytes that never match the
+    /// stored LATIN1 form. Preparation must reject such a name before creating anything.
+    /// </summary>
     [Fact]
-    public async Task Prepare_AcceptsDatabaseNameWithinLatin1ServerByteLimit()
+    public async Task Prepare_OnLatin1Server_RejectsDriverUnsupportedNamesWithoutCreatingAnything()
     {
         Assert.SkipUnless(ShouldRunPostgreSqlTests(), SkipReason);
 
@@ -366,6 +371,8 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         {
             Pooling = false
         };
+
+        // 32 'é' characters are 32 bytes under LATIN1 but 64 bytes over the wire as UTF-8.
         var databaseName = new string('é', 32);
         var targetBuilder = new NpgsqlConnectionStringBuilder(latin1Connection.ConnectionString)
         {
@@ -383,8 +390,61 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
             TimeSpan.FromSeconds(15),
             TestContext.Current.CancellationToken);
 
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+        Assert.Equal(0, await CountLatin1ContainerDatabasesAsync(latin1Connection, databaseName));
+    }
+
+    /// <summary>
+    /// A driver-supported name on a LATIN1 server must produce a target that the application can
+    /// actually observe, connect to, and migrate afterwards.
+    /// </summary>
+    [Fact]
+    public async Task Prepare_OnLatin1Server_CreatesObservableConnectableTarget_ForDriverSupportedNames()
+    {
+        Assert.SkipUnless(ShouldRunPostgreSqlTests(), SkipReason);
+
+        await using var latin1Container = new PostgreSqlBuilder(GetPostgresImage())
+            .WithPassword("latin1-password")
+            .WithUsername("latin1-admin")
+            .WithEnvironment("POSTGRES_INITDB_ARGS", "--encoding=LATIN1 --locale=C")
+            .Build();
+        await latin1Container.StartAsync(TestContext.Current.CancellationToken);
+        var latin1Connection = new NpgsqlConnectionStringBuilder(latin1Container.GetConnectionString())
+        {
+            Pooling = false
+        };
+
+        var databaseName = $"latin1_ascii_{UniqueSuffix()}";
+        var targetBuilder = new NpgsqlConnectionStringBuilder(latin1Connection.ConnectionString)
+        {
+            Database = databaseName
+        };
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.PostgreSql,
+            "16",
+            targetBuilder.ConnectionString);
+        var provider = new PostgreSqlDatabaseTargetPreparationProvider();
+
+        var result = await provider.PrepareAsync(
+            new DatabaseTargetPreparationRequest(target, latin1Connection.ConnectionString),
+            TimeSpan.FromSeconds(15),
+            TestContext.Current.CancellationToken);
+
         Assert.True(result.Succeeded);
         Assert.Equal(DatabaseTargetPreparationOutcome.Created, result.Outcome);
+
+        var observation = await provider.ObserveAsync(target, TestContext.Current.CancellationToken);
+        Assert.True(observation.IsServerReachable);
+        Assert.True(observation.TargetExists);
+        Assert.True(observation.IsTargetConnectable);
+        Assert.Null(observation.ErrorCode);
+
+        await using var applicationConnection = new NpgsqlConnection(targetBuilder.ConnectionString);
+        await applicationConnection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = applicationConnection.CreateCommand();
+        command.CommandText = "CREATE TABLE latin1_prepared_target (id INTEGER PRIMARY KEY)";
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -409,6 +469,134 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         Assert.True(result.Succeeded);
         Assert.Equal(DatabaseTargetPreparationOutcome.AlreadyExists, result.Outcome);
         Assert.Equal("do-not-touch", await ReadMarkerRowAsync(databaseName));
+    }
+
+    [Fact]
+    public async Task Prepare_PreExistingDifferentlyOwnedDatabase_ReturnsTargetConflictWithoutTouchingIt()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var otherOwner = $"other_owner_{UniqueSuffix()}";
+        const string otherPassword = "other-owner-password";
+        await CreateNonCreateDbRoleAsync(otherOwner, otherPassword);
+        var databaseName = $"foreign_{UniqueSuffix()}";
+        await CreateRealDatabaseOwnedAsync(databaseName, otherOwner);
+        await InsertMarkerRowAsync(databaseName, "do-not-touch");
+
+        var provider = new PostgreSqlDatabaseTargetPreparationProvider();
+        var request = new DatabaseTargetPreparationRequest(
+            CreateTargetConfiguration(databaseName),
+            AdministrativeConnectionString());
+
+        var result = await provider.PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(15),
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, result.ErrorCode);
+        Assert.Equal(otherOwner, await GetDatabaseOwnerAsync(databaseName));
+        Assert.Equal("do-not-touch", await ReadMarkerRowAsync(databaseName));
+
+        // The actual owner resolving the same target is a legitimate AlreadyExists.
+        var ownedRequest = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                BuildConnectionString(databaseName, otherOwner, otherPassword)),
+            AdministrativeConnectionString());
+
+        var ownedResult = await provider.PrepareAsync(
+            ownedRequest,
+            TimeSpan.FromSeconds(15),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(ownedResult.Succeeded);
+        Assert.Equal(DatabaseTargetPreparationOutcome.AlreadyExists, ownedResult.Outcome);
+        Assert.Equal("do-not-touch", await ReadMarkerRowAsync(databaseName));
+    }
+
+    /// <summary>
+    /// Deterministic proof that a concurrent race between two different owners never reports
+    /// success for the loser: exactly one caller creates the database and the other observes the
+    /// differently-owned target as TargetConflict.
+    /// </summary>
+    [Fact]
+    public async Task Prepare_ConcurrentCreationWithDifferentOwners_WinnerCreates_LoserReportsConflict()
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+
+        var databaseName = $"race_owner_{UniqueSuffix()}";
+        const string rolePassword = "race-role-password";
+        var ownerA = $"race_a_{UniqueSuffix()}";
+        var ownerB = $"race_b_{UniqueSuffix()}";
+        await CreateNonCreateDbRoleAsync(ownerA, rolePassword);
+        await CreateNonCreateDbRoleAsync(ownerB, rolePassword);
+
+        var testToken = TestContext.Current.CancellationToken;
+        var barrier = new AsyncArrivalBarrier(2);
+        var requestA = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                BuildConnectionString(databaseName, ownerA, rolePassword)),
+            AdministrativeConnectionString());
+        var requestB = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                BuildConnectionString(databaseName, ownerB, rolePassword)),
+            AdministrativeConnectionString());
+
+        var taskA = new PostgreSqlDatabaseTargetPreparationProvider(
+            new NpgsqlBootstrapProbe(),
+            new NpgsqlDatabaseCreationProbe(barrier.SignalAndWaitAsync))
+            .PrepareAsync(requestA, TimeSpan.FromSeconds(20), testToken).AsTask();
+        var taskB = new PostgreSqlDatabaseTargetPreparationProvider(
+            new NpgsqlBootstrapProbe(),
+            new NpgsqlDatabaseCreationProbe(barrier.SignalAndWaitAsync))
+            .PrepareAsync(requestB, TimeSpan.FromSeconds(20), testToken).AsTask();
+
+        await Task.WhenAll(taskA, taskB).WaitAsync(TimeSpan.FromSeconds(25), testToken);
+
+        var resultA = await taskA;
+        var resultB = await taskB;
+
+        var createdCount = 0;
+        var conflictCount = 0;
+        var winner = string.Empty;
+
+        if (resultA.Succeeded)
+        {
+            createdCount++;
+            winner = ownerA;
+        }
+        else if (resultA.ErrorCode == WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict)
+        {
+            conflictCount++;
+        }
+        else
+        {
+            Assert.Fail($"Unexpected outcome for first caller: {resultA}");
+        }
+
+        if (resultB.Succeeded)
+        {
+            createdCount++;
+            winner = ownerB;
+        }
+        else if (resultB.ErrorCode == WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict)
+        {
+            conflictCount++;
+        }
+        else
+        {
+            Assert.Fail($"Unexpected outcome for second caller: {resultB}");
+        }
+
+        Assert.Equal(1, createdCount);
+        Assert.Equal(1, conflictCount);
+        Assert.Equal(winner, await GetDatabaseOwnerAsync(databaseName));
     }
 
     /// <summary>
@@ -655,6 +843,35 @@ public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsync
         await using var command = connection.CreateCommand();
         command.CommandText = $"CREATE DATABASE \"{databaseName}\"";
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    private async Task CreateRealDatabaseOwnedAsync(string databaseName, string ownerRole)
+    {
+        await using var connection = new NpgsqlConnection(AdministrativeConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            $"CREATE DATABASE \"{databaseName.Replace("\"", "\"\"", StringComparison.Ordinal)}\" " +
+            $"OWNER \"{ownerRole.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    private async Task<int> CountLatin1ContainerDatabasesAsync(
+        NpgsqlConnectionStringBuilder latin1Connection,
+        string databaseName)
+    {
+        await using var connection = new NpgsqlConnection(latin1Connection.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT COUNT(*) FROM pg_database WHERE datname = @name OR datname LIKE @accentPrefix";
+        command.Parameters.AddWithValue("@name", databaseName);
+        command.Parameters.AddWithValue("@accentPrefix", databaseName[..1] + "%");
+
+        var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return result is long count ? (int)count : 0;
     }
 
     private async Task CreateNonCreateDbRoleAsync(string roleName, string password)
