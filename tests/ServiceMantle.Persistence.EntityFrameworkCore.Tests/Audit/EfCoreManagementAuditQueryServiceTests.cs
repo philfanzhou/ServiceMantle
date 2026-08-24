@@ -544,16 +544,19 @@ public sealed class EfCoreManagementAuditQueryServiceTests
         Assert.Equal("audit.entity_invalid", exception.ErrorCode);
     }
 
-    [Fact]
-    public async Task QueryAsync_wraps_malformed_persisted_id_with_stable_error()
+    [Theory]
+    [InlineData("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("not-a-guid")]
+    public async Task QueryAsync_wraps_noncanonical_persisted_id_with_stable_error(string id)
     {
         await using var context = await SeedAsync();
-        await context.Database.ExecuteSqlRawAsync(
-            """
+        await context.Database.ExecuteSqlInterpolatedAsync(
+            $"""
             INSERT INTO service_audit_logs
                 (id, operator_id, operator_source, action, target_type, target_id, outcome, occurred_at_utc)
             VALUES
-                ('not-a-guid', 'admin-invalid', 'interactive_admin', 'configuration.changed',
+                ({id}, 'admin-invalid', 'interactive_admin', 'configuration.changed',
                  'configuration', 'smtp', 1, '2026-01-03 00:00:00');
             """,
             TestContext.Current.CancellationToken);
@@ -564,7 +567,7 @@ public sealed class EfCoreManagementAuditQueryServiceTests
                 .AsTask());
 
         Assert.Equal("audit.entity_invalid", exception.ErrorCode);
-        Assert.DoesNotContain("not-a-guid", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(id, exception.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -73,7 +73,7 @@ public static class ManagementAuditModelBuilderExtensions
                 .HasColumnName("id")
                 .HasConversion(
                     value => value.ToString("D"),
-                    value => Guid.Parse(value))
+                    value => ManagementAuditEntityMapper.ParsePersistedId(value))
                 .HasMaxLength(36)
                 .IsRequired();
 

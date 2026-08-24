@@ -15,6 +15,18 @@ internal static class ManagementAuditEntityMapper
     internal static int MaxPersistedTextByteLength(int maxCharacterLength) =>
         checked(maxCharacterLength * 4);
 
+    internal static Guid ParsePersistedId(string value)
+    {
+        if (value is null
+            || !Guid.TryParseExact(value, "D", out var id)
+            || !string.Equals(value, id.ToString("D"), StringComparison.Ordinal))
+        {
+            throw new FormatException("The persisted audit identifier is not a canonical GUID.");
+        }
+
+        return id;
+    }
+
     private static readonly JsonDocumentOptions MetadataDocumentOptions = new()
     {
         AllowTrailingCommas = false,
