@@ -11,14 +11,16 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 /// backfilled rows may appear on a later page and counts may change between requests.
 /// </summary>
 public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementAuditQueryService
-    where TDbContext : DbContext, IServiceMantleAuditDbContext
+    where TDbContext : DbContext
 {
     private readonly TDbContext dbContext;
 
     /// <summary>
     /// Initializes a new management audit query service.
     /// </summary>
-    /// <param name="dbContext">The business DbContext implementing <see cref="IServiceMantleAuditDbContext"/>.</param>
+    /// <param name="dbContext">
+    /// The business DbContext whose model includes <see cref="ManagementAuditModelBuilderExtensions.AddServiceMantleManagementAudit"/>.
+    /// </param>
     public EfCoreManagementAuditQueryService(TDbContext dbContext)
     {
         ArgumentNullException.ThrowIfNull(dbContext);
@@ -40,7 +42,7 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
                 "A continuation cursor is required for pages after the first page.");
         }
 
-        var filtered = Filter(dbContext.ServiceAuditLogs.AsNoTracking(), query);
+        var filtered = Filter(dbContext.Set<ManagementAuditLogEntity>().AsNoTracking(), query);
         var cursor = query.Cursor is null
             ? (ManagementAuditContinuationCursor?)null
             : ManagementAuditContinuationCursor.Decode(query.Cursor);

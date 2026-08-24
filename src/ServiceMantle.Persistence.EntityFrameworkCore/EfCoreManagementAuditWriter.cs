@@ -10,14 +10,16 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 /// already owns and never finalizes it on the caller's behalf.
 /// </summary>
 public sealed class EfCoreManagementAuditWriter<TDbContext> : IManagementAuditWriter
-    where TDbContext : DbContext, IServiceMantleAuditDbContext
+    where TDbContext : DbContext
 {
     private readonly TDbContext dbContext;
 
     /// <summary>
     /// Initializes a new management audit writer.
     /// </summary>
-    /// <param name="dbContext">The business DbContext implementing <see cref="IServiceMantleAuditDbContext"/>.</param>
+    /// <param name="dbContext">
+    /// The business DbContext whose model includes <see cref="ManagementAuditModelBuilderExtensions.AddServiceMantleManagementAudit"/>.
+    /// </param>
     public EfCoreManagementAuditWriter(TDbContext dbContext)
     {
         ArgumentNullException.ThrowIfNull(dbContext);
@@ -39,7 +41,7 @@ public sealed class EfCoreManagementAuditWriter<TDbContext> : IManagementAuditWr
         var id = Guid.NewGuid();
         var entity = ManagementAuditEntityMapper.ConvertToEntity(id, auditEvent);
         var record = ManagementAuditEntityMapper.ConvertToRecord(entity);
-        dbContext.ServiceAuditLogs.Add(entity);
+        dbContext.Set<ManagementAuditLogEntity>().Add(entity);
 
         return ValueTask.FromResult(record);
     }

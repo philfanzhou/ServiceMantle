@@ -3,9 +3,9 @@ using ServiceMantle.Audit;
 namespace ServiceMantle.Persistence.EntityFrameworkCore;
 
 /// <summary>
-/// Entity storing a management audit record in a shared business database.
+/// Internal entity storing a management audit record in a shared business database.
 /// </summary>
-public sealed class ManagementAuditLogEntity
+internal sealed class ManagementAuditLogEntity
 {
     /// <summary>
     /// Gets or sets the unique identifier of the audit record.

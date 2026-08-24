@@ -30,9 +30,7 @@ public sealed class EfCoreManagementAuditWriterTests
 
         await writer.RecordAsync(auditEvent, TestContext.Current.CancellationToken);
 
-        Assert.Equal(
-            0,
-            await context.ServiceAuditLogs.CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0, await CountAuditRowsAsync(context));
         var entry = context.ChangeTracker.Entries<ManagementAuditLogEntity>().Single();
         Assert.Equal(EntityState.Added, entry.State);
     }
@@ -52,8 +50,7 @@ public sealed class EfCoreManagementAuditWriterTests
         var staged = await writer.RecordAsync(auditEvent, TestContext.Current.CancellationToken);
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var persisted = await context.ServiceAuditLogs.AsNoTracking().SingleAsync(
-            item => item.Id == staged.Id, TestContext.Current.CancellationToken);
+        var persisted = await ReadAuditRowAsync(context, staged.Id);
         Assert.Equal("admin_login.succeeded", persisted.Action);
     }
 
@@ -78,7 +75,7 @@ public sealed class EfCoreManagementAuditWriterTests
             await transaction.RollbackAsync(TestContext.Current.CancellationToken);
         }
 
-        Assert.Equal(0, await context.ServiceAuditLogs.CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0, await CountAuditRowsAsync(context));
         Assert.Equal(0, await context.Widgets.CountAsync(TestContext.Current.CancellationToken));
     }
 
@@ -103,7 +100,7 @@ public sealed class EfCoreManagementAuditWriterTests
             await transaction.CommitAsync(TestContext.Current.CancellationToken);
         }
 
-        Assert.Equal(1, await context.ServiceAuditLogs.CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1, await CountAuditRowsAsync(context));
         Assert.Equal(1, await context.Widgets.CountAsync(TestContext.Current.CancellationToken));
     }
 
@@ -144,13 +141,41 @@ public sealed class EfCoreManagementAuditWriterTests
         var staged = await writer.RecordAsync(auditEvent, TestContext.Current.CancellationToken);
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var persisted = await context.ServiceAuditLogs.AsNoTracking().SingleAsync(
-            item => item.Id == staged.Id, TestContext.Current.CancellationToken);
+        var persisted = await ReadAuditRowAsync(context, staged.Id);
         Assert.Equal("admin-1", persisted.OperatorId);
         Assert.Equal("Alex Admin", persisted.OperatorDisplayName);
         Assert.Equal("interactive_admin", persisted.OperatorSource);
         Assert.Equal("203.0.113.7", persisted.ClientIp);
         Assert.Equal("corr-abc-123", persisted.CorrelationId);
+    }
+
+    [Fact]
+    public async Task RecordAsync_persists_only_sanitized_supported_content_at_database_boundary()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var context = CreateContext(connection);
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+
+        var writer = new EfCoreManagementAuditWriter<AuditTestDbContext>(context);
+        var auditEvent = ManagementAuditEvent.Create(
+            Operator,
+            WellKnownManagementAuditActions.ConfigurationChanged,
+            Target,
+            securityDescription: "password: description-secret",
+            metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["reason"] = "token: metadata-secret"
+            });
+
+        var staged = await writer.RecordAsync(auditEvent, TestContext.Current.CancellationToken);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var persisted = await ReadAuditRowAsync(context, staged.Id);
+        Assert.DoesNotContain("description-secret", persisted.SecurityDescription, StringComparison.Ordinal);
+        Assert.DoesNotContain("metadata-secret", persisted.MetadataJson, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", persisted.SecurityDescription, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", persisted.MetadataJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -202,14 +227,54 @@ public sealed class EfCoreManagementAuditWriterTests
     private static AuditTestDbContext CreateContext(SqliteConnection connection) =>
         new(new DbContextOptionsBuilder<AuditTestDbContext>().UseSqlite(connection).Options);
 
-    private sealed class SaveChangesTrackingDbContext : DbContext, IServiceMantleAuditDbContext
+    private static async Task<long> CountAuditRowsAsync(AuditTestDbContext context)
+    {
+        await using var command = context.Database.GetDbConnection().CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM service_audit_logs;";
+        var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<PersistedAuditRow> ReadAuditRowAsync(AuditTestDbContext context, Guid id)
+    {
+        await using var command = context.Database.GetDbConnection().CreateCommand();
+        command.CommandText =
+            """
+            SELECT action, operator_id, operator_display_name, operator_source, client_ip,
+                   correlation_id, security_description, metadata_json
+            FROM service_audit_logs
+            WHERE id = $id;
+            """;
+        command.Parameters.Add(new SqliteParameter("$id", id.ToString("D")));
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
+        return new PersistedAuditRow(
+            reader.GetString(0),
+            reader.IsDBNull(1) ? null : reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetString(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7));
+    }
+
+    private sealed record PersistedAuditRow(
+        string Action,
+        string? OperatorId,
+        string? OperatorDisplayName,
+        string OperatorSource,
+        string? ClientIp,
+        string? CorrelationId,
+        string? SecurityDescription,
+        string? MetadataJson);
+
+    private sealed class SaveChangesTrackingDbContext : DbContext
     {
         public SaveChangesTrackingDbContext(DbContextOptions<SaveChangesTrackingDbContext> options)
             : base(options)
         {
         }
-
-        public DbSet<ManagementAuditLogEntity> ServiceAuditLogs { get; set; } = null!;
 
         public int SaveChangesCallCount { get; private set; }
 

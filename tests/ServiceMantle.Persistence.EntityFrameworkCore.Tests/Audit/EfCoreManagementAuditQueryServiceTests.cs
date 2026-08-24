@@ -376,20 +376,10 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     public async Task QueryAsync_revalidates_and_redacts_legacy_free_text_rows()
     {
         await using var context = await SeedAsync();
-        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
-        {
-            Id = Guid.NewGuid(),
-            OperatorId = "admin-1",
-            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
-            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
-            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
-            TargetId = "smtp",
-            Outcome = ManagementAuditOutcome.Success,
-            OccurredAtUtc = Day(1).UtcDateTime,
-            SecurityDescription = "password: clear-text",
-            MetadataJson = "{\"note\":\"token: clear-text\"}"
-        });
-        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await InsertLegacyRowAsync(
+            context,
+            securityDescription: "password: clear-text",
+            metadataJson: "{\"note\":\"token: clear-text\"}");
 
         var result = await new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
             .QueryAsync(ManagementAuditQuery.Create(), TestContext.Current.CancellationToken);
@@ -403,19 +393,7 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     public async Task QueryAsync_rejects_legacy_sensitive_metadata_keys_with_stable_error()
     {
         await using var context = await SeedAsync();
-        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
-        {
-            Id = Guid.NewGuid(),
-            OperatorId = "admin-1",
-            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
-            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
-            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
-            TargetId = "smtp",
-            Outcome = ManagementAuditOutcome.Success,
-            OccurredAtUtc = Day(1).UtcDateTime,
-            MetadataJson = "{\"password\":\"clear-text\"}"
-        });
-        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await InsertLegacyRowAsync(context, metadataJson: "{\"password\":\"clear-text\"}");
 
         var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
             new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
@@ -429,19 +407,7 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     public async Task QueryAsync_rejects_legacy_metadata_keys_that_collide_after_cleaning()
     {
         await using var context = await SeedAsync();
-        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
-        {
-            Id = Guid.NewGuid(),
-            OperatorId = "admin-1",
-            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
-            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
-            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
-            TargetId = "smtp",
-            Outcome = ManagementAuditOutcome.Success,
-            OccurredAtUtc = Day(1).UtcDateTime,
-            MetadataJson = "{\"reason\":\"first\",\" reason \":\"second\"}"
-        });
-        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await InsertLegacyRowAsync(context, metadataJson: "{\"reason\":\"first\",\" reason \":\"second\"}");
 
         var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
             new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
@@ -457,19 +423,9 @@ public sealed class EfCoreManagementAuditQueryServiceTests
         await context.Database.ExecuteSqlRawAsync(
             "PRAGMA ignore_check_constraints = ON",
             TestContext.Current.CancellationToken);
-        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
-        {
-            Id = Guid.NewGuid(),
-            OperatorId = "admin-1",
-            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
-            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
-            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
-            TargetId = "smtp",
-            Outcome = ManagementAuditOutcome.Success,
-            OccurredAtUtc = Day(1).UtcDateTime,
-            MetadataJson = "\0" + new string('x', ManagementAuditEntityMapper.MaxMetadataJsonByteLength)
-        });
-        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await InsertLegacyRowAsync(
+            context,
+            metadataJson: "\0" + new string('x', ManagementAuditEntityMapper.MaxMetadataJsonByteLength));
         await context.Database.ExecuteSqlRawAsync(
             "PRAGMA ignore_check_constraints = OFF",
             TestContext.Current.CancellationToken);
@@ -574,19 +530,7 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     public async Task QueryAsync_rejects_malformed_metadata_json_with_stable_error()
     {
         await using var context = await SeedAsync();
-        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
-        {
-            Id = Guid.NewGuid(),
-            OperatorId = "admin-1",
-            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
-            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
-            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
-            TargetId = "smtp",
-            Outcome = ManagementAuditOutcome.Success,
-            OccurredAtUtc = Day(1).UtcDateTime,
-            MetadataJson = "{not-json"
-        });
-        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await InsertLegacyRowAsync(context, metadataJson: "{not-json");
 
         var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
             new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
@@ -599,19 +543,7 @@ public sealed class EfCoreManagementAuditQueryServiceTests
     public async Task QueryAsync_rejects_empty_metadata_json_with_stable_error()
     {
         await using var context = await SeedAsync();
-        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
-        {
-            Id = Guid.NewGuid(),
-            OperatorId = "admin-1",
-            OperatorSource = WellKnownManagementAuditOperatorSources.InteractiveAdmin.Value,
-            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
-            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
-            TargetId = "smtp",
-            Outcome = ManagementAuditOutcome.Success,
-            OccurredAtUtc = Day(1).UtcDateTime,
-            MetadataJson = string.Empty
-        });
-        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await InsertLegacyRowAsync(context, metadataJson: string.Empty);
 
         var exception = await Assert.ThrowsAsync<ManagementAuditException>(() =>
             new EfCoreManagementAuditQueryService<AuditTestDbContext>(context)
@@ -650,5 +582,27 @@ public sealed class EfCoreManagementAuditQueryServiceTests
 
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
         return context;
+    }
+
+    private static async Task InsertLegacyRowAsync(
+        AuditTestDbContext context,
+        string? securityDescription = null,
+        string? metadataJson = null)
+    {
+        var connection = Assert.IsType<SqliteConnection>(context.Database.GetDbConnection());
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO service_audit_logs
+                (id, operator_id, operator_source, action, target_type, target_id, outcome,
+                 occurred_at_utc, security_description, metadata_json)
+            VALUES
+                ($id, 'admin-1', 'interactive_admin', 'configuration.changed', 'configuration',
+                 'smtp', 1, '2026-01-02 00:00:00', $security_description, $metadata_json);
+            """;
+        command.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
+        command.Parameters.AddWithValue("$security_description", (object?)securityDescription ?? DBNull.Value);
+        command.Parameters.AddWithValue("$metadata_json", (object?)metadataJson ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 }

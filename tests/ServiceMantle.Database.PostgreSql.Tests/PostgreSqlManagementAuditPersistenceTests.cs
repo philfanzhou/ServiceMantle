@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using ServiceMantle.Audit;
 using ServiceMantle.Persistence.EntityFrameworkCore;
 using Testcontainers.PostgreSql;
@@ -87,29 +88,33 @@ public sealed class PostgreSqlManagementAuditPersistenceTests : IAsyncLifetime
             await transaction.RollbackAsync(TestContext.Current.CancellationToken);
         }
 
-        Assert.Equal(0, await context.ServiceAuditLogs.CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0, await CountAuditRowsAsync(context));
     }
 
     [Fact]
     public async Task PostgreSql_rejects_metadata_exceeding_the_utf8_byte_limit_at_the_database_boundary()
     {
         await using var context = await CreateResetContextAsync();
-        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
-        {
-            Id = Guid.NewGuid(),
-            OperatorSource = WellKnownManagementAuditOperatorSources.System.Value,
-            Action = WellKnownManagementAuditActions.ConfigurationChanged.Value,
-            TargetType = WellKnownManagementAuditTargetTypes.Configuration.Value,
-            TargetId = "smtp",
-            Outcome = ManagementAuditOutcome.Success,
-            OccurredAtUtc = Day(1).UtcDateTime,
-            MetadataJson = "\"" + string.Concat(Enumerable.Repeat(
-                "\U0001F600",
-                ((256 * 1024) / 4) + 1)) + "\""
-        });
+        var id = Guid.NewGuid().ToString("D");
+        var metadataJson = "\"" + string.Concat(Enumerable.Repeat(
+            "\U0001F600",
+            ((256 * 1024) / 4) + 1)) + "\"";
+        var occurredAtUtc = Day(1).UtcDateTime;
 
-        await Assert.ThrowsAsync<DbUpdateException>(() =>
-            context.SaveChangesAsync(TestContext.Current.CancellationToken));
+        var exception = await Assert.ThrowsAsync<PostgresException>(() =>
+            context.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO service_audit_logs
+                    (id, operator_source, action, target_type, target_id, outcome,
+                     occurred_at_utc, metadata_json)
+                VALUES
+                    ({id}, 'system', 'configuration.changed', 'configuration', 'smtp', 1,
+                     {occurredAtUtc}, {metadataJson});
+                """,
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal("ck_service_audit_logs_metadata_json_length", exception.ConstraintName);
     }
 
     private async Task<PostgreSqlAuditDbContext> CreateResetContextAsync()
@@ -150,11 +155,18 @@ public sealed class PostgreSqlManagementAuditPersistenceTests : IAsyncLifetime
     private static string GetPostgresImage() =>
         Environment.GetEnvironmentVariable("SERVICEMANTLE_POSTGRES_IMAGE") ?? "postgres:15-alpine";
 
-    private sealed class PostgreSqlAuditDbContext(DbContextOptions<PostgreSqlAuditDbContext> options)
-        : DbContext(options), IServiceMantleAuditDbContext
+    private static async Task<long> CountAuditRowsAsync(PostgreSqlAuditDbContext context)
     {
-        public DbSet<ManagementAuditLogEntity> ServiceAuditLogs { get; set; } = null!;
+        await context.Database.OpenConnectionAsync(TestContext.Current.CancellationToken);
+        await using var command = context.Database.GetDbConnection().CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM service_audit_logs;";
+        var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return Convert.ToInt64(result, System.Globalization.CultureInfo.InvariantCulture);
+    }
 
+    private sealed class PostgreSqlAuditDbContext(DbContextOptions<PostgreSqlAuditDbContext> options)
+        : DbContext(options)
+    {
         protected override void OnModelCreating(ModelBuilder modelBuilder) =>
             modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.PostgreSql);
     }

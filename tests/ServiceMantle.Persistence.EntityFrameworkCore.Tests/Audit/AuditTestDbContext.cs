@@ -8,14 +8,12 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests.Audit;
 /// hypothetical business entity, used to verify the audit writer participates in the caller's
 /// existing unit of work and transaction.
 /// </summary>
-internal sealed class AuditTestDbContext : DbContext, IServiceMantleAuditDbContext
+internal sealed class AuditTestDbContext : DbContext
 {
     public AuditTestDbContext(DbContextOptions<AuditTestDbContext> options)
         : base(options)
     {
     }
-
-    public DbSet<ManagementAuditLogEntity> ServiceAuditLogs { get; set; } = null!;
 
     public DbSet<BusinessWidgetEntity> Widgets { get; set; } = null!;
 

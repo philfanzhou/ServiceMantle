@@ -112,7 +112,7 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
                 .Options);
 
         var createScript = context.Database.GenerateCreateScript();
-        var querySql = context.ServiceAuditLogs
+        var querySql = context.Set<ManagementAuditLogEntity>()
             .Where(item => ManagementAuditDatabaseFunctions.TextByteLength(item.MetadataJson) > 0)
             .ToQueryString();
 
@@ -144,7 +144,7 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
         var astralMetadata = "\"" + string.Concat(Enumerable.Repeat(
             "\U0001F600",
             (ManagementAuditEntityMapper.MaxMetadataJsonByteLength / 4) + 1)) + "\"";
-        context.ServiceAuditLogs.Add(new ManagementAuditLogEntity
+        context.Set<ManagementAuditLogEntity>().Add(new ManagementAuditLogEntity
         {
             Id = Guid.NewGuid(),
             OperatorSource = "system",
@@ -201,14 +201,12 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
     private static AuditTestDbContext CreateContext(SqliteConnection connection) =>
         new(new DbContextOptionsBuilder<AuditTestDbContext>().UseSqlite(connection).Options);
 
-    private sealed class RepeatedMappingDbContext : DbContext, IServiceMantleAuditDbContext
+    private sealed class RepeatedMappingDbContext : DbContext
     {
         public RepeatedMappingDbContext(DbContextOptions<RepeatedMappingDbContext> options)
             : base(options)
         {
         }
-
-        public DbSet<ManagementAuditLogEntity> ServiceAuditLogs { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -217,14 +215,12 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
         }
     }
 
-    private sealed class SqlServerAuditDbContext : DbContext, IServiceMantleAuditDbContext
+    private sealed class SqlServerAuditDbContext : DbContext
     {
         public SqlServerAuditDbContext(DbContextOptions<SqlServerAuditDbContext> options)
             : base(options)
         {
         }
-
-        public DbSet<ManagementAuditLogEntity> ServiceAuditLogs { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder) =>
             modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.SqlServer);
