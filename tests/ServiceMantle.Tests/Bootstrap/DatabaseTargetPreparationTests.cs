@@ -189,6 +189,51 @@ public sealed class DatabaseTargetPreparationTests
     }
 
     [Fact]
+    public void Registry_resolves_bootstrap_provider_alias_to_registered_preparation_capability()
+    {
+        var bootstrapProvider = new FakeBootstrapProvider(
+            new BootstrapDatabaseProviderDescriptor(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "PostgreSQL",
+                BootstrapDatabaseTargetKind.ServerDatabase,
+                BootstrapServerVersionRequirement.Optional,
+                aliases: ["postgres"]));
+        var bootstrapProviders = new BootstrapDatabaseProviderRegistry([bootstrapProvider]);
+        var preparationProvider = new FakeProvider(WellKnownDatabaseProviderIds.PostgreSql);
+        var preparationProviders = new DatabaseTargetPreparationProviderRegistry(
+            [preparationProvider],
+            bootstrapProviders);
+        var target = new BootstrapDatabaseConfiguration(
+            "postgres",
+            "16",
+            "Host=db;Database=app;Username=app;Password=secret");
+
+        var found = preparationProviders.TryGetProvider(target.Provider, out var resolved);
+
+        Assert.True(found);
+        Assert.Same(preparationProvider, resolved);
+    }
+
+    [Fact]
+    public void Registry_does_not_infer_preparation_capability_from_bootstrap_alias()
+    {
+        var bootstrapProvider = new FakeBootstrapProvider(
+            new BootstrapDatabaseProviderDescriptor(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "PostgreSQL",
+                BootstrapDatabaseTargetKind.ServerDatabase,
+                BootstrapServerVersionRequirement.Optional,
+                aliases: ["postgres"]));
+        var bootstrapProviders = new BootstrapDatabaseProviderRegistry([bootstrapProvider]);
+        var preparationProviders = new DatabaseTargetPreparationProviderRegistry([], bootstrapProviders);
+
+        var found = preparationProviders.TryGetProvider("postgres", out var resolved);
+
+        Assert.False(found);
+        Assert.Null(resolved);
+    }
+
+    [Fact]
     public void Registry_reports_capability_not_supported_when_provider_is_not_registered()
     {
         var registry = new DatabaseTargetPreparationProviderRegistry([new FakeProvider(WellKnownDatabaseProviderIds.PostgreSql)]);
@@ -304,5 +349,24 @@ public sealed class DatabaseTargetPreparationTests
             TimeSpan timeout,
             CancellationToken cancellationToken) =>
             ValueTask.FromResult(DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created));
+    }
+
+    private sealed class FakeBootstrapProvider : IBootstrapDatabaseProvider
+    {
+        public FakeBootstrapProvider(BootstrapDatabaseProviderDescriptor descriptor)
+        {
+            Descriptor = descriptor;
+        }
+
+        public BootstrapDatabaseProviderDescriptor Descriptor { get; }
+
+        public ValueTask<BootstrapValidationResult> ValidateAsync(
+            BootstrapDatabaseConfiguration database,
+            CancellationToken cancellationToken)
+        {
+            _ = database;
+            _ = cancellationToken;
+            return ValueTask.FromResult(BootstrapValidationResult.Success());
+        }
     }
 }

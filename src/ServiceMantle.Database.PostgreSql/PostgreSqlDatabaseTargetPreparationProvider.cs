@@ -482,7 +482,7 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
         (string.Equals(exception.SqlState, PostgresErrorCodes.UniqueViolation, StringComparison.Ordinal) &&
          string.Equals(exception.ConstraintName, "pg_database_datname_index", StringComparison.Ordinal));
 
-    private static string ClassifyFailure(Exception exception)
+    internal static string ClassifyFailure(Exception exception)
     {
         if (exception is PostgresException postgresException)
         {
@@ -501,6 +501,8 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
         return outcome switch
         {
             PostgreSqlProbeOutcome.AuthenticationFailed => WellKnownDatabaseTargetPreparationErrorCodes.AuthenticationFailed,
+            PostgreSqlProbeOutcome.TargetAccessDenied => WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied,
+            PostgreSqlProbeOutcome.TargetIdentityMismatch => WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget,
             PostgreSqlProbeOutcome.ConnectionFailed => WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed,
             PostgreSqlProbeOutcome.DatabaseNotFound => WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed,
             _ => WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed

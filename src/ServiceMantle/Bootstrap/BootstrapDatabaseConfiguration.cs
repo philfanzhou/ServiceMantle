@@ -34,9 +34,7 @@ public sealed class BootstrapDatabaseConfiguration
         string connectionString)
     {
         ArgumentNullException.ThrowIfNull(connectionString);
-        ArgumentNullException.ThrowIfNull(provider);
-
-        Provider = NormalizeProvider(provider);
+        Provider = DatabaseProviderId.Normalize(provider, nameof(provider));
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
@@ -56,46 +54,4 @@ public sealed class BootstrapDatabaseConfiguration
     /// </summary>
     public override string ToString() =>
         $"BootstrapDatabaseConfiguration(Provider={Provider})";
-
-    private static string NormalizeProvider(string provider)
-    {
-        var normalized = provider.Trim();
-
-        if (normalized.Length is 0)
-        {
-            throw new ArgumentException(
-                "The database provider cannot be empty.",
-                nameof(provider));
-        }
-
-        if (normalized.Length > 64)
-        {
-            throw new ArgumentException(
-                "The database provider is too long.",
-                nameof(provider));
-        }
-
-        if (!IsAsciiLetterOrDigit(normalized[0]))
-        {
-            throw new ArgumentException(
-                "The database provider identifier must start with an ASCII letter or digit.",
-                nameof(provider));
-        }
-
-        for (var i = 1; i < normalized.Length; i++)
-        {
-            var current = normalized[i];
-            if (!IsAsciiLetterOrDigit(current) && current is not ('.' or '-' or '_'))
-            {
-                throw new ArgumentException(
-                    "The database provider identifier contains invalid characters.",
-                    nameof(provider));
-            }
-        }
-
-        return normalized;
-    }
-
-    private static bool IsAsciiLetterOrDigit(char value) =>
-        value is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9';
 }

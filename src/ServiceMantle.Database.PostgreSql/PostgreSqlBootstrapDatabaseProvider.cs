@@ -260,6 +260,7 @@ internal static class PostgreSqlProbeFailureClassifier
         ArgumentNullException.ThrowIfNull(exception);
 
         var current = exception;
+        var containsNpgsqlException = false;
         while (current is not null)
         {
             if (current is PostgresException postgresException)
@@ -279,13 +280,15 @@ internal static class PostgreSqlProbeFailureClassifier
 
             if (current is NpgsqlException)
             {
-                return PostgreSqlProbeOutcome.ConnectionFailed;
+                containsNpgsqlException = true;
             }
 
             current = current.InnerException;
         }
 
-        return PostgreSqlProbeOutcome.ValidationFailed;
+        return containsNpgsqlException
+            ? PostgreSqlProbeOutcome.ConnectionFailed
+            : PostgreSqlProbeOutcome.ValidationFailed;
     }
 
     private static PostgreSqlProbeOutcome ClassifyPostgresException(PostgresException exception)

@@ -518,6 +518,21 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
         Assert.DoesNotContain(secret, result.ToString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Creation_failure_classifier_maps_wrapped_target_access_denied_to_permission_denied()
+    {
+        var postgresException = new PostgresException(
+            "permission denied",
+            "FATAL",
+            "FATAL",
+            PostgresErrorCodes.InsufficientPrivilege);
+        var wrappedException = new NpgsqlException("Exception while connecting", postgresException);
+
+        var errorCode = NpgsqlDatabaseCreationProbe.ClassifyFailure(wrappedException);
+
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied, errorCode);
+    }
+
     private static PostgreSqlDatabaseTargetPreparationProvider CreateProvider(
         INpgsqlBootstrapProbe? observationProbe = null,
         INpgsqlDatabaseCreationProbe? creationProbe = null) =>
