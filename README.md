@@ -234,6 +234,8 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 ## Repository layout
 
 - `src/ServiceMantle/ServiceMantle.csproj`
+- `src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj`
+- `tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj`
 - `tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj`
 - `src/ServiceMantle/ServiceId.cs`
 - `src/ServiceMantle/InstanceId.cs`
@@ -257,6 +259,7 @@ dotnet restore ServiceMantle.slnx
 dotnet build ServiceMantle.slnx -c Release
 dotnet test --solution ServiceMantle.slnx -c Release
 dotnet pack src/ServiceMantle/ServiceMantle.csproj -c Release --no-build
+dotnet pack src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj -c Release --no-build
 ```

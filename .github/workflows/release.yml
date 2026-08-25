@@ -83,6 +83,15 @@ jobs:
           -p:Version=${{ needs.version.outputs.number }}
           -p:RepositoryCommit=${{ github.sha }}
 
+      - name: Pack ServiceMantle.AspNetCore
+        run: >-
+          dotnet pack src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj
+          --configuration Release
+          --no-restore
+          --output artifacts/packages
+          -p:Version=${{ needs.version.outputs.number }}
+          -p:RepositoryCommit=${{ github.sha }}
+
       - name: Pack ServiceMantle.Database.PostgreSql
         run: >-
           dotnet pack src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj
