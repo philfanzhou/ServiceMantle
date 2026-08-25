@@ -1,69 +1,138 @@
+using System.Text.Json;
 using System.Xml.Linq;
-using ServiceMantle.AspNetCore;
 using Xunit;
 
 namespace ServiceMantle.AspNetCore.Tests;
 
 public sealed class PackageDependencyBoundaryTests
 {
-    private static readonly string[] ForbiddenDependencyPrefixes =
-    [
-        "Consul",
-        "Microsoft.Data.SqlClient",
-        "Microsoft.EntityFrameworkCore",
-        "Npgsql",
-        "OpenTelemetry",
-        "Serilog"
-    ];
-
     [Fact]
-    public void Core_assembly_does_not_reference_AspNetCore_or_optional_drivers()
-    {
-        var references = typeof(ServiceId).Assembly
-            .GetReferencedAssemblies()
-            .Select(reference => reference.Name ?? string.Empty)
-            .ToArray();
-
-        Assert.DoesNotContain(references, name => name.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal));
-        Assert.DoesNotContain(references, IsForbiddenDependency);
-    }
-
-    [Fact]
-    public void AspNetCore_assembly_does_not_reference_optional_drivers()
-    {
-        var references = typeof(ServiceMantleBuilder).Assembly
-            .GetReferencedAssemblies()
-            .Select(reference => reference.Name ?? string.Empty)
-            .ToArray();
-
-        Assert.Contains("ServiceMantle", references);
-        Assert.DoesNotContain(references, IsForbiddenDependency);
-    }
-
-    [Fact]
-    public void AspNetCore_package_project_has_only_core_project_and_shared_framework_dependencies()
+    public void RegisteredPackages_DeclareExactlyTheirRegisteredDependencies()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var projectPath = Path.Combine(
-            repositoryRoot,
-            "src",
-            "ServiceMantle.AspNetCore",
-            "ServiceMantle.AspNetCore.csproj");
-        var project = XDocument.Load(projectPath);
+        var registry = LoadRegistry(repositoryRoot);
+        var packageIdsByProject = registry.Packages.ToDictionary(
+            package => FullPath(repositoryRoot, package.Project),
+            package => package.Id,
+            StringComparer.OrdinalIgnoreCase);
 
-        Assert.Empty(project.Descendants("PackageReference"));
-        var projectReference = Assert.Single(project.Descendants("ProjectReference"));
-        Assert.EndsWith(
-            Path.Combine("ServiceMantle", "ServiceMantle.csproj"),
-            ((string?)projectReference.Attribute("Include"))?.Replace('\\', Path.DirectorySeparatorChar),
-            StringComparison.Ordinal);
-        var frameworkReference = Assert.Single(project.Descendants("FrameworkReference"));
-        Assert.Equal("Microsoft.AspNetCore.App", (string?)frameworkReference.Attribute("Include"));
+        foreach (var package in registry.Packages)
+        {
+            var projectPath = FullPath(repositoryRoot, package.Project);
+            var project = XDocument.Load(projectPath);
+            var actualDependencies = project
+                .Descendants("PackageReference")
+                .Select(Include)
+                .Concat(project.Descendants("ProjectReference").Select(reference =>
+                {
+                    var referencedProject = Path.GetFullPath(Path.Combine(
+                        Path.GetDirectoryName(projectPath)!,
+                        Include(reference).Replace('\\', Path.DirectorySeparatorChar)));
+                    return packageIdsByProject[referencedProject];
+                }));
+            var actualFrameworkReferences = project
+                .Descendants("FrameworkReference")
+                .Select(Include);
+
+            Assert.Equal(
+                package.Dependencies.Order(StringComparer.OrdinalIgnoreCase),
+                actualDependencies.Order(StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(
+                package.FrameworkReferences.Order(StringComparer.OrdinalIgnoreCase),
+                actualFrameworkReferences.Order(StringComparer.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
+        }
     }
 
-    private static bool IsForbiddenDependency(string assemblyName) =>
-        ForbiddenDependencyPrefixes.Any(prefix =>
-            assemblyName.StartsWith(prefix, StringComparison.Ordinal));
+    [Fact]
+    public void OptionalPackageArchitecture_IsDataDrivenAndEveryPackageHasTests()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var registry = LoadRegistry(repositoryRoot);
+
+        Assert.Contains(registry.Packages, package => package.Optional);
+        Assert.All(registry.Packages, package =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(package.Id));
+            Assert.True(File.Exists(FullPath(repositoryRoot, package.Project)));
+            Assert.NotEmpty(package.Tests);
+            Assert.All(package.Tests, test =>
+                Assert.True(File.Exists(FullPath(repositoryRoot, test.Project))));
+        });
+        Assert.Equal(
+            registry.Packages.Count,
+            registry.Packages.Select(package => package.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(
+            registry.Packages.SelectMany(package => package.Tests).Count(),
+            registry.Packages
+                .SelectMany(package => package.Tests)
+                .Select(test => test.Project)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count());
+    }
+
+    [Fact]
+    public void PackMetadata_IsCentralizedForEveryRegisteredPackage()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var registry = LoadRegistry(repositoryRoot);
+        var sharedProperties = XDocument.Load(Path.Combine(repositoryRoot, "Directory.Build.props"));
+
+        Assert.Equal("MIT", Property(sharedProperties, "PackageLicenseExpression"));
+        Assert.Equal(
+            "https://github.com/philfanzhou/ServiceMantle",
+            Property(sharedProperties, "RepositoryUrl"));
+        Assert.Equal("git", Property(sharedProperties, "RepositoryType"));
+        Assert.Equal("true", Property(sharedProperties, "PublishRepositoryUrl"));
+        Assert.Equal("true", Property(sharedProperties, "IncludeSymbols"));
+        Assert.Equal("snupkg", Property(sharedProperties, "SymbolPackageFormat"));
+        Assert.Equal("README.md", Property(sharedProperties, "PackageReadmeFile"));
+
+        foreach (var package in registry.Packages)
+        {
+            var project = XDocument.Load(FullPath(repositoryRoot, package.Project));
+            Assert.Empty(project.Descendants("PackageLicenseExpression"));
+            Assert.Empty(project.Descendants("RepositoryUrl"));
+            Assert.Equal(package.Id, Property(project, "PackageId"));
+            Assert.Equal("true", Property(project, "IsPackable"));
+        }
+    }
+
+    [Fact]
+    public void CiAndReleaseWorkflows_UseTheRegistryDrivenPipelineWithoutPerPackagePackSteps()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        foreach (var workflowName in new[] { "ci.yml", "release.yml" })
+        {
+            var workflow = File.ReadAllText(
+                Path.Combine(repositoryRoot, ".github", "workflows", workflowName));
+
+            Assert.Contains("eng/ServiceMantle.ReleaseTool/ServiceMantle.ReleaseTool.csproj", workflow);
+            Assert.Contains("-- pack", workflow);
+            Assert.Contains("-- verify", workflow);
+            Assert.DoesNotContain("dotnet pack src/", workflow, StringComparison.Ordinal);
+            Assert.DoesNotContain("Pack ServiceMantle", workflow, StringComparison.Ordinal);
+        }
+    }
+
+    private static PackageRegistry LoadRegistry(string repositoryRoot)
+    {
+        using var stream = File.OpenRead(Path.Combine(repositoryRoot, "eng", "packages.json"));
+        return JsonSerializer.Deserialize<PackageRegistry>(stream, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+        })!;
+    }
+
+    private static string Include(XElement element) =>
+        (string)element.Attribute("Include")!;
+
+    private static string? Property(XDocument project, string name) =>
+        project.Descendants(name).Select(element => element.Value.Trim()).FirstOrDefault();
+
+    private static string FullPath(string repositoryRoot, string relativePath) =>
+        Path.GetFullPath(Path.Combine(repositoryRoot, relativePath));
 
     private static string FindRepositoryRoot()
     {
@@ -72,7 +141,7 @@ public sealed class PackageDependencyBoundaryTests
             var directory = new DirectoryInfo(startPath);
             while (directory is not null)
             {
-                if (File.Exists(Path.Combine(directory.FullName, "ServiceMantle.slnx")))
+                if (File.Exists(Path.Combine(directory.FullName, "eng", "packages.json")))
                 {
                     return directory.FullName;
                 }
@@ -81,6 +150,31 @@ public sealed class PackageDependencyBoundaryTests
             }
         }
 
-        throw new DirectoryNotFoundException("Could not locate the ServiceMantle repository root.");
+        throw new DirectoryNotFoundException("Could not locate the package registry.");
+    }
+
+    private sealed class PackageRegistry
+    {
+        public List<RegisteredPackage> Packages { get; init; } = [];
+    }
+
+    private sealed class RegisteredPackage
+    {
+        public string Id { get; init; } = string.Empty;
+
+        public string Project { get; init; } = string.Empty;
+
+        public bool Optional { get; init; }
+
+        public List<string> Dependencies { get; init; } = [];
+
+        public List<string> FrameworkReferences { get; init; } = [];
+
+        public List<RegisteredTest> Tests { get; init; } = [];
+    }
+
+    private sealed class RegisteredTest
+    {
+        public string Project { get; init; } = string.Empty;
     }
 }

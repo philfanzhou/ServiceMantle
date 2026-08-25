@@ -5,10 +5,8 @@
     <AssemblyName>ServiceMantle.Database.PostgreSql</AssemblyName>
     <PackageId>ServiceMantle.Database.PostgreSql</PackageId>
     <IsPackable>true</IsPackable>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageDescription>PostgreSQL bootstrap validation and multi-instance migration lock provider for ServiceMantle.</PackageDescription>
     <PackageTags>service-management aspnetcore bootstrap database postgresql migration lock advisory</PackageTags>
-    <RepositoryUrl>https://github.com/philfanzhou/ServiceMantle</RepositoryUrl>
     <TargetFramework>net10.0</TargetFramework>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
