@@ -209,14 +209,10 @@ public sealed class BootstrapChangeResult
 /// </summary>
 public sealed class BootstrapValidationResult
 {
-    private BootstrapValidationResult(
-        bool isValid,
-        string? errorCode,
-        string? canonicalProviderId = null)
+    private BootstrapValidationResult(bool isValid, string? errorCode)
     {
         IsValid = isValid;
         ErrorCode = errorCode;
-        CanonicalProviderId = canonicalProviderId;
     }
 
     /// <summary>
@@ -229,18 +225,10 @@ public sealed class BootstrapValidationResult
     /// </summary>
     public string? ErrorCode { get; }
 
-    internal string? CanonicalProviderId { get; }
-
     /// <summary>
     /// Creates a successful validation result.
     /// </summary>
     public static BootstrapValidationResult Success() => new(true, null);
-
-    internal static BootstrapValidationResult Success(string canonicalProviderId) =>
-        new(
-            true,
-            null,
-            DatabaseProviderId.Normalize(canonicalProviderId, nameof(canonicalProviderId)));
 
     /// <summary>
     /// Creates a failed validation result with a safe error code.
@@ -571,6 +559,26 @@ public sealed class BootstrapDatabaseProviderRegistry
         return true;
     }
 
+    /// <summary>
+    /// Resolves a canonical provider id from either that id or one of its aliases.
+    /// </summary>
+    /// <param name="providerId">The provider id or alias.</param>
+    /// <param name="canonicalProviderId">The registered canonical id when found.</param>
+    public bool TryGetCanonicalProviderId(
+        string providerId,
+        out string? canonicalProviderId)
+    {
+        if (string.IsNullOrWhiteSpace(providerId) ||
+            !registrations.TryGetValue(providerId, out var registration))
+        {
+            canonicalProviderId = null;
+            return false;
+        }
+
+        canonicalProviderId = registration.Descriptor.Id;
+        return true;
+    }
+
     internal bool TryGetRegistration(
         string providerId,
         out ProviderRegistration? registration)
@@ -666,9 +674,7 @@ public sealed class BootstrapDatabaseCandidateValidator : IBootstrapCandidateVal
                 return BootstrapValidationResult.Failure("database.provider_invalid_result");
             }
 
-            return result.IsValid
-                ? BootstrapValidationResult.Success(descriptor.Id)
-                : result;
+            return result;
         }
         catch (OperationCanceledException)
         {

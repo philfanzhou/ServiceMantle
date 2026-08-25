@@ -43,10 +43,13 @@ public sealed class BootstrapProviderArchitectureTests
         var registry = new BootstrapDatabaseProviderRegistry([provider]);
 
         var found = registry.TryGetProvider("MSSQL", out var selected);
+        var canonicalFound = registry.TryGetCanonicalProviderId("mssqlserver", out var canonicalProviderId);
 
         Assert.True(found);
         Assert.NotNull(selected);
         Assert.Equal(WellKnownDatabaseProviderIds.SqlServer, selected!.Descriptor.Id);
+        Assert.True(canonicalFound);
+        Assert.Equal(WellKnownDatabaseProviderIds.SqlServer, canonicalProviderId);
     }
 
     [Fact]
