@@ -7,6 +7,7 @@ public sealed class LogFreeTextSanitizerTests
 {
     [Theory]
     [InlineData("password=secret-value")]
+    [InlineData("{\"password\":\"quoted-secret\"}")]
     [InlineData("Host=db;Database=app;User Id=admin")]
     [InlineData("postgresql://admin:secret@database/app")]
     [InlineData("https://user:password@example.test/path")]

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -157,6 +158,23 @@ public sealed class StructuredLogSanitizerTests
         Assert.DoesNotContain(masterKey, serialized, StringComparison.Ordinal);
         Assert.DoesNotContain(connectionString, serialized, StringComparison.Ordinal);
         Assert.DoesNotContain(markedSecret, serialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Immutable_and_multidimensional_byte_buffers_are_replaced_without_enumeration()
+    {
+        var sanitizer = new StructuredLogSanitizer();
+        var immutableBytes = ImmutableArray.Create<byte>(1, 2, 3);
+        var multidimensionalBytes = new byte[,] { { 4, 5 }, { 6, 7 } };
+
+        var output = sanitizer.SanitizeFields(
+        [
+            new("ImmutableBytes", immutableBytes),
+            new("MultidimensionalBytes", multidimensionalBytes)
+        ]);
+
+        Assert.Equal(StructuredLogSanitizer.BinaryValue, output["ImmutableBytes"]);
+        Assert.Equal(StructuredLogSanitizer.BinaryValue, output["MultidimensionalBytes"]);
     }
 
     [Fact]

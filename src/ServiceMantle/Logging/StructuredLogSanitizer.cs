@@ -752,10 +752,11 @@ public sealed class StructuredLogSanitizer
         type == typeof(TimeSpan);
 
     private static bool IsBinary(object value) =>
-        value is byte[] or
-            Memory<byte> or
+        value is Memory<byte> or
             ReadOnlyMemory<byte> or
-            ArraySegment<byte>;
+            ArraySegment<byte> or
+            IEnumerable<byte> ||
+        value.GetType() is { IsArray: true } type && type.GetElementType() == typeof(byte);
 
     private static bool TryGetFieldName(object? key, out string fieldName)
     {

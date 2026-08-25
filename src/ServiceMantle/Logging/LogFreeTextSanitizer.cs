@@ -58,7 +58,7 @@ internal static partial class LogFreeTextSanitizer
     }
 
     [GeneratedRegex(
-        @"(?:" + SensitiveKeyExpression + @")(?:\?[""'])?\s*(?::|=)",
+        @"(?:" + SensitiveKeyExpression + @")[""']?\s*(?::|=)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveAssignmentPattern();
 
