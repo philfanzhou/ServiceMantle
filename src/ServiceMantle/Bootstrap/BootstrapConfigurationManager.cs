@@ -87,10 +87,10 @@ public sealed class BootstrapConfigurationManager
                 request.Database,
                 request.MasterKey);
 
-            await ValidateCandidateAsync(candidate, cancellationToken).ConfigureAwait(false);
+            var canonicalProviderId = await ValidateCandidateAsync(candidate, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
-            fileStore.Create(candidate);
+            fileStore.Create(CanonicalizeValidatedCandidate(candidate, canonicalProviderId));
 
             return new BootstrapChangeResult(
                 fileStore.ServiceId,
@@ -142,10 +142,10 @@ public sealed class BootstrapConfigurationManager
                 database,
                 masterKey);
 
-            await ValidateCandidateAsync(candidate, cancellationToken).ConfigureAwait(false);
+            var canonicalProviderId = await ValidateCandidateAsync(candidate, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
-            fileStore.Replace(candidate);
+            fileStore.Replace(CanonicalizeValidatedCandidate(candidate, canonicalProviderId));
 
             return new BootstrapChangeResult(
                 fileStore.ServiceId,
@@ -158,7 +158,7 @@ public sealed class BootstrapConfigurationManager
         }
     }
 
-    private async ValueTask ValidateCandidateAsync(
+    private async ValueTask<string?> ValidateCandidateAsync(
         BootstrapConfiguration candidate,
         CancellationToken cancellationToken)
     {
@@ -193,5 +193,29 @@ public sealed class BootstrapConfigurationManager
                 validationResult.ErrorCode ?? "candidate.rejected",
                 "Bootstrap candidate validation failed.");
         }
+
+        return validationResult.CanonicalProviderId;
+    }
+
+    private static BootstrapConfiguration CanonicalizeValidatedCandidate(
+        BootstrapConfiguration candidate,
+        string? canonicalProviderId)
+    {
+        if (canonicalProviderId is null ||
+            string.Equals(
+                candidate.Database.Provider,
+                canonicalProviderId,
+                StringComparison.Ordinal))
+        {
+            return candidate;
+        }
+
+        return new BootstrapConfiguration(
+            candidate.ServiceId,
+            new BootstrapDatabaseConfiguration(
+                canonicalProviderId,
+                candidate.Database.ServerVersion,
+                candidate.Database.ConnectionString),
+            candidate.MasterKey);
     }
 }

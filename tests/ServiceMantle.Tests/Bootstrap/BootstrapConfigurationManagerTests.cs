@@ -1,5 +1,7 @@
 using System.Text.Json;
 using ServiceMantle.Bootstrap;
+using ServiceMantle.Migration;
+using ServiceMantle.Tests.Migration;
 using Xunit;
 
 namespace ServiceMantle.Tests.Bootstrap;
@@ -148,6 +150,77 @@ public sealed class BootstrapConfigurationManagerTests
         Assert.True(result.RestartRequired);
         Assert.True(File.Exists(store.FilePath));
         Assert.Equal(1, provider.CallCount);
+    }
+
+    [Fact]
+    public async Task CreateAsync_persists_canonical_provider_id_and_migration_resolves_lock_after_alias_validation()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var store = CreateStore(directory);
+        var provider = new FakeDatabaseProvider(
+            new BootstrapDatabaseProviderDescriptor(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "PostgreSQL",
+                BootstrapDatabaseTargetKind.ServerDatabase,
+                BootstrapServerVersionRequirement.Required,
+                aliases: ["postgres"]));
+        var validator = new BootstrapDatabaseCandidateValidator(
+            new BootstrapDatabaseProviderRegistry([provider]));
+        var manager = CreateManager(store, validator: validator);
+
+        await manager.CreateAsync(
+            new BootstrapCreateRequest(
+                new BootstrapDatabaseConfiguration(
+                    "postgres",
+                    "15",
+                    "Host=db;Database=app;Username=app;Password=create-password"),
+                "create-master-key"),
+            TestContext.Current.CancellationToken);
+
+        var persisted = store.Load();
+        var status = manager.GetStatus();
+        var lockProvider = new FakeMigrationLockProvider(WellKnownDatabaseProviderIds.PostgreSql);
+        var orchestrator = new DatabaseMigrationOrchestrator(
+            new FakeMigrationExecutor(MigrationObservationState.CurrentVersionCompatible),
+            new DatabaseMigrationLockProviderRegistry([lockProvider]));
+        var migrationResult = await orchestrator.OrchestrateMigrationAsync(
+            persisted.ServiceId,
+            persisted.Database,
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, persisted.Database.Provider);
+        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, status.Provider);
+        Assert.True(migrationResult.Succeeded);
+        Assert.Equal(1, lockProvider.AcquireAttempts);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_persists_canonical_provider_id_after_alias_validation()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var store = CreateStore(directory);
+        store.Create(CreateConfiguration());
+        var provider = new FakeDatabaseProvider(
+            new BootstrapDatabaseProviderDescriptor(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "PostgreSQL",
+                BootstrapDatabaseTargetKind.ServerDatabase,
+                BootstrapServerVersionRequirement.Required,
+                aliases: ["postgres"]));
+        var validator = new BootstrapDatabaseCandidateValidator(
+            new BootstrapDatabaseProviderRegistry([provider]));
+        var manager = CreateManager(store, validator: validator);
+
+        await manager.UpdateAsync(
+            new BootstrapUpdateRequest(
+                new BootstrapDatabaseConfiguration(
+                    "postgres",
+                    "16",
+                    "Host=db;Database=updated;Username=app;Password=updated-password")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, store.Load().Database.Provider);
     }
 
     [Fact]

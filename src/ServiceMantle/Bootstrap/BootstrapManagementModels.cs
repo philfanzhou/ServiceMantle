@@ -209,10 +209,14 @@ public sealed class BootstrapChangeResult
 /// </summary>
 public sealed class BootstrapValidationResult
 {
-    private BootstrapValidationResult(bool isValid, string? errorCode)
+    private BootstrapValidationResult(
+        bool isValid,
+        string? errorCode,
+        string? canonicalProviderId = null)
     {
         IsValid = isValid;
         ErrorCode = errorCode;
+        CanonicalProviderId = canonicalProviderId;
     }
 
     /// <summary>
@@ -225,10 +229,18 @@ public sealed class BootstrapValidationResult
     /// </summary>
     public string? ErrorCode { get; }
 
+    internal string? CanonicalProviderId { get; }
+
     /// <summary>
     /// Creates a successful validation result.
     /// </summary>
     public static BootstrapValidationResult Success() => new(true, null);
+
+    internal static BootstrapValidationResult Success(string canonicalProviderId) =>
+        new(
+            true,
+            null,
+            DatabaseProviderId.Normalize(canonicalProviderId, nameof(canonicalProviderId)));
 
     /// <summary>
     /// Creates a failed validation result with a safe error code.
@@ -649,7 +661,14 @@ public sealed class BootstrapDatabaseCandidateValidator : IBootstrapCandidateVal
             var result = await registration.Provider.ValidateAsync(database, cancellationToken)
                 .ConfigureAwait(false);
 
-            return result ?? BootstrapValidationResult.Failure("database.provider_invalid_result");
+            if (result is null)
+            {
+                return BootstrapValidationResult.Failure("database.provider_invalid_result");
+            }
+
+            return result.IsValid
+                ? BootstrapValidationResult.Success(descriptor.Id)
+                : result;
         }
         catch (OperationCanceledException)
         {
