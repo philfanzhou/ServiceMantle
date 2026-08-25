@@ -189,7 +189,7 @@ public sealed class DatabaseTargetPreparationTests
     }
 
     [Fact]
-    public void Registry_resolves_bootstrap_provider_alias_to_registered_preparation_capability()
+    public async Task Registry_canonicalizes_bootstrap_provider_alias_for_preparation_capability_calls()
     {
         var bootstrapProvider = new FakeBootstrapProvider(
             new BootstrapDatabaseProviderDescriptor(
@@ -211,7 +211,21 @@ public sealed class DatabaseTargetPreparationTests
         var found = preparationProviders.TryGetProvider(target.Provider, out var resolved);
 
         Assert.True(found);
-        Assert.Same(preparationProvider, resolved);
+        Assert.NotNull(resolved);
+
+        var observation = await resolved.ObserveAsync(target, TestContext.Current.CancellationToken);
+        var request = new DatabaseTargetPreparationRequest(
+            target,
+            "Host=db;Database=postgres;Username=admin;Password=admin-secret");
+        var result = await resolved.PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(observation.TargetExists is false);
+        Assert.True(result.Succeeded);
+        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, preparationProvider.LastObservedTarget!.Provider);
+        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, preparationProvider.LastPreparationRequest!.Target.Provider);
     }
 
     [Fact]
@@ -339,16 +353,26 @@ public sealed class DatabaseTargetPreparationTests
 
         public BootstrapDatabaseTargetKind TargetKind { get; }
 
+        public BootstrapDatabaseConfiguration? LastObservedTarget { get; private set; }
+
+        public DatabaseTargetPreparationRequest? LastPreparationRequest { get; private set; }
+
         public ValueTask<DatabaseTargetObservation> ObserveAsync(
             BootstrapDatabaseConfiguration target,
-            CancellationToken cancellationToken) =>
-            ValueTask.FromResult(DatabaseTargetObservation.TargetMissing());
+            CancellationToken cancellationToken)
+        {
+            LastObservedTarget = target;
+            return ValueTask.FromResult(DatabaseTargetObservation.TargetMissing());
+        }
 
         public ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
             DatabaseTargetPreparationRequest request,
             TimeSpan timeout,
-            CancellationToken cancellationToken) =>
-            ValueTask.FromResult(DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created));
+            CancellationToken cancellationToken)
+        {
+            LastPreparationRequest = request;
+            return ValueTask.FromResult(DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created));
+        }
     }
 
     private sealed class FakeBootstrapProvider : IBootstrapDatabaseProvider

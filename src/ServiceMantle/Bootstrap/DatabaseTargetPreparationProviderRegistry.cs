@@ -107,6 +107,80 @@ public sealed class DatabaseTargetPreparationProviderRegistry
             return false;
         }
 
-        return registrations.TryGetValue(bootstrapProvider.Descriptor.Id, out provider);
+        if (!registrations.TryGetValue(bootstrapProvider.Descriptor.Id, out var registeredProvider))
+        {
+            return false;
+        }
+
+        provider = new CanonicalizingProvider(
+            registeredProvider,
+            bootstrapProvider.Descriptor);
+        return true;
+    }
+
+    private sealed class CanonicalizingProvider : IDatabaseTargetPreparationProvider
+    {
+        private readonly IDatabaseTargetPreparationProvider provider;
+        private readonly BootstrapDatabaseProviderDescriptor descriptor;
+
+        public CanonicalizingProvider(
+            IDatabaseTargetPreparationProvider provider,
+            BootstrapDatabaseProviderDescriptor descriptor)
+        {
+            this.provider = provider;
+            this.descriptor = descriptor;
+        }
+
+        public string ProviderId => provider.ProviderId;
+
+        public BootstrapDatabaseTargetKind TargetKind => provider.TargetKind;
+
+        public ValueTask<DatabaseTargetObservation> ObserveAsync(
+            BootstrapDatabaseConfiguration target,
+            CancellationToken cancellationToken) =>
+            provider.ObserveAsync(Canonicalize(target), cancellationToken);
+
+        public ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
+            DatabaseTargetPreparationRequest request,
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var canonicalTarget = Canonicalize(request.Target);
+            if (ReferenceEquals(canonicalTarget, request.Target))
+            {
+                return provider.PrepareAsync(request, timeout, cancellationToken);
+            }
+
+            return provider.PrepareAsync(
+                new DatabaseTargetPreparationRequest(
+                    canonicalTarget,
+                    request.AdministrativeConnectionString),
+                timeout,
+                cancellationToken);
+        }
+
+        private BootstrapDatabaseConfiguration Canonicalize(BootstrapDatabaseConfiguration target)
+        {
+            ArgumentNullException.ThrowIfNull(target);
+
+            if (string.Equals(target.Provider, descriptor.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return target;
+            }
+
+            var isDeclaredAlias = descriptor.Aliases.Any(alias =>
+                string.Equals(target.Provider, alias, StringComparison.OrdinalIgnoreCase));
+            if (!isDeclaredAlias)
+            {
+                return target;
+            }
+
+            return new BootstrapDatabaseConfiguration(
+                descriptor.Id,
+                target.ServerVersion,
+                target.ConnectionString);
+        }
     }
 }

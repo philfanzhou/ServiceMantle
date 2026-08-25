@@ -196,7 +196,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
     }
 
     private static bool IsPostgreSqlProvider(string provider) =>
-        string.Equals(provider, WellKnownDatabaseProviderIds.PostgreSql, StringComparison.OrdinalIgnoreCase);
+        PostgreSqlProviderId.IsSupported(provider);
 
     private static bool TryBuildConnectionString(string connectionString, out NpgsqlConnectionStringBuilder builder)
     {

@@ -17,7 +17,7 @@ public sealed class PostgreSqlBootstrapDatabaseProviderTests
         Assert.Equal("PostgreSQL", provider.Descriptor.DisplayName);
         Assert.Equal(BootstrapDatabaseTargetKind.ServerDatabase, provider.Descriptor.TargetKind);
         Assert.Equal(BootstrapServerVersionRequirement.Required, provider.Descriptor.ServerVersionRequirement);
-        Assert.Empty(provider.Descriptor.Aliases);
+        Assert.Equal(["postgres"], provider.Descriptor.Aliases);
     }
 
     [Theory]
@@ -36,6 +36,20 @@ public sealed class PostgreSqlBootstrapDatabaseProviderTests
             "validator-master-key");
 
         var result = await provider.ValidateAsync(candidate.Database, TestContext.Current.CancellationToken);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public async Task ValidateAsync_accepts_declared_provider_alias()
+    {
+        var provider = CreateProvider(new FakeProbe(PostgreSqlProbeOutcome.Success));
+        var database = new BootstrapDatabaseConfiguration(
+            "postgres",
+            "16",
+            "Host=localhost;Database=signacore;Username=postgres;Password=valid-password");
+
+        var result = await provider.ValidateAsync(database, TestContext.Current.CancellationToken);
 
         Assert.True(result.IsValid);
     }

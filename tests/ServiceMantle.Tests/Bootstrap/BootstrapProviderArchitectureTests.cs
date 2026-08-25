@@ -283,6 +283,32 @@ public sealed class BootstrapProviderArchitectureTests
     }
 
     [Fact]
+    public async Task Candidate_validator_canonicalizes_alias_before_provider_dispatch()
+    {
+        BootstrapDatabaseConfiguration? dispatchedDatabase = null;
+        var provider = new FakeProvider(
+            new BootstrapDatabaseProviderDescriptor(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "PostgreSQL",
+                BootstrapDatabaseTargetKind.ServerDatabase,
+                BootstrapServerVersionRequirement.Required,
+                aliases: ["postgres"]),
+            (database, _) =>
+            {
+                dispatchedDatabase = database;
+                return ValueTask.FromResult(BootstrapValidationResult.Success());
+            });
+        var validator = CreateValidator([provider]);
+        var candidate = CreateCandidate("postgres");
+
+        var result = await validator.ValidateAsync(candidate, CancellationToken.None);
+
+        Assert.True(result.IsValid);
+        Assert.NotNull(dispatchedDatabase);
+        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, dispatchedDatabase.Provider);
+    }
+
+    [Fact]
     public async Task Candidate_validator_checks_cancellation_token_is_forwarded()
     {
         var expected = new CancellationTokenSource().Token;

@@ -636,7 +636,17 @@ public sealed class BootstrapDatabaseCandidateValidator : IBootstrapCandidateVal
 
         try
         {
-            var result = await registration.Provider.ValidateAsync(candidate.Database, cancellationToken)
+            var database = string.Equals(
+                candidate.Database.Provider,
+                descriptor.Id,
+                StringComparison.OrdinalIgnoreCase)
+                ? candidate.Database
+                : new BootstrapDatabaseConfiguration(
+                    descriptor.Id,
+                    candidate.Database.ServerVersion,
+                    candidate.Database.ConnectionString);
+
+            var result = await registration.Provider.ValidateAsync(database, cancellationToken)
                 .ConfigureAwait(false);
 
             return result ?? BootstrapValidationResult.Failure("database.provider_invalid_result");
