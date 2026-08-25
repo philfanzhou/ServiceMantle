@@ -161,8 +161,15 @@ public sealed class StructuredLogSanitizer
         {
             var output = new Dictionary<string, object?>(StringComparer.Ordinal);
             var activeReferences = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var count = 0;
             foreach (var (name, value) in fields)
             {
+                if (count++ >= maximumCollectionCount)
+                {
+                    output["CollectionTruncated"] = CollectionTruncated;
+                    break;
+                }
+
                 AddField(output, name, value, depth: 0, activeReferences);
             }
 
@@ -187,9 +194,16 @@ public sealed class StructuredLogSanitizer
         {
             var output = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             var activeReferences = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var count = 0;
 
             foreach (var (name, value) in headers)
             {
+                if (count++ >= maximumCollectionCount)
+                {
+                    output["CollectionTruncated"] = CollectionTruncated;
+                    break;
+                }
+
                 if (!TryNormalizeHeaderName(name, out var normalizedName))
                 {
                     continue;

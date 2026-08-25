@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -40,18 +41,30 @@ internal static partial class LogFreeTextSanitizer
     {
         StringBuilder? builder = null;
 
-        for (var index = 0; index < value.Length; index++)
+        for (var index = 0; index < value.Length;)
         {
-            var character = value[index];
-            var category = CharUnicodeInfo.GetUnicodeCategory(character);
-            if (category is UnicodeCategory.Control
+            var status = Rune.DecodeFromUtf16(
+                value.AsSpan(index),
+                out var rune,
+                out var charactersConsumed);
+            var category = status == OperationStatus.Done
+                ? Rune.GetUnicodeCategory(rune)
+                : UnicodeCategory.Surrogate;
+            if (status != OperationStatus.Done ||
+                category is UnicodeCategory.Control
                 or UnicodeCategory.Format
                 or UnicodeCategory.LineSeparator
                 or UnicodeCategory.ParagraphSeparator)
             {
                 builder ??= new StringBuilder(value);
-                builder[index] = ' ';
+                charactersConsumed = Math.Max(charactersConsumed, 1);
+                for (var offset = 0; offset < charactersConsumed; offset++)
+                {
+                    builder[index + offset] = ' ';
+                }
             }
+
+            index += Math.Max(charactersConsumed, 1);
         }
 
         return builder?.ToString() ?? value;

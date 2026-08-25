@@ -49,6 +49,16 @@ public sealed class LogFreeTextSanitizerTests
     }
 
     [Fact]
+    public void Supplementary_plane_format_character_cannot_hide_a_sensitive_assignment()
+    {
+        var sanitizer = new StructuredLogSanitizer();
+
+        var output = sanitizer.SanitizeFreeText("password\U000E0001=secret");
+
+        Assert.Equal(StructuredLogSanitizer.RedactedValue, output);
+    }
+
+    [Fact]
     public void Oversized_free_text_is_replaced_in_full()
     {
         var sanitizer = new StructuredLogSanitizer(new StructuredLogSanitizerOptions

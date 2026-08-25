@@ -111,6 +111,50 @@ public sealed class StructuredLogSanitizerFailureTests
     }
 
     [Fact]
+    public void Root_field_and_header_collections_emit_truncation_markers()
+    {
+        var sanitizer = new StructuredLogSanitizer(new StructuredLogSanitizerOptions
+        {
+            MaximumCollectionCount = 1
+        });
+        KeyValuePair<string, object?>[] entries =
+        [
+            new("First", 1),
+            new("Second", 2),
+            new("Third", 3)
+        ];
+
+        var fields = sanitizer.SanitizeFields(entries);
+        var headers = sanitizer.SanitizeHeaders(entries);
+
+        Assert.Equal(2, fields.Count);
+        Assert.Equal(1, fields["First"]);
+        Assert.Equal(StructuredLogSanitizer.CollectionTruncated, fields["CollectionTruncated"]);
+        Assert.Equal(2, headers.Count);
+        Assert.Equal(1, headers["First"]);
+        Assert.Equal(StructuredLogSanitizer.CollectionTruncated, headers["CollectionTruncated"]);
+    }
+
+    [Fact]
+    public void Root_field_and_header_collections_stop_enumerating_lazy_infinite_sources()
+    {
+        var sanitizer = new StructuredLogSanitizer(new StructuredLogSanitizerOptions
+        {
+            MaximumCollectionCount = 2
+        });
+        var fieldSource = new GuardedInfiniteEntries();
+        var headerSource = new GuardedInfiniteEntries();
+
+        var fields = sanitizer.SanitizeFields(fieldSource);
+        var headers = sanitizer.SanitizeHeaders(headerSource);
+
+        Assert.Equal(3, fieldSource.MoveNextCount);
+        Assert.Equal(StructuredLogSanitizer.CollectionTruncated, fields["CollectionTruncated"]);
+        Assert.Equal(3, headerSource.MoveNextCount);
+        Assert.Equal(StructuredLogSanitizer.CollectionTruncated, headers["CollectionTruncated"]);
+    }
+
+    [Fact]
     public void Invalid_options_fail_closed_without_exposing_option_contents()
     {
         const string secret = "option-enumeration-secret";
@@ -203,6 +247,28 @@ public sealed class StructuredLogSanitizerFailureTests
         {
             yield return "safe-name";
             throw new InvalidOperationException(secret);
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class GuardedInfiniteEntries
+        : IEnumerable<KeyValuePair<string, object?>>
+    {
+        public int MoveNextCount { get; private set; }
+
+        public IEnumerator<KeyValuePair<string, object?>> GetEnumerator()
+        {
+            for (var index = 0; ; index++)
+            {
+                MoveNextCount++;
+                if (MoveNextCount > 3)
+                {
+                    throw new InvalidOperationException("Collection limit was not enforced.");
+                }
+
+                yield return new KeyValuePair<string, object?>($"Entry-{index}", index);
+            }
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
