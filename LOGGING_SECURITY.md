@@ -11,6 +11,25 @@
 - Invalid names are removed. Circular references, depth/collection limits, reflection failures, enumeration failures, and cleaning exceptions produce stable safe markers. The sanitizer never falls back to an original object or original value.
 - Exception messages, stack traces, and `Data` are not emitted; only exception type structure is retained.
 
+## Output guarantees
+
+The sanitized graph is built only from these shapes:
+
+- `null`, `string`, `bool`
+- finite numeric scalars (`byte`, `sbyte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `float`, `double`, `decimal`)
+- `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`, `Guid`
+- `IReadOnlyDictionary<string, object?>` and `IReadOnlyList<object?>` composed of the above
+
+`JsonSerializer.Serialize` is guaranteed not to throw on the result under its default options. Enums are normalized to `long`. Non-finite `float`/`double` values (`NaN`, `PositiveInfinity`, `NegativeInfinity`) cannot be represented by every sink, so they are replaced with `[UNREPRESENTABLE_VALUE]` at the single point where a scalar becomes output; no input path can bypass this.
+
+## Cost bounds and explicit non-guarantees
+
+`MaximumDepth`, `MaximumCollectionCount`, and `MaximumStringLength` bound the sanitizer's own recursion, element enumeration, and string handling. They are applied before a child value is read, including at the `SanitizeFields` and `SanitizeHeaders` entry points, so a lazy or infinite sequence terminates at the configured count.
+
+These limits do not bound work that happens inside the caller's own types. A single member getter, custom `JsonConverter`, or `IEnumerator.MoveNext` call may allocate or compute arbitrarily before the sanitizer regains control; the sanitizer only guarantees that it stops reading further members once a limit is reached.
+
+The sanitizer is not a denial-of-service boundary. Do not hand it an object graph built directly from untrusted input and rely on these limits for protection; bound the graph at the trust boundary instead.
+
 ## Free-text boundary
 
 Free-text cleaning is deliberately best effort. It removes log-injection control characters and recognizes explicit sensitive assignments, connection strings, credential-bearing URIs, bearer tokens, JWT-like values, and PEM private-key blocks.

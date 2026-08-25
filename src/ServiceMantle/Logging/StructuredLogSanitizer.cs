@@ -42,6 +42,9 @@ public sealed class StructuredLogSanitizer
     /// <summary>The stable replacement for oversized free text.</summary>
     public const string OversizedValue = "[OVERSIZED_VALUE_REDACTED]";
 
+    /// <summary>The stable replacement for a scalar no sink can represent.</summary>
+    public const string UnrepresentableValue = "[UNREPRESENTABLE_VALUE]";
+
     private static readonly string[] BuiltInDeniedFieldFragments =
     [
         "password",
@@ -298,7 +301,7 @@ public sealed class StructuredLogSanitizer
 
         if (IsSafeScalar(type))
         {
-            return value;
+            return NormalizeSafeScalar(value);
         }
 
         if (type.IsEnum)
@@ -840,6 +843,17 @@ public sealed class StructuredLogSanitizer
         type == typeof(TimeOnly) ||
         type == typeof(TimeSpan) ||
         type == typeof(DateTimeOffset);
+
+    /// <summary>
+    /// The single point where a safe scalar becomes output. Values that no sink can represent
+    /// are replaced so the sanitized graph always stays serializable.
+    /// </summary>
+    private static object NormalizeSafeScalar(object value) => value switch
+    {
+        double number when !double.IsFinite(number) => UnrepresentableValue,
+        float number when !float.IsFinite(number) => UnrepresentableValue,
+        _ => value,
+    };
 
     private static bool IsSupportedJsonValueScalar(object? value) =>
         value is JsonElement or string or char ||

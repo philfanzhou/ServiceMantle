@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -314,6 +315,111 @@ public sealed class StructuredLogSanitizerFailureTests
             Assert.Equal(index, output["Sequence"]);
             Assert.DoesNotContain(secret, serialized, StringComparison.Ordinal);
         });
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void Non_finite_double_is_replaced_on_every_path(double value)
+    {
+        var sanitizer = new StructuredLogSanitizer();
+        var input = new Dictionary<string, object?>
+        {
+            ["Direct"] = value,
+            ["Json"] = JsonValue.Create(value),
+            ["Member"] = new { Measurement = value },
+            ["Collection"] = new object?[] { value },
+            ["Nullable"] = (double?)value
+        };
+
+        var sanitized = sanitizer.Sanitize(input);
+
+        var serialized = JsonSerializer.Serialize(sanitized);
+        Assert.DoesNotContain("NaN", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("Infinity", serialized, StringComparison.Ordinal);
+        Assert.Equal(5, CountOccurrences(serialized, StructuredLogSanitizer.UnrepresentableValue));
+    }
+
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void Non_finite_float_is_replaced_on_every_path(float value)
+    {
+        var sanitizer = new StructuredLogSanitizer();
+        var input = new Dictionary<string, object?>
+        {
+            ["Direct"] = value,
+            ["Member"] = new { Measurement = value },
+            ["Collection"] = new object?[] { value }
+        };
+
+        var sanitized = sanitizer.Sanitize(input);
+
+        var serialized = JsonSerializer.Serialize(sanitized);
+        Assert.DoesNotContain("NaN", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("Infinity", serialized, StringComparison.Ordinal);
+        Assert.Equal(3, CountOccurrences(serialized, StructuredLogSanitizer.UnrepresentableValue));
+    }
+
+    [Fact]
+    public void Finite_scalars_are_preserved()
+    {
+        var sanitizer = new StructuredLogSanitizer();
+
+        Assert.Equal(1.5d, sanitizer.Sanitize(1.5d));
+        Assert.Equal(2.5f, sanitizer.Sanitize(2.5f));
+        Assert.Equal(double.MaxValue, sanitizer.Sanitize(double.MaxValue));
+        Assert.Equal(3.25m, sanitizer.Sanitize(3.25m));
+        Assert.Equal(0d, sanitizer.Sanitize(-0.0d));
+    }
+
+    [Fact]
+    public void Sanitized_output_is_always_serializable_by_the_default_serializer()
+    {
+        var sanitizer = new StructuredLogSanitizer();
+        using var json = JsonDocument.Parse("""{"nested":{"value":1}}""");
+        object?[] hostileInputs =
+        [
+            double.NaN,
+            float.NegativeInfinity,
+            JsonValue.Create(double.PositiveInfinity),
+            new { Measurement = double.NaN, Ratio = float.NaN, Name = "catalog" },
+            new object?[] { double.NaN, float.PositiveInfinity, null, "text" },
+            new Dictionary<string, object?> { ["Ratios"] = new[] { double.NaN, 1.0d } },
+            new Node(),
+            new ThrowingProperties(),
+            new ThrowingEnumerable("secret"),
+            json.RootElement,
+            new InvalidOperationException("boom", new FormatException("inner")),
+            TimeSpan.MaxValue,
+            DateTimeOffset.UnixEpoch,
+            IPAddress.IPv6Loopback,
+            new Uri("https://example.invalid/path?value=1"),
+            typeof(StructuredLogSanitizer)
+        ];
+
+        foreach (var input in hostileInputs)
+        {
+            var sanitized = sanitizer.Sanitize(input);
+
+            var exception = Record.Exception(() => JsonSerializer.Serialize(sanitized));
+            Assert.Null(exception);
+        }
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = text.IndexOf(value, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            count++;
+            index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal);
+        }
+
+        return count;
     }
 
     private sealed class Node
