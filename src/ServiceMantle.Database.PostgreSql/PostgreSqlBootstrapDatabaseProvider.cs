@@ -43,8 +43,7 @@ public sealed class PostgreSqlBootstrapDatabaseProvider : IBootstrapDatabaseProv
             WellKnownDatabaseProviderIds.PostgreSql,
             "PostgreSQL",
             BootstrapDatabaseTargetKind.ServerDatabase,
-            BootstrapServerVersionRequirement.Required,
-            aliases: [PostgreSqlProviderId.PostgresAlias]);
+            BootstrapServerVersionRequirement.Required);
 
     /// <summary>
     /// Validates a PostgreSQL candidate.
@@ -55,7 +54,10 @@ public sealed class PostgreSqlBootstrapDatabaseProvider : IBootstrapDatabaseProv
     {
         ArgumentNullException.ThrowIfNull(database);
 
-        if (!PostgreSqlProviderId.IsSupported(database.Provider))
+        if (!string.Equals(
+            database.Provider,
+            WellKnownDatabaseProviderIds.PostgreSql,
+            StringComparison.OrdinalIgnoreCase))
         {
             return BootstrapValidationResult.Failure("database.provider_mismatch");
         }

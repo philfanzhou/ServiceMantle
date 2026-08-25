@@ -168,11 +168,8 @@ The capability models three target kinds via the existing `BootstrapDatabaseTarg
 - **Target connectable** (`DatabaseTargetObservation.IsTargetConnectable`) — a connection to the target itself succeeded.
 
 ```csharp
-var bootstrapProviders = new BootstrapDatabaseProviderRegistry(
-    [new PostgreSqlBootstrapDatabaseProvider()]);
 var preparationProviders = new DatabaseTargetPreparationProviderRegistry(
-    [new PostgreSqlDatabaseTargetPreparationProvider()],
-    bootstrapProviders);
+    [new PostgreSqlDatabaseTargetPreparationProvider()]);
 
 if (!preparationProviders.TryGetProvider(bootstrapDatabaseConfiguration.Provider, out var provider))
 {

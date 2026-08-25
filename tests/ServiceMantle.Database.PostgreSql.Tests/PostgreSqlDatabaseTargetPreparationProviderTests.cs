@@ -35,17 +35,6 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     }
 
     [Fact]
-    public async Task ObserveAsync_accepts_declared_provider_alias()
-    {
-        var provider = CreateProvider(new FakeObservationProbe(PostgreSqlProbeOutcome.Success));
-        var target = new BootstrapDatabaseConfiguration("postgres", "16", ValidTargetConnectionString);
-
-        var observation = await provider.ObserveAsync(target, TestContext.Current.CancellationToken);
-
-        Assert.True(observation.IsTargetConnectable);
-    }
-
-    [Fact]
     public async Task ObserveAsync_pre_cancellation_precedes_provider_mismatch()
     {
         using var source = new CancellationTokenSource();
@@ -264,25 +253,6 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
 
         Assert.False(result.Succeeded);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.ProviderMismatch, result.ErrorCode);
-    }
-
-    [Fact]
-    public async Task PrepareAsync_accepts_declared_provider_alias()
-    {
-        var probe = new FakeCreationProbe(
-            (_, _, _, _) => ValueTask.FromResult(
-                DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)));
-        var provider = CreateProvider(creationProbe: probe);
-        var target = new BootstrapDatabaseConfiguration("postgres", "16", ValidTargetConnectionString);
-        var request = new DatabaseTargetPreparationRequest(target, ValidAdministrativeConnectionString);
-
-        var result = await provider.PrepareAsync(
-            request,
-            TimeSpan.FromSeconds(5),
-            TestContext.Current.CancellationToken);
-
-        Assert.True(result.Succeeded);
-        Assert.Equal("app", probe.LastDatabaseName);
     }
 
     [Fact]

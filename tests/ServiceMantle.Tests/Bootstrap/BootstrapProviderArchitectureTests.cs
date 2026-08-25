@@ -43,13 +43,10 @@ public sealed class BootstrapProviderArchitectureTests
         var registry = new BootstrapDatabaseProviderRegistry([provider]);
 
         var found = registry.TryGetProvider("MSSQL", out var selected);
-        var canonicalFound = registry.TryGetCanonicalProviderId("mssqlserver", out var canonicalProviderId);
 
         Assert.True(found);
         Assert.NotNull(selected);
         Assert.Equal(WellKnownDatabaseProviderIds.SqlServer, selected!.Descriptor.Id);
-        Assert.True(canonicalFound);
-        Assert.Equal(WellKnownDatabaseProviderIds.SqlServer, canonicalProviderId);
     }
 
     [Fact]
@@ -283,32 +280,6 @@ public sealed class BootstrapProviderArchitectureTests
 
         Assert.True(result.IsValid);
         Assert.Equal(1, provider.CallCount);
-    }
-
-    [Fact]
-    public async Task Candidate_validator_canonicalizes_alias_before_provider_dispatch()
-    {
-        BootstrapDatabaseConfiguration? dispatchedDatabase = null;
-        var provider = new FakeProvider(
-            new BootstrapDatabaseProviderDescriptor(
-                WellKnownDatabaseProviderIds.PostgreSql,
-                "PostgreSQL",
-                BootstrapDatabaseTargetKind.ServerDatabase,
-                BootstrapServerVersionRequirement.Required,
-                aliases: ["postgres"]),
-            (database, _) =>
-            {
-                dispatchedDatabase = database;
-                return ValueTask.FromResult(BootstrapValidationResult.Success());
-            });
-        var validator = CreateValidator([provider]);
-        var candidate = CreateCandidate("postgres");
-
-        var result = await validator.ValidateAsync(candidate, CancellationToken.None);
-
-        Assert.True(result.IsValid);
-        Assert.NotNull(dispatchedDatabase);
-        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, dispatchedDatabase.Provider);
     }
 
     [Fact]

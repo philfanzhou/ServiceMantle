@@ -559,26 +559,6 @@ public sealed class BootstrapDatabaseProviderRegistry
         return true;
     }
 
-    /// <summary>
-    /// Resolves a canonical provider id from either that id or one of its aliases.
-    /// </summary>
-    /// <param name="providerId">The provider id or alias.</param>
-    /// <param name="canonicalProviderId">The registered canonical id when found.</param>
-    public bool TryGetCanonicalProviderId(
-        string providerId,
-        out string? canonicalProviderId)
-    {
-        if (string.IsNullOrWhiteSpace(providerId) ||
-            !registrations.TryGetValue(providerId, out var registration))
-        {
-            canonicalProviderId = null;
-            return false;
-        }
-
-        canonicalProviderId = registration.Descriptor.Id;
-        return true;
-    }
-
     internal bool TryGetRegistration(
         string providerId,
         out ProviderRegistration? registration)
@@ -656,25 +636,10 @@ public sealed class BootstrapDatabaseCandidateValidator : IBootstrapCandidateVal
 
         try
         {
-            var database = string.Equals(
-                candidate.Database.Provider,
-                descriptor.Id,
-                StringComparison.OrdinalIgnoreCase)
-                ? candidate.Database
-                : new BootstrapDatabaseConfiguration(
-                    descriptor.Id,
-                    candidate.Database.ServerVersion,
-                    candidate.Database.ConnectionString);
-
-            var result = await registration.Provider.ValidateAsync(database, cancellationToken)
+            var result = await registration.Provider.ValidateAsync(candidate.Database, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (result is null)
-            {
-                return BootstrapValidationResult.Failure("database.provider_invalid_result");
-            }
-
-            return result;
+            return result ?? BootstrapValidationResult.Failure("database.provider_invalid_result");
         }
         catch (OperationCanceledException)
         {

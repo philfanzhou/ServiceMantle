@@ -1,7 +1,5 @@
 using System.Text.Json;
 using ServiceMantle.Bootstrap;
-using ServiceMantle.Migration;
-using ServiceMantle.Tests.Migration;
 using Xunit;
 
 namespace ServiceMantle.Tests.Bootstrap;
@@ -135,12 +133,9 @@ public sealed class BootstrapConfigurationManagerTests
                 "PostgreSQL",
                 BootstrapDatabaseTargetKind.ServerDatabase,
                 BootstrapServerVersionRequirement.Optional));
-        var providerRegistry = new BootstrapDatabaseProviderRegistry([provider]);
-        var validator = new BootstrapDatabaseCandidateValidator(providerRegistry);
-        var manager = CreateManager(
-            store,
-            validator: validator,
-            providerRegistry: providerRegistry);
+        var validator = new BootstrapDatabaseCandidateValidator(
+            new BootstrapDatabaseProviderRegistry([provider]));
+        var manager = CreateManager(store, validator: validator);
 
         var result = await manager.CreateAsync(
             new BootstrapCreateRequest(
@@ -153,124 +148,6 @@ public sealed class BootstrapConfigurationManagerTests
         Assert.True(result.RestartRequired);
         Assert.True(File.Exists(store.FilePath));
         Assert.Equal(1, provider.CallCount);
-    }
-
-    [Fact]
-    public async Task CreateAsync_persists_canonical_provider_id_and_migration_resolves_lock_after_alias_validation()
-    {
-        using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory);
-        var provider = new FakeDatabaseProvider(
-            new BootstrapDatabaseProviderDescriptor(
-                WellKnownDatabaseProviderIds.PostgreSql,
-                "PostgreSQL",
-                BootstrapDatabaseTargetKind.ServerDatabase,
-                BootstrapServerVersionRequirement.Required,
-                aliases: ["postgres"]));
-        var providerRegistry = new BootstrapDatabaseProviderRegistry([provider]);
-        var validator = new BootstrapDatabaseCandidateValidator(providerRegistry);
-        var manager = CreateManager(
-            store,
-            validator: validator,
-            providerRegistry: providerRegistry);
-
-        await manager.CreateAsync(
-            new BootstrapCreateRequest(
-                new BootstrapDatabaseConfiguration(
-                    "postgres",
-                    "15",
-                    "Host=db;Database=app;Username=app;Password=create-password"),
-                "create-master-key"),
-            TestContext.Current.CancellationToken);
-
-        var persisted = store.Load();
-        var status = manager.GetStatus();
-        var lockProvider = new FakeMigrationLockProvider(WellKnownDatabaseProviderIds.PostgreSql);
-        var orchestrator = new DatabaseMigrationOrchestrator(
-            new FakeMigrationExecutor(MigrationObservationState.CurrentVersionCompatible),
-            new DatabaseMigrationLockProviderRegistry([lockProvider]));
-        var migrationResult = await orchestrator.OrchestrateMigrationAsync(
-            persisted.ServiceId,
-            persisted.Database,
-            TimeSpan.FromSeconds(5),
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, persisted.Database.Provider);
-        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, status.Provider);
-        Assert.True(migrationResult.Succeeded);
-        Assert.Equal(1, lockProvider.AcquireAttempts);
-    }
-
-    [Fact]
-    public async Task CreateAsync_persists_canonical_provider_id_with_composed_validator()
-    {
-        using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory);
-        var provider = new FakeDatabaseProvider(
-            new BootstrapDatabaseProviderDescriptor(
-                WellKnownDatabaseProviderIds.PostgreSql,
-                "PostgreSQL",
-                BootstrapDatabaseTargetKind.ServerDatabase,
-                BootstrapServerVersionRequirement.Required,
-                aliases: ["postgres"]));
-        var providerRegistry = new BootstrapDatabaseProviderRegistry([provider]);
-        var innerValidator = new BootstrapDatabaseCandidateValidator(providerRegistry);
-        var validator = new FakeValidator
-        {
-            Handler = async (candidate, cancellationToken) =>
-            {
-                var result = await innerValidator.ValidateAsync(candidate, cancellationToken);
-                return result.IsValid
-                    ? BootstrapValidationResult.Success()
-                    : result;
-            }
-        };
-        var manager = CreateManager(
-            store,
-            validator: validator,
-            providerRegistry: providerRegistry);
-
-        await manager.CreateAsync(
-            new BootstrapCreateRequest(
-                new BootstrapDatabaseConfiguration(
-                    "postgres",
-                    "15",
-                    "Host=db;Database=app;Username=app;Password=create-password"),
-                "create-master-key"),
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, store.Load().Database.Provider);
-    }
-
-    [Fact]
-    public async Task UpdateAsync_persists_canonical_provider_id_after_alias_validation()
-    {
-        using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory);
-        store.Create(CreateConfiguration());
-        var provider = new FakeDatabaseProvider(
-            new BootstrapDatabaseProviderDescriptor(
-                WellKnownDatabaseProviderIds.PostgreSql,
-                "PostgreSQL",
-                BootstrapDatabaseTargetKind.ServerDatabase,
-                BootstrapServerVersionRequirement.Required,
-                aliases: ["postgres"]));
-        var providerRegistry = new BootstrapDatabaseProviderRegistry([provider]);
-        var validator = new BootstrapDatabaseCandidateValidator(providerRegistry);
-        var manager = CreateManager(
-            store,
-            validator: validator,
-            providerRegistry: providerRegistry);
-
-        await manager.UpdateAsync(
-            new BootstrapUpdateRequest(
-                new BootstrapDatabaseConfiguration(
-                    "postgres",
-                    "16",
-                    "Host=db;Database=updated;Username=app;Password=updated-password")),
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, store.Load().Database.Provider);
     }
 
     [Fact]
@@ -494,30 +371,11 @@ public sealed class BootstrapConfigurationManagerTests
     private static BootstrapConfigurationManager CreateManager(
         BootstrapFileStore store,
         InstanceId? instanceId = null,
-        IBootstrapCandidateValidator? validator = null,
-        BootstrapDatabaseProviderRegistry? providerRegistry = null) =>
+        IBootstrapCandidateValidator? validator = null) =>
         new(
             store,
             instanceId ?? InstanceId.Parse("Node-A3"),
-            providerRegistry ?? CreateDefaultProviderRegistry(),
             validator ?? new FakeValidator());
-
-    private static BootstrapDatabaseProviderRegistry CreateDefaultProviderRegistry() =>
-        new(
-        [
-            new FakeDatabaseProvider(
-                new BootstrapDatabaseProviderDescriptor(
-                    WellKnownDatabaseProviderIds.PostgreSql,
-                    "PostgreSQL",
-                    BootstrapDatabaseTargetKind.ServerDatabase,
-                    BootstrapServerVersionRequirement.Optional)),
-            new FakeDatabaseProvider(
-                new BootstrapDatabaseProviderDescriptor(
-                    "SQLite",
-                    "SQLite",
-                    BootstrapDatabaseTargetKind.File,
-                    BootstrapServerVersionRequirement.Forbidden))
-        ]);
 
     private static BootstrapFileStore CreateStore(
         TemporaryDirectory directory,

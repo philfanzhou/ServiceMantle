@@ -9,7 +9,6 @@ public sealed class BootstrapConfigurationManager
 {
     private readonly BootstrapFileStore fileStore;
     private readonly InstanceId instanceId;
-    private readonly BootstrapDatabaseProviderRegistry providerRegistry;
     private readonly IBootstrapCandidateValidator candidateValidator;
     private readonly SemaphoreSlim modificationGate = new(1, 1);
 
@@ -18,22 +17,18 @@ public sealed class BootstrapConfigurationManager
     /// </summary>
     /// <param name="fileStore">The store for the current service.</param>
     /// <param name="instanceId">The instance performing management operations.</param>
-    /// <param name="providerRegistry">The registry used to canonicalize provider ids before persistence.</param>
     /// <param name="candidateValidator">The validator called before every write.</param>
     public BootstrapConfigurationManager(
         BootstrapFileStore fileStore,
         InstanceId instanceId,
-        BootstrapDatabaseProviderRegistry providerRegistry,
         IBootstrapCandidateValidator candidateValidator)
     {
         ArgumentNullException.ThrowIfNull(fileStore);
         ArgumentNullException.ThrowIfNull(instanceId);
-        ArgumentNullException.ThrowIfNull(providerRegistry);
         ArgumentNullException.ThrowIfNull(candidateValidator);
 
         this.fileStore = fileStore;
         this.instanceId = instanceId;
-        this.providerRegistry = providerRegistry;
         this.candidateValidator = candidateValidator;
     }
 
@@ -95,7 +90,7 @@ public sealed class BootstrapConfigurationManager
             await ValidateCandidateAsync(candidate, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
-            fileStore.Create(CanonicalizeValidatedCandidate(candidate));
+            fileStore.Create(candidate);
 
             return new BootstrapChangeResult(
                 fileStore.ServiceId,
@@ -150,7 +145,7 @@ public sealed class BootstrapConfigurationManager
             await ValidateCandidateAsync(candidate, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
-            fileStore.Replace(CanonicalizeValidatedCandidate(candidate));
+            fileStore.Replace(candidate);
 
             return new BootstrapChangeResult(
                 fileStore.ServiceId,
@@ -198,35 +193,5 @@ public sealed class BootstrapConfigurationManager
                 validationResult.ErrorCode ?? "candidate.rejected",
                 "Bootstrap candidate validation failed.");
         }
-    }
-
-    private BootstrapConfiguration CanonicalizeValidatedCandidate(
-        BootstrapConfiguration candidate)
-    {
-        if (!providerRegistry.TryGetCanonicalProviderId(
-                candidate.Database.Provider,
-                out var canonicalProviderId) ||
-            canonicalProviderId is null)
-        {
-            throw new BootstrapManagementException(
-                "database.provider_not_registered",
-                "Bootstrap candidate validation failed.");
-        }
-
-        if (string.Equals(
-            candidate.Database.Provider,
-            canonicalProviderId,
-            StringComparison.Ordinal))
-        {
-            return candidate;
-        }
-
-        return new BootstrapConfiguration(
-            candidate.ServiceId,
-            new BootstrapDatabaseConfiguration(
-                canonicalProviderId,
-                candidate.Database.ServerVersion,
-                candidate.Database.ConnectionString),
-            candidate.MasterKey);
     }
 }

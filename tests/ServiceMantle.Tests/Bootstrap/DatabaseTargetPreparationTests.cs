@@ -189,65 +189,6 @@ public sealed class DatabaseTargetPreparationTests
     }
 
     [Fact]
-    public async Task Registry_canonicalizes_bootstrap_provider_alias_for_preparation_capability_calls()
-    {
-        var bootstrapProvider = new FakeBootstrapProvider(
-            new BootstrapDatabaseProviderDescriptor(
-                WellKnownDatabaseProviderIds.PostgreSql,
-                "PostgreSQL",
-                BootstrapDatabaseTargetKind.ServerDatabase,
-                BootstrapServerVersionRequirement.Optional,
-                aliases: ["postgres"]));
-        var bootstrapProviders = new BootstrapDatabaseProviderRegistry([bootstrapProvider]);
-        var preparationProvider = new FakeProvider(WellKnownDatabaseProviderIds.PostgreSql);
-        var preparationProviders = new DatabaseTargetPreparationProviderRegistry(
-            [preparationProvider],
-            bootstrapProviders);
-        var target = new BootstrapDatabaseConfiguration(
-            "postgres",
-            "16",
-            "Host=db;Database=app;Username=app;Password=secret");
-
-        var found = preparationProviders.TryGetProvider(target.Provider, out var resolved);
-
-        Assert.True(found);
-        Assert.NotNull(resolved);
-
-        var observation = await resolved.ObserveAsync(target, TestContext.Current.CancellationToken);
-        var request = new DatabaseTargetPreparationRequest(
-            target,
-            "Host=db;Database=postgres;Username=admin;Password=admin-secret");
-        var result = await resolved.PrepareAsync(
-            request,
-            TimeSpan.FromSeconds(5),
-            TestContext.Current.CancellationToken);
-
-        Assert.True(observation.TargetExists is false);
-        Assert.True(result.Succeeded);
-        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, preparationProvider.LastObservedTarget!.Provider);
-        Assert.Equal(WellKnownDatabaseProviderIds.PostgreSql, preparationProvider.LastPreparationRequest!.Target.Provider);
-    }
-
-    [Fact]
-    public void Registry_does_not_infer_preparation_capability_from_bootstrap_alias()
-    {
-        var bootstrapProvider = new FakeBootstrapProvider(
-            new BootstrapDatabaseProviderDescriptor(
-                WellKnownDatabaseProviderIds.PostgreSql,
-                "PostgreSQL",
-                BootstrapDatabaseTargetKind.ServerDatabase,
-                BootstrapServerVersionRequirement.Optional,
-                aliases: ["postgres"]));
-        var bootstrapProviders = new BootstrapDatabaseProviderRegistry([bootstrapProvider]);
-        var preparationProviders = new DatabaseTargetPreparationProviderRegistry([], bootstrapProviders);
-
-        var found = preparationProviders.TryGetProvider("postgres", out var resolved);
-
-        Assert.False(found);
-        Assert.Null(resolved);
-    }
-
-    [Fact]
     public void Registry_reports_capability_not_supported_when_provider_is_not_registered()
     {
         var registry = new DatabaseTargetPreparationProviderRegistry([new FakeProvider(WellKnownDatabaseProviderIds.PostgreSql)]);
@@ -353,44 +294,15 @@ public sealed class DatabaseTargetPreparationTests
 
         public BootstrapDatabaseTargetKind TargetKind { get; }
 
-        public BootstrapDatabaseConfiguration? LastObservedTarget { get; private set; }
-
-        public DatabaseTargetPreparationRequest? LastPreparationRequest { get; private set; }
-
         public ValueTask<DatabaseTargetObservation> ObserveAsync(
             BootstrapDatabaseConfiguration target,
-            CancellationToken cancellationToken)
-        {
-            LastObservedTarget = target;
-            return ValueTask.FromResult(DatabaseTargetObservation.TargetMissing());
-        }
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(DatabaseTargetObservation.TargetMissing());
 
         public ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
             DatabaseTargetPreparationRequest request,
             TimeSpan timeout,
-            CancellationToken cancellationToken)
-        {
-            LastPreparationRequest = request;
-            return ValueTask.FromResult(DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created));
-        }
-    }
-
-    private sealed class FakeBootstrapProvider : IBootstrapDatabaseProvider
-    {
-        public FakeBootstrapProvider(BootstrapDatabaseProviderDescriptor descriptor)
-        {
-            Descriptor = descriptor;
-        }
-
-        public BootstrapDatabaseProviderDescriptor Descriptor { get; }
-
-        public ValueTask<BootstrapValidationResult> ValidateAsync(
-            BootstrapDatabaseConfiguration database,
-            CancellationToken cancellationToken)
-        {
-            _ = database;
-            _ = cancellationToken;
-            return ValueTask.FromResult(BootstrapValidationResult.Success());
-        }
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created));
     }
 }
