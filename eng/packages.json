@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "id": "ServiceMantle",
+      "project": "src/ServiceMantle/ServiceMantle.csproj",
+      "optional": false,
+      "dependencies": [],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
+      "id": "ServiceMantle.AspNetCore",
+      "project": "src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj",
+      "optional": false,
+      "dependencies": [
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [
+        "Microsoft.AspNetCore.App"
+      ],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
+      "id": "ServiceMantle.Database.PostgreSql",
+      "project": "src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj",
+      "optional": true,
+      "dependencies": [
+        "Npgsql",
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj",
+          "environment": {
+            "RUN_SERVICEMANTLE_POSTGRES_TESTS": "true"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ServiceMantle.Persistence.EntityFrameworkCore",
+      "project": "src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj",
+      "optional": true,
+      "dependencies": [
+        "Microsoft.EntityFrameworkCore.Relational",
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj",
+          "environment": {
+            "RUN_SERVICEMANTLE_SQLSERVER_TESTS": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

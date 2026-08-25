@@ -71,40 +71,63 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Restore dependencies
-        run: dotnet restore ServiceMantle.slnx
-
-      - name: Pack ServiceMantle
+      - name: Validate package registry
         run: >-
-          dotnet pack src/ServiceMantle/ServiceMantle.csproj
+          dotnet run
+          --project eng/ServiceMantle.ReleaseTool/ServiceMantle.ReleaseTool.csproj
           --configuration Release
-          --no-restore
-          --output artifacts/packages
-          -p:Version=${{ needs.version.outputs.number }}
-          -p:RepositoryCommit=${{ github.sha }}
+          -- validate
 
-      - name: Pack ServiceMantle.Database.PostgreSql
+      - name: Restore registered projects
         run: >-
-          dotnet pack src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj
+          dotnet run
+          --project eng/ServiceMantle.ReleaseTool/ServiceMantle.ReleaseTool.csproj
           --configuration Release
+          --no-build
           --no-restore
-          --output artifacts/packages
-          -p:Version=${{ needs.version.outputs.number }}
-          -p:RepositoryCommit=${{ github.sha }}
+          -- restore
 
-      - name: Pack ServiceMantle.Persistence.EntityFrameworkCore
+      - name: Build registered projects
         run: >-
-          dotnet pack src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj
+          dotnet run
+          --project eng/ServiceMantle.ReleaseTool/ServiceMantle.ReleaseTool.csproj
           --configuration Release
+          --no-build
           --no-restore
+          -- build
+          --version ${{ needs.version.outputs.number }}
+          --commit ${{ github.sha }}
+
+      - name: Pack registered projects
+        run: >-
+          dotnet run
+          --project eng/ServiceMantle.ReleaseTool/ServiceMantle.ReleaseTool.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          -- pack
+          --version ${{ needs.version.outputs.number }}
+          --commit ${{ github.sha }}
           --output artifacts/packages
-          -p:Version=${{ needs.version.outputs.number }}
-          -p:RepositoryCommit=${{ github.sha }}
+
+      - name: Verify package artifacts
+        run: >-
+          dotnet run
+          --project eng/ServiceMantle.ReleaseTool/ServiceMantle.ReleaseTool.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          -- verify
+          --version ${{ needs.version.outputs.number }}
+          --commit ${{ github.sha }}
+          --input artifacts/packages
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: package-${{ needs.version.outputs.number }}
-          path: artifacts/packages
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/packages/*.snupkg
           if-no-files-found: error
           retention-days: 14
