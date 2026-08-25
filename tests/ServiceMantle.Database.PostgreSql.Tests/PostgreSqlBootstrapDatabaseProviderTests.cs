@@ -150,6 +150,18 @@ public sealed class PostgreSqlBootstrapDatabaseProviderTests
     }
 
     [Fact]
+    public async Task ValidateAsync_maps_target_identity_mismatch_to_invalid_connection_string()
+    {
+        var provider = CreateProvider(new FakeProbe(PostgreSqlProbeOutcome.TargetIdentityMismatch));
+        var candidate = CreateCandidate();
+
+        var result = await provider.ValidateAsync(candidate.Database, TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsValid);
+        Assert.Equal("database.connection_string_invalid", result.ErrorCode);
+    }
+
+    [Fact]
     public async Task ValidateAsync_maps_target_not_found()
     {
         var provider = CreateProvider(new FakeProbe(PostgreSqlProbeOutcome.DatabaseNotFound));
@@ -227,6 +239,16 @@ public sealed class PostgreSqlBootstrapDatabaseProviderTests
         var outcome = PostgreSqlProbeFailureClassifier.Classify(exception);
 
         Assert.Equal(PostgreSqlProbeOutcome.AuthenticationFailed, outcome);
+    }
+
+    [Fact]
+    public void Classifier_maps_postgres_exception_insufficient_privilege_as_target_access_denied()
+    {
+        var exception = CreatePostgresException(PostgresErrorCodes.InsufficientPrivilege, "permission denied");
+
+        var outcome = PostgreSqlProbeFailureClassifier.Classify(exception);
+
+        Assert.Equal(PostgreSqlProbeOutcome.TargetAccessDenied, outcome);
     }
 
     [Fact]

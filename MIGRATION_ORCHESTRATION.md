@@ -194,7 +194,7 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 ### Out of Scope (Not Implemented)
 
 - Other database providers (MySQL, MariaDB, Oracle, SQL Server, SQLite)
-- Database creation or target preparation
+- Database creation or target preparation (see the separate "Database target preparation" section in `README.md`, added independently of this migration orchestration work)
 - Configuration tables or audit tables
 - Setup code or management admin features
 - EF Core automatic migration execution

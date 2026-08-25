@@ -171,8 +171,11 @@ public sealed class PostgreSqlBootstrapDatabaseProvider : IBootstrapDatabaseProv
         return outcome switch
         {
             PostgreSqlProbeOutcome.Success => BootstrapValidationResult.Success(),
+            PostgreSqlProbeOutcome.TargetIdentityMismatch =>
+                BootstrapValidationResult.Failure("database.connection_string_invalid"),
             PostgreSqlProbeOutcome.DatabaseNotFound => BootstrapValidationResult.Failure("database.target_not_found"),
             PostgreSqlProbeOutcome.AuthenticationFailed => BootstrapValidationResult.Failure("database.authentication_failed"),
+            PostgreSqlProbeOutcome.TargetAccessDenied => BootstrapValidationResult.Failure("database.permission_denied"),
             PostgreSqlProbeOutcome.ConnectionFailed => BootstrapValidationResult.Failure("database.connection_failed"),
             _ => BootstrapValidationResult.Failure("database.provider_validation_failed")
         };
@@ -190,8 +193,10 @@ internal interface INpgsqlBootstrapProbe
 internal enum PostgreSqlProbeOutcome
 {
     Success,
+    TargetIdentityMismatch,
     DatabaseNotFound,
     AuthenticationFailed,
+    TargetAccessDenied,
     ConnectionFailed,
     ValidationFailed
 }
@@ -208,11 +213,32 @@ internal sealed class NpgsqlBootstrapProbe : INpgsqlBootstrapProbe
             await using var connection = new NpgsqlConnection(connectionString.ConnectionString);
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-            await using var command = new NpgsqlCommand("SELECT 1", connection)
+            await using var command = new NpgsqlCommand(
+                "SELECT current_database()::text, session_user::text",
+                connection)
             {
                 CommandTimeout = commandTimeoutSeconds
             };
-            await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+
+            // PostgreSQL silently truncates startup-packet database and role identifiers to its
+            // NAMEDATALEN limit. Read the identities selected by the server and compare them on the
+            // client so an overlong requested name cannot be mistaken for a same-prefix target.
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return PostgreSqlProbeOutcome.ValidationFailed;
+            }
+
+            var actualDatabase = reader.GetString(0);
+            var actualUsername = reader.GetString(1);
+            var expectedUsername = connectionString.Username;
+
+            if (!string.Equals(actualDatabase, connectionString.Database, StringComparison.Ordinal) ||
+                (!string.IsNullOrEmpty(expectedUsername) &&
+                 !string.Equals(actualUsername, expectedUsername, StringComparison.Ordinal)))
+            {
+                return PostgreSqlProbeOutcome.TargetIdentityMismatch;
+            }
 
             return PostgreSqlProbeOutcome.Success;
         }
@@ -234,6 +260,7 @@ internal static class PostgreSqlProbeFailureClassifier
         ArgumentNullException.ThrowIfNull(exception);
 
         var current = exception;
+        var containsNpgsqlException = false;
         while (current is not null)
         {
             if (current is PostgresException postgresException)
@@ -253,13 +280,15 @@ internal static class PostgreSqlProbeFailureClassifier
 
             if (current is NpgsqlException)
             {
-                return PostgreSqlProbeOutcome.ConnectionFailed;
+                containsNpgsqlException = true;
             }
 
             current = current.InnerException;
         }
 
-        return PostgreSqlProbeOutcome.ValidationFailed;
+        return containsNpgsqlException
+            ? PostgreSqlProbeOutcome.ConnectionFailed
+            : PostgreSqlProbeOutcome.ValidationFailed;
     }
 
     private static PostgreSqlProbeOutcome ClassifyPostgresException(PostgresException exception)
@@ -277,6 +306,11 @@ internal static class PostgreSqlProbeFailureClassifier
         if (exception.SqlState.StartsWith("28", StringComparison.Ordinal))
         {
             return PostgreSqlProbeOutcome.AuthenticationFailed;
+        }
+
+        if (string.Equals(exception.SqlState, PostgresErrorCodes.InsufficientPrivilege, StringComparison.Ordinal))
+        {
+            return PostgreSqlProbeOutcome.TargetAccessDenied;
         }
 
         if (exception.SqlState.StartsWith("08", StringComparison.Ordinal))
