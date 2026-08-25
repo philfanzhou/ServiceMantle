@@ -325,6 +325,12 @@ Safe error codes for migration failures:
 - No management frontend.
 - No business migration or service-specific logic.
 
+## Structured logging security
+
+The core package provides a sink-neutral, fail-closed structured value sanitizer. Its guaranteed
+field/Header/type boundaries and deliberately limited free-text detection contract are documented in
+[`LOGGING_SECURITY.md`](LOGGING_SECURITY.md).
+
 ## Frontend note
 
 Frontend work is intentionally out of scope and will be implemented in a separate `ServiceMantle.Console` project.
