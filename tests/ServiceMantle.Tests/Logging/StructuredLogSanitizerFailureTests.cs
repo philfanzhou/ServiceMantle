@@ -213,6 +213,48 @@ public sealed class StructuredLogSanitizerFailureTests
     }
 
     [Fact]
+    public void Custom_JsonValue_fails_closed_without_reading_object_properties()
+    {
+        var payload = new GetterTrackingJsonPayload();
+        var serializerOptions = new JsonSerializerOptions
+        {
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+        };
+        var typeInfo = (JsonTypeInfo<GetterTrackingJsonPayload>)serializerOptions.GetTypeInfo(
+            typeof(GetterTrackingJsonPayload));
+        var input = JsonValue.Create(payload, typeInfo);
+        var sanitizer = new StructuredLogSanitizer(new StructuredLogSanitizerOptions
+        {
+            MaximumCollectionCount = 2
+        });
+
+        var output = sanitizer.Sanitize(input);
+
+        Assert.Equal(StructuredLogSanitizer.SanitizationFailed, output);
+        Assert.Equal(0, payload.ValuesGetterCount);
+    }
+
+    [Fact]
+    public void Custom_JsonValue_fails_closed_without_invoking_its_converter()
+    {
+        var converter = new ThrowingJsonPayloadConverter();
+        var serializerOptions = new JsonSerializerOptions
+        {
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+        };
+        serializerOptions.Converters.Add(converter);
+        var typeInfo = (JsonTypeInfo<ThrowingJsonPayload>)serializerOptions.GetTypeInfo(
+            typeof(ThrowingJsonPayload));
+        var input = JsonValue.Create(new ThrowingJsonPayload(), typeInfo);
+        var sanitizer = new StructuredLogSanitizer();
+
+        var output = sanitizer.Sanitize(input);
+
+        Assert.Equal(StructuredLogSanitizer.SanitizationFailed, output);
+        Assert.Equal(0, converter.WriteCount);
+    }
+
+    [Fact]
     public void Invalid_options_fail_closed_without_exposing_option_contents()
     {
         const string secret = "option-enumeration-secret";
@@ -333,6 +375,20 @@ public sealed class StructuredLogSanitizerFailureTests
     }
 
     private sealed class ThrowingJsonPayload;
+
+    private sealed class GetterTrackingJsonPayload
+    {
+        public int ValuesGetterCount { get; private set; }
+
+        public IReadOnlyList<int> Values
+        {
+            get
+            {
+                ValuesGetterCount++;
+                return Enumerable.Range(0, 10_000).ToArray();
+            }
+        }
+    }
 
     private sealed class ThrowingJsonPayloadConverter : JsonConverter<ThrowingJsonPayload>
     {
