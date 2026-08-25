@@ -1,5 +1,8 @@
 using System.Collections;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using ServiceMantle.Logging;
 using Xunit;
 
@@ -155,6 +158,61 @@ public sealed class StructuredLogSanitizerFailureTests
     }
 
     [Fact]
+    public void Deep_JsonNode_uses_the_configured_depth_limit_instead_of_serializer_defaults()
+    {
+        const int levels = 80;
+        JsonNode input = JsonValue.Create("leaf")!;
+        for (var level = 0; level < levels; level++)
+        {
+            input = new JsonObject { ["Child"] = input };
+        }
+
+        var sanitizer = new StructuredLogSanitizer(new StructuredLogSanitizerOptions
+        {
+            MaximumDepth = 128
+        });
+
+        object? output = sanitizer.Sanitize(input);
+
+        for (var level = 0; level < levels; level++)
+        {
+            var dictionary = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(output);
+            output = dictionary["Child"];
+        }
+
+        Assert.Equal("leaf", output);
+    }
+
+    [Fact]
+    public void Wide_JsonNode_stops_before_serializing_values_beyond_the_collection_limit()
+    {
+        var converter = new ThrowingJsonPayloadConverter();
+        var serializerOptions = new JsonSerializerOptions
+        {
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+        };
+        serializerOptions.Converters.Add(converter);
+        var typeInfo = (JsonTypeInfo<ThrowingJsonPayload>)serializerOptions.GetTypeInfo(
+            typeof(ThrowingJsonPayload));
+        var input = new JsonArray { 1, 2 };
+        for (var index = 0; index < 10_000; index++)
+        {
+            input.Add(index);
+        }
+
+        input.Add(JsonValue.Create(new ThrowingJsonPayload(), typeInfo));
+        var sanitizer = new StructuredLogSanitizer(new StructuredLogSanitizerOptions
+        {
+            MaximumCollectionCount = 2
+        });
+
+        var output = Assert.IsAssignableFrom<IReadOnlyList<object?>>(sanitizer.Sanitize(input));
+
+        Assert.Equal([1m, 2m, StructuredLogSanitizer.CollectionTruncated], output);
+        Assert.Equal(0, converter.WriteCount);
+    }
+
+    [Fact]
     public void Invalid_options_fail_closed_without_exposing_option_contents()
     {
         const string secret = "option-enumeration-secret";
@@ -272,5 +330,26 @@ public sealed class StructuredLogSanitizerFailureTests
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class ThrowingJsonPayload;
+
+    private sealed class ThrowingJsonPayloadConverter : JsonConverter<ThrowingJsonPayload>
+    {
+        public int WriteCount { get; private set; }
+
+        public override ThrowingJsonPayload Read(
+            ref Utf8JsonReader reader,
+            Type typeToConvert,
+            JsonSerializerOptions options) => throw new NotSupportedException();
+
+        public override void Write(
+            Utf8JsonWriter writer,
+            ThrowingJsonPayload value,
+            JsonSerializerOptions options)
+        {
+            WriteCount++;
+            throw new InvalidOperationException("Value beyond the traversal limit was serialized.");
+        }
     }
 }

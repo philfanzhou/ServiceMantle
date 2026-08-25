@@ -353,8 +353,7 @@ public sealed class StructuredLogSanitizer
 
             if (value is JsonNode jsonNode)
             {
-                var element = JsonSerializer.SerializeToElement(jsonNode);
-                return SanitizeJson(element, depth, activeReferences);
+                return SanitizeJsonNode(jsonNode, depth, activeReferences);
             }
 
             if (value is IDictionary dictionary)
@@ -489,6 +488,72 @@ public sealed class StructuredLogSanitizer
 
             case JsonValueKind.Null:
                 return null;
+
+            default:
+                return SanitizationFailed;
+        }
+    }
+
+    private object? SanitizeJsonNode(
+        JsonNode node,
+        int depth,
+        HashSet<object> activeReferences)
+    {
+        if (depth > maximumDepth)
+        {
+            return MaximumDepthExceeded;
+        }
+
+        switch (node)
+        {
+            case JsonObject jsonObject:
+                {
+                    var output = new Dictionary<string, object?>(StringComparer.Ordinal);
+                    var count = 0;
+                    foreach (var property in jsonObject)
+                    {
+                        if (count++ >= maximumCollectionCount)
+                        {
+                            output["CollectionTruncated"] = CollectionTruncated;
+                            break;
+                        }
+
+                        AddField(
+                            output,
+                            property.Key,
+                            property.Value,
+                            depth + 1,
+                            activeReferences);
+                    }
+
+                    return new ReadOnlyDictionary<string, object?>(output);
+                }
+
+            case JsonArray jsonArray:
+                {
+                    var output = new List<object?>();
+                    var count = 0;
+                    foreach (var item in jsonArray)
+                    {
+                        if (count++ >= maximumCollectionCount)
+                        {
+                            output.Add(CollectionTruncated);
+                            break;
+                        }
+
+                        output.Add(SanitizeValue(item, depth + 1, activeReferences));
+                    }
+
+                    return output.AsReadOnly();
+                }
+
+            case JsonValue jsonValue:
+                {
+                    var element = JsonSerializer.SerializeToElement(jsonValue);
+                    return element.ValueKind is JsonValueKind.Object or JsonValueKind.Array
+                        ? SanitizationFailed
+                        : SanitizeJson(element, depth, activeReferences);
+                }
 
             default:
                 return SanitizationFailed;
