@@ -1,0 +1,906 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/philfanzhou/SignaCore",
+    "commit": "23c2f666726186b772737988fae8ba8a8ce1f2da",
+    "verifiedCiRun": "https://github.com/philfanzhou/SignaCore/actions/runs/32585823676",
+    "verifiedCiConclusion": "success"
+  },
+  "commands": {
+    "unit": "dotnet test --project tests/SignaCore.Tests/SignaCore.Tests.csproj --configuration Release",
+    "integration": "dotnet test --project tests/SignaCore.IntegrationTests/SignaCore.IntegrationTests.csproj --configuration Release",
+    "frontend": "npm --prefix src/SignaCore.Admin test"
+  },
+  "candidates": [
+    {
+      "id": "bootstrap-file-lifecycle",
+      "subsystem": "Bootstrap",
+      "legacyPaths": [
+        "src/SignaCore.Host/Bootstrap/BootstrapConfiguration.cs",
+        "src/SignaCore.Host/Bootstrap/BootstrapFile.cs",
+        "src/SignaCore.Host/Bootstrap/BootstrapFileWriter.cs",
+        "src/SignaCore.Host/Bootstrap/BootstrapLoader.cs",
+        "src/SignaCore.Host/Bootstrap/BootstrapDiagnostics.cs",
+        "src/SignaCore.Host/Bootstrap/MasterKeyFactory.cs"
+      ],
+      "legacySymbols": [],
+      "callSites": [
+        "src/SignaCore.Host/Program.cs",
+        "src/SignaCore.Host/Bootstrap/BootstrapConfigurationService.cs"
+      ],
+      "evidence": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Bootstrap.BootstrapLoaderTests.Load_WithInlineMasterKey_ReturnsValidatedBootstrap",
+          "scenarios": ["existing-install", "success"]
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Bootstrap.BootstrapLoaderTests.Load_WithMalformedJson_ReportsLocationWithoutLeakingSecrets",
+          "scenarios": ["failure", "security"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.BootstrapConfigurationModeTests.ValidNewInstall_CreatesOnlyTheCanonicalInlineKeySchema",
+          "scenarios": ["new-install", "persistence"]
+        }
+      ],
+      "replacement": {
+        "reference": "ServiceMantle.Bootstrap.BootstrapFileStore",
+        "state": "implemented"
+      },
+      "prerequisites": ["#70", "#95"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "bootstrap"
+    },
+    {
+      "id": "bootstrap-management-mode",
+      "subsystem": "Bootstrap",
+      "legacyPaths": [
+        "src/SignaCore.Host/Bootstrap/BootstrapCodeAuthority.cs",
+        "src/SignaCore.Host/Bootstrap/BootstrapDatabaseRequestBinder.cs",
+        "src/SignaCore.Host/Bootstrap/BootstrapProviderCatalog.cs",
+        "src/SignaCore.Host/Bootstrap/BootstrapResponseMapper.cs",
+        "src/SignaCore.Host/Bootstrap/BootstrapTargetInspector.cs",
+        "src/SignaCore.Host/Controllers/BootstrapController.cs",
+        "src/SignaCore.Host/Controllers/AdminBootstrapController.cs",
+        "src/SignaCore.Host/Models/BootstrapModels.cs",
+        "src/SignaCore.Host/Middleware/BootstrapModeGateMiddleware.cs",
+        "src/SignaCore.Host/Startup/BootstrapModeHost.cs"
+      ],
+      "legacySymbols": [],
+      "callSites": [
+        "src/SignaCore.Admin/src/composables/useBootstrap.ts",
+        "src/SignaCore.Admin/src/components/admin/AdminBootstrapSettingsPanel.vue"
+      ],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.BootstrapConfigurationModeTests.MissingFile_StaysLiveAndGatesTheNormalSurface",
+          "scenarios": ["new-install", "gate", "liveness"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.BootstrapConfigurationModeTests.WrongCodeAndInvalidDatabase_DoNotCreateTheFile",
+          "scenarios": ["failure", "atomicity"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests.BootstrapSettingsApi_RefusesAnUnconfirmedDatabaseChange",
+          "scenarios": ["existing-install", "failure"]
+        }
+      ],
+      "replacement": {
+        "reference": "#95",
+        "state": "planned"
+      },
+      "prerequisites": ["#54", "#55", "#95"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "bootstrap"
+    },
+    {
+      "id": "bootstrap-startup-branch",
+      "subsystem": "Bootstrap",
+      "legacyPaths": [
+        "src/SignaCore.Host/Startup/BootstrapPhase.cs",
+        "src/SignaCore.Host/Startup/StartupBanner.cs"
+      ],
+      "legacySymbols": [
+        "SignaCore.Host.Program: Bootstrap Configuration Mode branch",
+        "SignaCore.Host.Program: Bootstrap phase branch"
+      ],
+      "callSites": ["src/SignaCore.Host/Program.cs"],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.BootstrapConfigurationModeTests.MissingFile_StaysLiveAndGatesTheNormalSurface",
+          "scenarios": ["new-install", "startup-phase"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.CompletedInstallationWithMissingSettings_FailsClosedInsteadOfReopeningSetup",
+          "scenarios": ["existing-install", "failure", "fail-closed"]
+        }
+      ],
+      "replacement": {
+        "reference": "#116",
+        "state": "planned"
+      },
+      "prerequisites": ["#71", "#95", "#116"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "bootstrap"
+    },
+    {
+      "id": "migration-orchestration",
+      "subsystem": "Migration",
+      "legacyPaths": [
+        "src/SignaCore.Host/DatabaseInitializer.cs",
+        "src/SignaCore.Host/DatabaseProvisioner.cs",
+        "src/SignaCore.Host/SchemaMigrator.cs"
+      ],
+      "legacySymbols": [],
+      "callSites": [
+        "src/SignaCore.Host/Program.cs",
+        "src/SignaCore.Host/Startup/BootstrapPhase.cs"
+      ],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.ServerDatabaseContractTests.ProviderContract_MigrationCrudNormalizationAndConcurrency",
+          "scenarios": ["migration", "concurrency", "postgresql"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.ServerDatabaseContractTests.PostgreSqlLegacyHistory_UpgradesInPlace",
+          "scenarios": ["upgrade", "migration"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.SqliteDatabaseContractTests.MigrationAndCrud_PreserveUtcInstantAtMicrosecondPrecision",
+          "scenarios": ["migration", "sqlite"]
+        }
+      ],
+      "replacement": {
+        "reference": "#71",
+        "state": "planned"
+      },
+      "prerequisites": ["#70", "#71", "#105"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "migration"
+    },
+    {
+      "id": "installation-state-persistence",
+      "subsystem": "Migration",
+      "legacyPaths": [
+        "src/SignaCore.Database/Entity/InstallationStateEntity.cs",
+        "src/SignaCore.Database/Entity/InstallationStatus.cs"
+      ],
+      "legacySymbols": [
+        "SignaCore.Database.IdentityDbContext.InstallationStates",
+        "SignaCore.Database.IdentityDbContext installation_state mapping"
+      ],
+      "callSites": [
+        "src/SignaCore.Host/Installation/InstallationStateResolver.cs",
+        "src/SignaCore.Host/Configuration/LegacyConfigurationImporter.cs"
+      ],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.EmptyDatabase_CreatesAPendingInstallationWithAHashedSetupCode",
+          "scenarios": ["new-install", "persistence", "security"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.ExistingDatabaseWithoutInstallationState_NeverExposesAnonymousSetup",
+          "scenarios": ["upgrade", "fail-closed"]
+        }
+      ],
+      "replacement": {
+        "reference": "#70",
+        "state": "planned"
+      },
+      "prerequisites": ["#70", "#71"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "migration"
+    },
+    {
+      "id": "setup-lifecycle",
+      "subsystem": "Setup",
+      "legacyPaths": [
+        "src/SignaCore.Host/Installation/InstallationPhase.cs",
+        "src/SignaCore.Host/Installation/InstallationRuntimeState.cs",
+        "src/SignaCore.Host/Installation/InstallationSetupService.cs",
+        "src/SignaCore.Host/Installation/InstallationStateLock.cs",
+        "src/SignaCore.Host/Installation/InstallationStateResolver.cs",
+        "src/SignaCore.Host/Installation/SetupCode.cs",
+        "src/SignaCore.Host/Controllers/SetupController.cs",
+        "src/SignaCore.Host/Models/SetupModels.cs"
+      ],
+      "legacySymbols": [],
+      "callSites": [
+        "src/SignaCore.Admin/src/composables/useSetup.ts",
+        "src/SignaCore.Admin/src/components/SetupView.vue"
+      ],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.Setup_WithAValidCode_CompletesAtomically",
+          "scenarios": ["new-install", "success", "atomicity"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.ConcurrentSetupRequests_ProduceExactlyOneInstallation",
+          "scenarios": ["new-install", "concurrency"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.Setup_WithAWrongCode_IsRefusedAndChangesNothing",
+          "scenarios": ["failure", "atomicity"]
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Installation.SetupCodeTests.Hash_DoesNotContainThePlaintext",
+          "scenarios": ["security"]
+        }
+      ],
+      "replacement": {
+        "reference": "#100",
+        "state": "planned"
+      },
+      "prerequisites": ["#31", "#32", "#33", "#96", "#100"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "setup"
+    },
+    {
+      "id": "setup-mode-gate",
+      "subsystem": "Setup",
+      "legacyPaths": [
+        "src/SignaCore.Host/Middleware/SetupModeGateMiddleware.cs",
+        "src/SignaCore.Host/Startup/SetupModeControllerConvention.cs",
+        "src/SignaCore.Host/Startup/SetupModeHost.cs"
+      ],
+      "legacySymbols": ["SignaCore.Host.Program: Setup Mode branch"],
+      "callSites": ["src/SignaCore.Host/Program.cs"],
+      "evidence": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Middleware.SetupModeGateMiddlewareTests.ApiRequests_ReceiveStructuredInstallationRequired",
+          "scenarios": ["gate", "failure"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.HealthEndpoints_WhilePending_ReportLiveButNotReady",
+          "scenarios": ["new-install", "health", "gate"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.Setup_AfterCompletion_IsRefusedByTheRestartedHost",
+          "scenarios": ["restart", "replay-protection"]
+        }
+      ],
+      "replacement": {
+        "reference": "#116",
+        "state": "planned"
+      },
+      "prerequisites": ["#96", "#100", "#116"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "setup"
+    },
+    {
+      "id": "configuration-catalog",
+      "subsystem": "Configuration",
+      "legacyPaths": [
+        "src/SignaCore.Host/Configuration/SystemSettingDefinition.cs",
+        "src/SignaCore.Host/Configuration/SystemSettingKeys.cs",
+        "src/SignaCore.Host/Configuration/SystemSettingsCatalog.cs"
+      ],
+      "legacySymbols": [],
+      "callSites": [
+        "src/SignaCore.Host/ServiceCollectionExtensions.cs",
+        "src/SignaCore.Host/Installation/InstallationSetupService.cs"
+      ],
+      "evidence": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Configuration.SystemSettingsCatalogTests.EveryDefinition_UsesASupportedValueType",
+          "scenarios": ["catalog", "validation"]
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Configuration.SystemSettingsCatalogTests.CredentialBearingSettings_AreMarkedSecret",
+          "scenarios": ["catalog", "security"]
+        }
+      ],
+      "replacement": {
+        "reference": "#101",
+        "state": "planned"
+      },
+      "prerequisites": ["#34", "#101"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "configuration"
+    },
+    {
+      "id": "configuration-snapshot-storage",
+      "subsystem": "Configuration",
+      "legacyPaths": [
+        "src/SignaCore.Database/Entity/SystemSettingEntity.cs",
+        "src/SignaCore.Host/Configuration/SettingsSnapshotValidator.cs",
+        "src/SignaCore.Host/Configuration/SystemSettingsSnapshot.cs",
+        "src/SignaCore.Host/Configuration/SystemSettingsStore.cs",
+        "src/SignaCore.Domain/Keys/AesGcmConfigurationProtector.cs",
+        "src/SignaCore.Domain/Keys/BootstrapMasterKeyProvider.cs",
+        "src/SignaCore.Domain/Keys/IConfigurationProtector.cs",
+        "src/SignaCore.Domain/Keys/IMasterKeyProvider.cs"
+      ],
+      "legacySymbols": [],
+      "callSites": [
+        "src/SignaCore.Host/Program.cs",
+        "src/SignaCore.Host/Controllers/AdminSettingsController.cs"
+      ],
+      "evidence": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Configuration.SettingsSnapshotValidatorTests.Validate_ListsEveryMissingKeyAtOnce",
+          "scenarios": ["failure", "validation"]
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.Keys.AesGcmConfigurationProtectorTests.Unprotect_UnderADifferentSettingKey_Fails",
+          "scenarios": ["security", "context-isolation"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.WrongRootKey_FailsClosedAndLeavesStoredSigningKeysUntouched",
+          "scenarios": ["failure", "security", "fail-closed"]
+        }
+      ],
+      "replacement": {
+        "reference": "#101",
+        "state": "planned"
+      },
+      "prerequisites": ["#35", "#78", "#79", "#101"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "configuration"
+    },
+    {
+      "id": "configuration-management-api",
+      "subsystem": "Configuration",
+      "legacyPaths": [
+        "src/SignaCore.Host/Controllers/AdminSettingsController.cs",
+        "src/SignaCore.Host/Models/SettingsModels.cs"
+      ],
+      "legacySymbols": [],
+      "callSites": [
+        "src/SignaCore.Admin/src/services/adminApi.ts",
+        "src/SignaCore.Admin/src/composables/admin/useAdminSettings.ts",
+        "src/SignaCore.Admin/src/components/admin/AdminSettingsView.vue"
+      ],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests.SettingsApi_RequiresAnAdminSessionAndNeverReturnsSecretValues",
+          "scenarios": ["authorization", "security"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests.SettingsApi_AppliesAValidChangeTransactionally",
+          "scenarios": ["update", "atomicity"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests.SettingsApi_RejectsAChangeThatWouldInvalidateTheSnapshot",
+          "scenarios": ["failure", "validation"]
+        }
+      ],
+      "replacement": {
+        "reference": "#101",
+        "state": "planned"
+      },
+      "prerequisites": ["#80", "#81", "#118", "#119", "#101"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "configuration"
+    },
+    {
+      "id": "legacy-configuration-upgrade",
+      "subsystem": "Configuration",
+      "legacyPaths": [
+        "src/SignaCore.Host/Configuration/ConfigurationJsonExporter.cs",
+        "src/SignaCore.Host/Configuration/JsonSettingFlattener.cs",
+        "src/SignaCore.Host/Configuration/LegacyConfigurationGuard.cs",
+        "src/SignaCore.Host/Configuration/LegacyConfigurationImporter.cs"
+      ],
+      "legacySymbols": [],
+      "callSites": ["src/SignaCore.Host/Startup/BootstrapPhase.cs"],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.ExistingDatabaseWithoutInstallationState_NeverExposesAnonymousSetup",
+          "scenarios": ["upgrade", "security", "fail-closed"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.CompletedInstallationWithMissingSettings_FailsClosedInsteadOfReopeningSetup",
+          "scenarios": ["upgrade", "failure"]
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Configuration.ConfigurationJsonExporterTests.Export_RebuildsNestedObjects",
+          "scenarios": ["upgrade", "configuration-shape"]
+        }
+      ],
+      "replacement": {
+        "reference": "#101",
+        "state": "planned"
+      },
+      "prerequisites": ["#79", "#101", "#107"],
+      "coverageGaps": [
+        "The ServiceMantle-backed upgrade path must retain the exact legacy-key alias and incomplete-import fail-closed behavior before this adapter is removed."
+      ],
+      "disposition": "blocked",
+      "batch": "configuration"
+    },
+    {
+      "id": "management-audit-storage",
+      "subsystem": "Audit",
+      "legacyPaths": [
+        "src/SignaCore.Database/Entity/AuditLogEntity.cs",
+        "src/SignaCore.Database/Repositories/AuditLogRepository.cs",
+        "src/SignaCore.Database/Repositories/IAuditLogRepository.cs"
+      ],
+      "legacySymbols": [
+        "SignaCore.Domain.Services.AuditService.RecordActionAsync",
+        "SignaCore.Domain.Services.IAuditService.RecordActionAsync"
+      ],
+      "callSites": [
+        "src/SignaCore.Host/Installation/InstallationSetupService.cs",
+        "src/SignaCore.Host/Controllers/AdminSettingsController.cs"
+      ],
+      "evidence": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.Services.AuditServiceTests.RecordActionAsync_SavesAuditLog",
+          "scenarios": ["audit-write", "success"]
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.Services.AuditServiceTests.RecordActionAsync_WhenRepositoryThrows_DoesNotPropagateException",
+          "scenarios": ["audit-write", "failure"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.Setup_WithAValidCode_CompletesAtomically",
+          "scenarios": ["audit-write", "atomicity", "setup"]
+        }
+      ],
+      "replacement": {
+        "reference": "ServiceMantle.Persistence.EntityFrameworkCore.EfCoreManagementAuditWriter<TDbContext>",
+        "state": "implemented"
+      },
+      "prerequisites": ["#15", "#98", "#100", "#101"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "audit"
+    },
+    {
+      "id": "management-audit-query-api",
+      "subsystem": "Audit",
+      "legacyPaths": [],
+      "legacySymbols": [
+        "SignaCore.Host.Controllers.AdminController.GetAuditLogs",
+        "SignaCore.Host.Models.AdminAuditLogItemResponse"
+      ],
+      "callSites": [
+        "src/SignaCore.Admin/src/services/adminApi.ts",
+        "src/SignaCore.Admin/src/components/admin/AdminSecurityView.vue"
+      ],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests.SettingsApi_RequiresAnAdminSessionAndNeverReturnsSecretValues",
+          "scenarios": ["authorization", "management-api"]
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Controllers.AdminControllerTests.GetAuditLogs_ReturnsPagedLogs",
+          "scenarios": ["audit-query", "paging"]
+        }
+      ],
+      "replacement": {
+        "reference": "#98",
+        "state": "planned"
+      },
+      "prerequisites": ["#54", "#58", "#98"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "audit"
+    },
+    {
+      "id": "admin-data-protection-key-store",
+      "subsystem": "Session",
+      "legacyPaths": [
+        "src/SignaCore.Database/Entity/DataProtectionKeyEntity.cs",
+        "src/SignaCore.Host/Security/ConfigurationXmlEncryptor.cs",
+        "src/SignaCore.Host/Security/DatabaseDataProtectionKeyRepository.cs"
+      ],
+      "legacySymbols": [
+        "SignaCore.Host.ServiceCollectionExtensions: IXmlRepository and AddDataProtection registration"
+      ],
+      "callSites": ["src/SignaCore.Host/ServiceCollectionExtensions.cs"],
+      "evidence": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Security.DatabaseDataProtectionKeyRepositoryTests.RestartedProvider_UsesSharedDatabaseAndDoesNotPersistPlaintextXml",
+          "scenarios": ["restart", "shared-session", "security"]
+        }
+      ],
+      "replacement": {
+        "reference": "#102",
+        "state": "planned"
+      },
+      "prerequisites": ["#40", "#41", "#102"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "session"
+    },
+    {
+      "id": "admin-cookie-session",
+      "subsystem": "Session",
+      "legacyPaths": ["src/SignaCore.Host/AdminIdentityOptions.cs"],
+      "legacySymbols": [
+        "SignaCore.Host.ServiceCollectionExtensions: AdminCookie registration",
+        "SignaCore.Host.Controllers.AdminController.Login",
+        "SignaCore.Host.Controllers.AdminController.Logout"
+      ],
+      "callSites": [
+        "src/SignaCore.Admin/src/composables/useSession.ts",
+        "src/SignaCore.Admin/src/components/AuthView.vue"
+      ],
+      "evidence": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.ProductionSecurityDefaultsTests.AdminCookie_InProduction_IsAlwaysSecure",
+          "scenarios": ["cookie", "security"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests.SettingsApi_RequiresAnAdminSessionAndNeverReturnsSecretValues",
+          "scenarios": ["session", "authorization"]
+        }
+      ],
+      "replacement": {
+        "reference": "#102",
+        "state": "planned"
+      },
+      "prerequisites": ["#38", "#39", "#40", "#41", "#97", "#102"],
+      "coverageGaps": [
+        "The replacement integration must add an explicit two-instance cookie round trip before the legacy registration is removed."
+      ],
+      "disposition": "blocked",
+      "batch": "session"
+    },
+    {
+      "id": "phase-health-endpoints",
+      "subsystem": "Health",
+      "legacyPaths": [
+        "src/SignaCore.Host/HealthChecks/HealthCheckTags.cs",
+        "src/SignaCore.Host/HealthEndpoints.cs"
+      ],
+      "legacySymbols": ["SignaCore.Host.Program: /health, /health/live and /health/ready mapping"],
+      "callSites": [
+        "src/SignaCore.Host/Program.cs",
+        "src/SignaCore.Host/Configuration/SystemSettingsCatalog.cs"
+      ],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.HealthEndpoints_WhilePending_ReportLiveButNotReady",
+          "scenarios": ["new-install", "liveness", "readiness"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests.HealthEndpoints_OnCompletedInstallation_ReportHealthy",
+          "scenarios": ["completed-install", "liveness", "readiness", "compatibility-alias"]
+        }
+      ],
+      "replacement": {
+        "reference": "#103",
+        "state": "planned"
+      },
+      "prerequisites": ["#45", "#89", "#103", "#116"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "health"
+    },
+    {
+      "id": "signing-key-readiness",
+      "subsystem": "Health",
+      "legacyPaths": ["src/SignaCore.Host/HealthChecks/SigningKeysHealthCheck.cs"],
+      "legacySymbols": [
+        "SignaCore.Host.ServiceCollectionExtensions: SigningKeysHealthCheck registration"
+      ],
+      "callSites": ["src/SignaCore.Host/ServiceCollectionExtensions.cs"],
+      "evidence": [
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.FirstRunSetupTests.WrongRootKey_FailsClosedAndLeavesStoredSigningKeysUntouched",
+          "scenarios": ["readiness", "failure", "security"]
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests.HealthEndpoints_OnCompletedInstallation_ReportHealthy",
+          "scenarios": ["readiness", "success"]
+        }
+      ],
+      "replacement": {
+        "reference": "#103",
+        "state": "planned"
+      },
+      "prerequisites": ["#89", "#103"],
+      "coverageGaps": [],
+      "disposition": "blocked",
+      "batch": "health"
+    },
+    {
+      "id": "consul-registration-lifecycle",
+      "subsystem": "Consul",
+      "legacyPaths": [
+        "src/SignaCore.Host/Configuration/ConsulOptions.cs",
+        "src/SignaCore.Host/Configuration/ProgramConsulExtensions.cs"
+      ],
+      "legacySymbols": [
+        "SignaCore.Host.Configuration.SystemSettingKeys: Consul fields",
+        "SignaCore.Host.Configuration.SystemSettingsCatalog: Consul definitions",
+        "SignaCore.Host.Program: AddConsulDiscoveryIfEnabled",
+        "SignaCore.Host.SignaCore.Host.csproj: Steeltoe.Discovery.ClientCore"
+      ],
+      "callSites": [
+        "src/SignaCore.Host/Program.cs",
+        "src/SignaCore.Host/Configuration/SystemSettingsCatalog.cs"
+      ],
+      "evidence": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Configuration.SystemSettingsCatalogTests.Defaults_ShipOptionalProvidersDisabled",
+          "scenarios": ["default-disabled", "startup"]
+        }
+      ],
+      "replacement": {
+        "reference": "#104",
+        "state": "planned"
+      },
+      "prerequisites": ["#48", "#49", "#79", "#104"],
+      "coverageGaps": [
+        "No executable characterization currently covers enabled Consul registration, readiness gating, retry, duplicate registration, or shutdown deregistration."
+      ],
+      "disposition": "blocked",
+      "batch": "consul"
+    }
+  ],
+  "preservedBoundaries": [
+    {
+      "id": "oauth-jwt-token-domain",
+      "paths": [
+        "src/SignaCore.Domain/Services/TokenService.cs",
+        "src/SignaCore.Domain/Services/RefreshTokenService.cs",
+        "src/SignaCore.Host/Controllers/OAuthTokenController.cs",
+        "src/SignaCore.Host/Controllers/TokenController.cs",
+        "src/SignaCore.Host/Controllers/TokenRevocationController.cs",
+        "src/SignaCore.Host/OAuthGrantTypes.cs",
+        "src/SignaCore.Host/Services/TokenIssuanceService.cs"
+      ],
+      "tests": [
+        "SignaCore.Tests.Domain.Services.JwtTokenServiceTests",
+        "SignaCore.IntegrationTests.Integration.OAuthTokenEndpointTests"
+      ],
+      "rationale": "OAuth grant semantics, JWT issuance and refresh-token rotation are SignaCore product behavior, not management infrastructure."
+    },
+    {
+      "id": "account-credential-domain",
+      "paths": [
+        "src/SignaCore.Database/Entity/AccountEntity.cs",
+        "src/SignaCore.Database/Entity/PasswordCredentialEntity.cs",
+        "src/SignaCore.Database/Entity/UserLoginEntity.cs",
+        "src/SignaCore.Database/Repositories/AccountRepository.cs",
+        "src/SignaCore.Database/Repositories/PasswordCredentialRepository.cs",
+        "src/SignaCore.Domain/Validators/PasswordValidator.cs"
+      ],
+      "tests": [
+        "SignaCore.Tests.PasswordValidatorTests",
+        "SignaCore.Tests.Integration.IdentityHttpEndpointsTests"
+      ],
+      "rationale": "Accounts, credentials, lockout and product user-login semantics remain owned by SignaCore."
+    },
+    {
+      "id": "application-gateway-domain",
+      "paths": [
+        "src/SignaCore.Database/Entity/AppRegistrationEntity.cs",
+        "src/SignaCore.Database/Entity/AppExchangeTrustEntity.cs",
+        "src/SignaCore.Database/Repositories/AppRegistrationRepository.cs",
+        "src/SignaCore.Domain/Services/GatewayValidationService.cs",
+        "src/SignaCore.Host/Controllers/GatewayController.cs"
+      ],
+      "tests": [
+        "SignaCore.Tests.Domain.Services.GatewayValidationServiceTests",
+        "SignaCore.IntegrationTests.Integration.CrossApplicationExchangeTests"
+      ],
+      "rationale": "Registered applications, gateway authentication and cross-application exchange are product APIs."
+    },
+    {
+      "id": "sms-otp-domain",
+      "paths": [
+        "src/SignaCore.Database/Entity/OtpEntity.cs",
+        "src/SignaCore.Domain/Services/Sms/**",
+        "src/SignaCore.Domain/Validators/SmsValidator.cs",
+        "src/SignaCore.Host/Controllers/SmsCodeController.cs"
+      ],
+      "tests": [
+        "SignaCore.Tests.Domain.Services.DbOtpServiceTests",
+        "SignaCore.Tests.Domain.SmsValidatorTests"
+      ],
+      "rationale": "OTP lifecycle, SMS delivery and SMS admission are identity-product capabilities."
+    },
+    {
+      "id": "ldap-domain",
+      "paths": [
+        "src/SignaCore.Database/Entity/LdapCredentialEntity.cs",
+        "src/SignaCore.Domain/Services/Ldap/**",
+        "src/SignaCore.Domain/Validators/LdapValidator.cs"
+      ],
+      "tests": ["SignaCore.Tests.LdapValidatorTests"],
+      "rationale": "LDAP directory lookup and admission remain SignaCore identity-provider behavior."
+    },
+    {
+      "id": "wechat-domain",
+      "paths": [
+        "src/SignaCore.Database/Entity/AppWechatAccessEntity.cs",
+        "src/SignaCore.Domain/Services/WeChat/**",
+        "src/SignaCore.Domain/Validators/WechatValidator.cs"
+      ],
+      "tests": [
+        "SignaCore.Tests.Domain.WechatValidatorTests",
+        "SignaCore.IntegrationTests.Integration.WechatAdmissionDatabaseContractTests"
+      ],
+      "rationale": "WeChat code exchange, admission and app-scoped access are product authentication behavior."
+    },
+    {
+      "id": "callback-domain",
+      "paths": [
+        "src/SignaCore.Domain/CallbackService.cs",
+        "src/SignaCore.Domain/Services/CallbackUrlValidator.cs",
+        "src/SignaCore.Host/Controllers/CallbackRegistrationController.cs"
+      ],
+      "tests": [
+        "SignaCore.Tests.Domain.CallbackServiceTests",
+        "SignaCore.Tests.Domain.CallbackUrlValidatorTests"
+      ],
+      "rationale": "Callback registration and SSRF policy are product-facing identity integration behavior."
+    },
+    {
+      "id": "signing-key-jwks-domain",
+      "paths": [
+        "src/SignaCore.Database/Entity/SecurityKeyEntity.cs",
+        "src/SignaCore.Domain/Keys/AesGcmPrivateKeyProtector.cs",
+        "src/SignaCore.Domain/Keys/KeyManager.cs",
+        "src/SignaCore.Host/JwksMapper.cs",
+        "src/SignaCore.Host/DiscoveryDocument.cs"
+      ],
+      "tests": [
+        "SignaCore.Tests.Domain.KeyManagerTests",
+        "SignaCore.Tests.Host.JwksMapperTests",
+        "SignaCore.Tests.Integration.IdentityHttpEndpointsTests"
+      ],
+      "rationale": "JWT signing-key rotation, JWKS and discovery documents remain product-owned; only their readiness adapter is replaceable."
+    },
+    {
+      "id": "login-history-domain",
+      "paths": [
+        "src/SignaCore.Database/Entity/LoginHistoryEntity.cs",
+        "src/SignaCore.Database/Repositories/LoginHistoryRepository.cs"
+      ],
+      "tests": ["SignaCore.Tests.Domain.Services.AuditServiceTests.RecordLoginAsync_SavesLoginHistory"],
+      "rationale": "Authentication login history is a product security record, distinct from reusable management audit events."
+    },
+    {
+      "id": "product-schema-migrations",
+      "paths": [
+        "src/SignaCore.Database/Migrations/**",
+        "src/SignaCore.Database.Migrations.Sqlite/Migrations/**"
+      ],
+      "tests": [
+        "SignaCore.IntegrationTests.Integration.ServerDatabaseContractTests",
+        "SignaCore.IntegrationTests.Integration.SqliteDatabaseContractTests"
+      ],
+      "rationale": "SignaCore remains the migration owner for its identity, token, application and provider tables even after orchestration moves to ServiceMantle."
+    },
+    {
+      "id": "admin-console-product-ux",
+      "paths": ["src/SignaCore.Admin/**"],
+      "tests": ["npm --prefix src/SignaCore.Admin test"],
+      "rationale": "The product administration UI remains; its infrastructure API call sites are adapted rather than deleting the product UX."
+    }
+  ],
+  "batches": [
+    {
+      "order": 1,
+      "id": "migration",
+      "subsystem": "Migration",
+      "candidateIds": ["migration-orchestration", "installation-state-persistence"],
+      "prerequisites": ["#70", "#71"],
+      "trackingIssue": 128,
+      "proposedTitle": "[SignaCore 清理][迁移] 切换迁移编排并移除重复安装状态映射"
+    },
+    {
+      "order": 2,
+      "id": "bootstrap",
+      "subsystem": "Bootstrap",
+      "candidateIds": ["bootstrap-file-lifecycle", "bootstrap-management-mode", "bootstrap-startup-branch"],
+      "prerequisites": ["#70", "#71", "#95", "#105", "#116", "#128"],
+      "trackingIssue": 129,
+      "proposedTitle": "[SignaCore 清理][Bootstrap] 切换本地引导与管理模式并删除重复实现"
+    },
+    {
+      "order": 3,
+      "id": "setup",
+      "subsystem": "Setup",
+      "candidateIds": ["setup-lifecycle", "setup-mode-gate"],
+      "prerequisites": ["#31", "#32", "#33", "#96", "#100", "#105", "#116", "#129"],
+      "trackingIssue": 130,
+      "proposedTitle": "[SignaCore 清理][Setup] 切换一次性安装编排并删除重复模式代码"
+    },
+    {
+      "order": 4,
+      "id": "configuration",
+      "subsystem": "Configuration",
+      "candidateIds": ["configuration-catalog", "configuration-snapshot-storage", "configuration-management-api", "legacy-configuration-upgrade"],
+      "prerequisites": ["#35", "#78", "#79", "#80", "#81", "#101", "#105", "#118", "#119", "#130"],
+      "trackingIssue": 131,
+      "proposedTitle": "[SignaCore 清理][配置] 切换共享快照、升级导入与管理 API"
+    },
+    {
+      "order": 5,
+      "id": "audit",
+      "subsystem": "Audit",
+      "candidateIds": ["management-audit-storage", "management-audit-query-api"],
+      "prerequisites": ["#98", "#100", "#101", "#105", "#131"],
+      "trackingIssue": 132,
+      "proposedTitle": "[SignaCore 清理][审计] 切换管理审计写入查询并保留登录历史"
+    },
+    {
+      "order": 6,
+      "id": "session",
+      "subsystem": "Session",
+      "candidateIds": ["admin-data-protection-key-store", "admin-cookie-session"],
+      "prerequisites": ["#38", "#39", "#40", "#41", "#97", "#102", "#105", "#132"],
+      "trackingIssue": 133,
+      "proposedTitle": "[SignaCore 清理][会话] 切换管理 Cookie 与共享 Data Protection 存储"
+    },
+    {
+      "order": 7,
+      "id": "health",
+      "subsystem": "Health",
+      "candidateIds": ["phase-health-endpoints", "signing-key-readiness"],
+      "prerequisites": ["#45", "#89", "#103", "#105", "#116", "#133"],
+      "trackingIssue": 134,
+      "proposedTitle": "[SignaCore 清理][健康] 切换阶段端点与签名密钥 Readiness"
+    },
+    {
+      "order": 8,
+      "id": "consul",
+      "subsystem": "Consul",
+      "candidateIds": ["consul-registration-lifecycle"],
+      "prerequisites": ["#48", "#49", "#79", "#104", "#105", "#134"],
+      "trackingIssue": 135,
+      "proposedTitle": "[SignaCore 清理][Consul] 补齐生命周期特征并切换服务注册"
+    }
+  ]
+}

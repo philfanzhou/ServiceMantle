@@ -6,6 +6,8 @@ Current status: **early development**. Service identity, installation phase prim
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
+The audited SignaCore migration/deletion gate is documented in [docs/signacore-legacy-migration/README.md](docs/signacore-legacy-migration/README.md); its machine-readable inventory pins the reviewed SignaCore commit, behavior evidence, replacement mapping, retained product boundaries, blockers, and staged #106 deletion tasks.
+
 ## Phase 1 scope
 
 - bootstrap
