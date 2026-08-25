@@ -5,10 +5,8 @@
     <AssemblyName>ServiceMantle.Persistence.EntityFrameworkCore</AssemblyName>
     <PackageId>ServiceMantle.Persistence.EntityFrameworkCore</PackageId>
     <IsPackable>true</IsPackable>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageDescription>EF Core models and shared installation store integration for ServiceMantle.</PackageDescription>
     <PackageTags>service-management aspnetcore bootstrap persistence entity-framework-core installation</PackageTags>
-    <RepositoryUrl>https://github.com/philfanzhou/ServiceMantle</RepositoryUrl>
     <TargetFramework>net10.0</TargetFramework>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
@@ -19,4 +17,3 @@
   </ItemGroup>
 
 </Project>
-

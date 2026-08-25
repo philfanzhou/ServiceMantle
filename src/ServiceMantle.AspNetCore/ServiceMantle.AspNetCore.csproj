@@ -6,8 +6,6 @@
     <AssemblyName>ServiceMantle.AspNetCore</AssemblyName>
     <PackageId>ServiceMantle.AspNetCore</PackageId>
     <PackageDescription>ASP.NET Core hosting integration for ServiceMantle.</PackageDescription>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/philfanzhou/ServiceMantle</RepositoryUrl>
     <PackageTags>service-management;aspnetcore;hosting;dependency-injection</PackageTags>
   </PropertyGroup>
 
