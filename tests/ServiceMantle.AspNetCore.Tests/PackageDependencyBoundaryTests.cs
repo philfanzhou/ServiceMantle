@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Xml.Linq;
 using ServiceMantle.AspNetCore;
 using Xunit;
@@ -44,8 +43,7 @@ public sealed class PackageDependencyBoundaryTests
     [Fact]
     public void AspNetCore_package_project_has_only_core_project_and_shared_framework_dependencies()
     {
-        var sourceDirectory = GetSourceDirectory();
-        var repositoryRoot = Path.GetFullPath(Path.Combine(sourceDirectory, "..", ".."));
+        var repositoryRoot = FindRepositoryRoot();
         var projectPath = Path.Combine(
             repositoryRoot,
             "src",
@@ -67,6 +65,22 @@ public sealed class PackageDependencyBoundaryTests
         ForbiddenDependencyPrefixes.Any(prefix =>
             assemblyName.StartsWith(prefix, StringComparison.Ordinal));
 
-    private static string GetSourceDirectory([CallerFilePath] string sourceFilePath = "") =>
-        Path.GetDirectoryName(sourceFilePath)!;
+    private static string FindRepositoryRoot()
+    {
+        foreach (var startPath in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            var directory = new DirectoryInfo(startPath);
+            while (directory is not null)
+            {
+                if (File.Exists(Path.Combine(directory.FullName, "ServiceMantle.slnx")))
+                {
+                    return directory.FullName;
+                }
+
+                directory = directory.Parent;
+            }
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the ServiceMantle repository root.");
+    }
 }
