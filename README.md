@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, and product-agnostic management audit persistence are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management authentication, observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, and product-agnostic management audit persistence are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management authentication, broader observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -15,6 +15,28 @@ Current status: **early development**. Service identity, installation phase prim
 - auditing
 - observability
 - discovery
+
+## Structured logging identity context
+
+`ServiceMantle.AspNetCore` registers a singleton `ServiceLogContext` with the host identity. Its standard `ILogger` scope always emits `ServiceName`, `ServiceVersion`, and `InstanceId` as structured fields. `ServiceName` is the normalized `ServiceId`; `ServiceVersion` can be supplied explicitly and otherwise falls back to the entry assembly informational version, assembly version, then `unknown`.
+
+```csharp
+builder.AddServiceMantle(
+    ServiceId.Parse("catalog"),
+    InstanceId.Parse("catalog-01"),
+    serviceVersion: "1.2.3");
+
+var context = app.Services.GetRequiredService<ServiceLogContext>();
+using (context.BeginScope(logger, new Dictionary<string, object?>
+{
+    ["Operation"] = "bootstrap",
+}))
+{
+    logger.LogInformation("Starting operation");
+}
+```
+
+Extension fields are limited to 32, require non-null values and identifier-style names, and cannot duplicate or override the three identity fields (matching is case-insensitive). Disposing the returned handle ends the scope; standard `ILogger` async scope semantics keep concurrent execution contexts isolated. This context does not sanitize extension values or configure a logging sink, so callers remain responsible for passing only values safe for their providers.
 
 ## Instance-local Bootstrap
 

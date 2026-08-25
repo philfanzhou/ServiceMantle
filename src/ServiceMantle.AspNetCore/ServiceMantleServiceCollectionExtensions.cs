@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using ServiceMantle;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.Bootstrap;
+using ServiceMantle.Logging;
 using ServiceMantle.Migration;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -19,18 +20,23 @@ public static class ServiceMantleServiceCollectionExtensions
     /// <param name="serviceId">The stable identity shared by all service instances.</param>
     /// <param name="instanceId">The identity of this running instance.</param>
     /// <param name="bootstrapFilePath">An optional explicit local Bootstrap file path.</param>
+    /// <param name="serviceVersion">
+    /// An optional explicit service version. When omitted, the entry assembly version is used.
+    /// </param>
     /// <returns>A builder used to add optional providers and a migration executor.</returns>
     public static ServiceMantleBuilder AddServiceMantle(
         this IServiceCollection services,
         ServiceId serviceId,
         InstanceId instanceId,
-        string? bootstrapFilePath = null)
+        string? bootstrapFilePath = null,
+        string? serviceVersion = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(serviceId);
         ArgumentNullException.ThrowIfNull(instanceId);
 
         var bootstrapFileStore = new BootstrapFileStore(serviceId, bootstrapFilePath);
+        var resolvedServiceVersion = ServiceLogContext.ResolveServiceVersion(serviceVersion);
         var existingRegistration = services
             .Where(descriptor => descriptor.ServiceType == typeof(ServiceMantleRegistration))
             .Select(descriptor => descriptor.ImplementationInstance as ServiceMantleRegistration)
@@ -40,6 +46,10 @@ public static class ServiceMantleServiceCollectionExtensions
         {
             if (existingRegistration.ServiceId != serviceId ||
                 existingRegistration.InstanceId != instanceId ||
+                !string.Equals(
+                    existingRegistration.ServiceVersion,
+                    resolvedServiceVersion,
+                    StringComparison.Ordinal) ||
                 !string.Equals(
                     existingRegistration.BootstrapFilePath,
                     bootstrapFileStore.FilePath,
@@ -55,7 +65,8 @@ public static class ServiceMantleServiceCollectionExtensions
         if (services.Any(descriptor =>
                 descriptor.ServiceType == typeof(ServiceId) ||
                 descriptor.ServiceType == typeof(InstanceId) ||
-                descriptor.ServiceType == typeof(BootstrapFileStore)))
+                descriptor.ServiceType == typeof(BootstrapFileStore) ||
+                descriptor.ServiceType == typeof(ServiceLogContext)))
         {
             throw new InvalidOperationException(
                 "ServiceMantle host-owned identity and Bootstrap services must be registered through AddServiceMantle.");
@@ -64,10 +75,12 @@ public static class ServiceMantleServiceCollectionExtensions
         services.AddSingleton(new ServiceMantleRegistration(
             serviceId,
             instanceId,
-            bootstrapFileStore.FilePath));
+            bootstrapFileStore.FilePath,
+            resolvedServiceVersion));
         services.AddSingleton(serviceId);
         services.AddSingleton(instanceId);
         services.AddSingleton(bootstrapFileStore);
+        services.AddSingleton(new ServiceLogContext(serviceId, instanceId, resolvedServiceVersion));
         services.TryAddSingleton<BootstrapDatabaseProviderRegistry>(serviceProvider =>
             new BootstrapDatabaseProviderRegistry(
                 serviceProvider.GetServices<IBootstrapDatabaseProvider>()));
@@ -135,5 +148,6 @@ public static class ServiceMantleServiceCollectionExtensions
     private sealed record ServiceMantleRegistration(
         ServiceId ServiceId,
         InstanceId InstanceId,
-        string BootstrapFilePath);
+        string BootstrapFilePath,
+        string ServiceVersion);
 }
