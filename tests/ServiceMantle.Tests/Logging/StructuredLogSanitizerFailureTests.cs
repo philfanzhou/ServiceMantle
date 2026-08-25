@@ -208,7 +208,7 @@ public sealed class StructuredLogSanitizerFailureTests
 
         var output = Assert.IsAssignableFrom<IReadOnlyList<object?>>(sanitizer.Sanitize(input));
 
-        Assert.Equal([1m, 2m, StructuredLogSanitizer.CollectionTruncated], output);
+        Assert.Equal([1, 2, StructuredLogSanitizer.CollectionTruncated], output);
         Assert.Equal(0, converter.WriteCount);
     }
 
@@ -252,6 +252,27 @@ public sealed class StructuredLogSanitizerFailureTests
 
         Assert.Equal(StructuredLogSanitizer.SanitizationFailed, output);
         Assert.Equal(0, converter.WriteCount);
+    }
+
+    [Fact]
+    public void Oversized_JsonValue_string_is_rejected_without_serializing_it()
+    {
+        var input = JsonValue.Create(new string('x', 2_000_000));
+        var sanitizer = new StructuredLogSanitizer(new StructuredLogSanitizerOptions
+        {
+            MaximumStringLength = 1
+        });
+
+        Assert.Equal(StructuredLogSanitizer.OversizedValue, sanitizer.Sanitize(input));
+
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var output = sanitizer.Sanitize(input);
+        var allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+        Assert.Equal(StructuredLogSanitizer.OversizedValue, output);
+        Assert.True(
+            allocatedBytes < 1_000_000,
+            $"Sanitizing an oversized JsonValue string allocated {allocatedBytes:N0} bytes.");
     }
 
     [Fact]

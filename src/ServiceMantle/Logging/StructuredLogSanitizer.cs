@@ -562,8 +562,7 @@ public sealed class StructuredLogSanitizer
                             : SanitizeJson(element, depth, activeReferences);
                     }
 
-                    var scalarElement = JsonSerializer.SerializeToElement(value, value.GetType());
-                    return SanitizeJson(scalarElement, depth, activeReferences);
+                    return SanitizeValue(value, depth, activeReferences);
                 }
 
             default:
@@ -839,10 +838,11 @@ public sealed class StructuredLogSanitizer
         type == typeof(Guid) ||
         type == typeof(DateOnly) ||
         type == typeof(TimeOnly) ||
-        type == typeof(TimeSpan);
+        type == typeof(TimeSpan) ||
+        type == typeof(DateTimeOffset);
 
     private static bool IsSupportedJsonValueScalar(object? value) =>
-        value is JsonElement or string or char or DateTimeOffset ||
+        value is JsonElement or string or char ||
         value is not null && (IsSafeScalar(value.GetType()) || value.GetType().IsEnum);
 
     private static bool IsBinary(object value) =>
