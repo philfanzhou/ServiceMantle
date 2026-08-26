@@ -181,7 +181,7 @@
       ],
       "legacySymbols": [
         "SignaCore.Database.IdentityDbContext.InstallationStates",
-        "SignaCore.Database.IdentityDbContext installation_state mapping"
+        "SignaCore.Database.IdentityDbContext: installation_state mapping"
       ],
       "callSites": [
         "src/SignaCore.Host/Installation/InstallationStateResolver.cs",
@@ -706,8 +706,14 @@
         "src/SignaCore.Host/Services/TokenIssuanceService.cs"
       ],
       "tests": [
-        "SignaCore.Tests.Domain.Services.JwtTokenServiceTests",
-        "SignaCore.IntegrationTests.Integration.OAuthTokenEndpointTests"
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.Services.JwtTokenServiceTests"
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.OAuthTokenEndpointTests"
+        }
       ],
       "rationale": "OAuth grant semantics, JWT issuance and refresh-token rotation are SignaCore product behavior, not management infrastructure."
     },
@@ -722,8 +728,14 @@
         "src/SignaCore.Domain/Validators/PasswordValidator.cs"
       ],
       "tests": [
-        "SignaCore.Tests.PasswordValidatorTests",
-        "SignaCore.Tests.Integration.IdentityHttpEndpointsTests"
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.PasswordValidatorTests"
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests"
+        }
       ],
       "rationale": "Accounts, credentials, lockout and product user-login semantics remain owned by SignaCore."
     },
@@ -737,8 +749,14 @@
         "src/SignaCore.Host/Controllers/GatewayController.cs"
       ],
       "tests": [
-        "SignaCore.Tests.Domain.Services.GatewayValidationServiceTests",
-        "SignaCore.IntegrationTests.Integration.CrossApplicationExchangeTests"
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.Services.GatewayValidationServiceTests"
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.CrossApplicationExchangeTests"
+        }
       ],
       "rationale": "Registered applications, gateway authentication and cross-application exchange are product APIs."
     },
@@ -751,8 +769,14 @@
         "src/SignaCore.Host/Controllers/SmsCodeController.cs"
       ],
       "tests": [
-        "SignaCore.Tests.Domain.Services.DbOtpServiceTests",
-        "SignaCore.Tests.Domain.SmsValidatorTests"
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.Services.DbOtpServiceTests"
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.Validators.SmsValidatorTests"
+        }
       ],
       "rationale": "OTP lifecycle, SMS delivery and SMS admission are identity-product capabilities."
     },
@@ -763,7 +787,12 @@
         "src/SignaCore.Domain/Services/Ldap/**",
         "src/SignaCore.Domain/Validators/LdapValidator.cs"
       ],
-      "tests": ["SignaCore.Tests.LdapValidatorTests"],
+      "tests": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.LdapValidatorTests"
+        }
+      ],
       "rationale": "LDAP directory lookup and admission remain SignaCore identity-provider behavior."
     },
     {
@@ -774,8 +803,14 @@
         "src/SignaCore.Domain/Validators/WechatValidator.cs"
       ],
       "tests": [
-        "SignaCore.Tests.Domain.WechatValidatorTests",
-        "SignaCore.IntegrationTests.Integration.WechatAdmissionDatabaseContractTests"
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.Validators.WechatValidatorTests"
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.WechatAdmissionDatabaseContractTests"
+        }
       ],
       "rationale": "WeChat code exchange, admission and app-scoped access are product authentication behavior."
     },
@@ -787,8 +822,14 @@
         "src/SignaCore.Host/Controllers/CallbackRegistrationController.cs"
       ],
       "tests": [
-        "SignaCore.Tests.Domain.CallbackServiceTests",
-        "SignaCore.Tests.Domain.CallbackUrlValidatorTests"
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.CallbackServiceTests"
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.CallbackUrlValidatorTests"
+        }
       ],
       "rationale": "Callback registration and SSRF policy are product-facing identity integration behavior."
     },
@@ -802,9 +843,18 @@
         "src/SignaCore.Host/DiscoveryDocument.cs"
       ],
       "tests": [
-        "SignaCore.Tests.Domain.KeyManagerTests",
-        "SignaCore.Tests.Host.JwksMapperTests",
-        "SignaCore.Tests.Integration.IdentityHttpEndpointsTests"
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.KeyManagerTests"
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.JwksMapperTests"
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.Tests.Integration.IdentityHttpEndpointsTests"
+        }
       ],
       "rationale": "JWT signing-key rotation, JWKS and discovery documents remain product-owned; only their readiness adapter is replaceable."
     },
@@ -814,7 +864,12 @@
         "src/SignaCore.Database/Entity/LoginHistoryEntity.cs",
         "src/SignaCore.Database/Repositories/LoginHistoryRepository.cs"
       ],
-      "tests": ["SignaCore.Tests.Domain.Services.AuditServiceTests.RecordLoginAsync_SavesLoginHistory"],
+      "tests": [
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Domain.Services.AuditServiceTests.RecordLoginAsync_SavesLoginHistory"
+        }
+      ],
       "rationale": "Authentication login history is a product security record, distinct from reusable management audit events."
     },
     {
@@ -824,15 +879,26 @@
         "src/SignaCore.Database.Migrations.Sqlite/Migrations/**"
       ],
       "tests": [
-        "SignaCore.IntegrationTests.Integration.ServerDatabaseContractTests",
-        "SignaCore.IntegrationTests.Integration.SqliteDatabaseContractTests"
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.ServerDatabaseContractTests"
+        },
+        {
+          "command": "integration",
+          "test": "SignaCore.IntegrationTests.Integration.SqliteDatabaseContractTests"
+        }
       ],
       "rationale": "SignaCore remains the migration owner for its identity, token, application and provider tables even after orchestration moves to ServiceMantle."
     },
     {
       "id": "admin-console-product-ux",
       "paths": ["src/SignaCore.Admin/**"],
-      "tests": ["npm --prefix src/SignaCore.Admin test"],
+      "tests": [
+        {
+          "command": "frontend",
+          "test": "AdminApiClient"
+        }
+      ],
       "rationale": "The product administration UI remains; its infrastructure API call sites are adapted rather than deleting the product UX."
     }
   ],

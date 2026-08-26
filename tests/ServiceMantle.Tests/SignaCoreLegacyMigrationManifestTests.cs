@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -61,6 +62,16 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
                 command.StartsWith("dotnet test --project ", StringComparison.Ordinal) ||
                 command.StartsWith("npm --prefix ", StringComparison.Ordinal));
         });
+
+        var referencedCommands = manifest.Candidates
+            .SelectMany(candidate => candidate.Evidence)
+            .Select(evidence => evidence.Command)
+            .Concat(manifest.PreservedBoundaries
+                .SelectMany(boundary => boundary.Tests)
+                .Select(test => test.Command))
+            .Distinct(StringComparer.Ordinal)
+            .Order();
+        Assert.Equal(manifest.Commands.Keys.Order(), referencedCommands);
     }
 
     [Fact]
@@ -80,14 +91,17 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
             Assert.Contains(candidate.Subsystem, RequiredSubsystems);
             Assert.True(candidate.LegacyPaths.Count + candidate.LegacySymbols.Count > 0);
             Assert.All(candidate.LegacyPaths.Concat(candidate.CallSites), AssertRepositoryRelativePath);
+            Assert.All(candidate.LegacySymbols, symbol => Assert.Matches(LegacySymbolPattern(), symbol));
             Assert.NotEmpty(candidate.Evidence);
-            Assert.False(string.IsNullOrWhiteSpace(candidate.Replacement.Reference));
-            Assert.DoesNotContain(",", candidate.Replacement.Reference, StringComparison.Ordinal);
+            Assert.True(
+                IssueReferencePattern().IsMatch(candidate.Replacement.Reference) ||
+                DottedIdentifierPattern().IsMatch(candidate.Replacement.Reference));
             Assert.Contains(candidate.Replacement.State, new[] { "implemented", "planned" });
             Assert.NotEmpty(candidate.Prerequisites);
             Assert.All(candidate.Prerequisites, prerequisite =>
                 Assert.Matches(IssueReferencePattern(), prerequisite));
             Assert.Contains(candidate.Disposition, new[] { "blocked", "ready" });
+            Assert.All(candidate.CoverageGaps, gap => Assert.False(string.IsNullOrWhiteSpace(gap)));
 
             foreach (var evidence in candidate.Evidence)
             {
@@ -137,6 +151,8 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
             Assert.False(string.IsNullOrWhiteSpace(batch.ProposedTitle));
             Assert.NotEmpty(batch.CandidateIds);
             Assert.NotEmpty(batch.Prerequisites);
+            Assert.All(batch.Prerequisites, prerequisite =>
+                Assert.Matches(IssueReferencePattern(), prerequisite));
         });
 
         var batchedCandidateIds = batches.SelectMany(batch => batch.CandidateIds).ToArray();
@@ -148,14 +164,26 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         foreach (var candidate in manifest.Candidates)
         {
             var batch = Assert.Single(batches, batch => batch.Id == candidate.Batch);
+            Assert.Equal(candidate.Subsystem, batch.Subsystem);
             Assert.Contains(candidate.Id, batch.CandidateIds);
             Assert.All(candidate.Prerequisites, prerequisite =>
                 Assert.Contains(prerequisite, batch.Prerequisites));
+            Assert.DoesNotContain($"#{batch.TrackingIssue}", candidate.Prerequisites);
         }
 
-        for (var index = 1; index < batches.Length; index++)
+        for (var index = 0; index < batches.Length; index++)
         {
-            Assert.Contains($"#{batches[index - 1].TrackingIssue}", batches[index].Prerequisites);
+            if (index > 0)
+            {
+                Assert.Contains($"#{batches[index - 1].TrackingIssue}", batches[index].Prerequisites);
+            }
+
+            var currentAndLaterTrackingIssues = batches[index..]
+                .Select(batch => $"#{batch.TrackingIssue}")
+                .ToHashSet(StringComparer.Ordinal);
+            Assert.DoesNotContain(
+                batches[index].Prerequisites,
+                currentAndLaterTrackingIssues.Contains);
         }
     }
 
@@ -171,12 +199,15 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         Assert.Matches(IssueReferencePattern(), acceptance.Issue);
         Assert.Matches(IssueReferencePattern(), acceptance.AfterWorkstream);
 
-        Assert.DoesNotContain(
-            acceptance.Issue,
-            manifest.Candidates.SelectMany(candidate => candidate.Prerequisites));
-        Assert.DoesNotContain(
-            acceptance.Issue,
-            manifest.Batches.SelectMany(batch => batch.Prerequisites));
+        foreach (var downstreamIssue in new[] { acceptance.Issue, acceptance.AfterWorkstream })
+        {
+            Assert.DoesNotContain(
+                downstreamIssue,
+                manifest.Candidates.SelectMany(candidate => candidate.Prerequisites));
+            Assert.DoesNotContain(
+                downstreamIssue,
+                manifest.Batches.SelectMany(batch => batch.Prerequisites));
+        }
     }
 
     [Fact]
@@ -189,25 +220,51 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         Assert.All(RequiredPreservedBoundaries, id => Assert.Contains(id, boundaryIds));
 
         var preservedRoots = new List<string>();
+        var preservedSymbolRoots = new List<string>();
         foreach (var boundary in manifest.PreservedBoundaries)
         {
             Assert.Matches(IdentifierPattern(), boundary.Id);
             Assert.NotEmpty(boundary.Paths);
             Assert.NotEmpty(boundary.Tests);
             Assert.False(string.IsNullOrWhiteSpace(boundary.Rationale));
+            Assert.All(boundary.Tests, test =>
+            {
+                Assert.True(manifest.Commands.ContainsKey(test.Command));
+                Assert.Matches(TestNamePattern(), test.Test);
+            });
             Assert.All(boundary.Paths, path =>
             {
                 AssertRepositoryRelativePath(path);
-                preservedRoots.Add(path.EndsWith("/**", StringComparison.Ordinal) ? path[..^3] : path);
+                var preservedRoot = NormalizePathRoot(path);
+                preservedRoots.Add(preservedRoot);
+                preservedSymbolRoots.Add(PathRootToSymbolRoot(preservedRoot));
             });
         }
 
         foreach (var legacyPath in manifest.Candidates.SelectMany(candidate => candidate.LegacyPaths))
         {
+            var legacyRoot = NormalizePathRoot(legacyPath);
             Assert.DoesNotContain(preservedRoots, preservedRoot =>
-                legacyPath.Equals(preservedRoot, StringComparison.Ordinal) ||
-                legacyPath.StartsWith(preservedRoot + "/", StringComparison.Ordinal));
+                RootsOverlap(legacyRoot, preservedRoot, '/'));
         }
+
+        foreach (var legacySymbol in manifest.Candidates.SelectMany(candidate => candidate.LegacySymbols))
+        {
+            var legacySymbolRoot = legacySymbol.Split(": ", 2, StringSplitOptions.None)[0];
+            Assert.DoesNotContain(preservedSymbolRoots, preservedSymbolRoot =>
+                RootsOverlap(legacySymbolRoot, preservedSymbolRoot, '.'));
+        }
+    }
+
+    [Fact]
+    public void ManifestSchemaRejectsMissingOrMisspelledCoverageGaps()
+    {
+        Assert.Throws<JsonException>(() => DeserializeManifest("""
+            { "candidates": [{ "coverageGaps_TYPO": [] }] }
+            """));
+        Assert.Throws<JsonException>(() => DeserializeManifest("""
+            { "candidates": [{}] }
+            """));
     }
 
     [Fact]
@@ -242,6 +299,22 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
             path.StartsWith("tests/", StringComparison.Ordinal));
     }
 
+    private static string NormalizePathRoot(string path) =>
+        path.EndsWith("/**", StringComparison.Ordinal) ? path[..^3] : path;
+
+    private static string PathRootToSymbolRoot(string path)
+    {
+        var symbolRoot = path["src/".Length..].Replace('/', '.');
+        return symbolRoot.EndsWith(".cs", StringComparison.Ordinal)
+            ? symbolRoot[..^3]
+            : symbolRoot;
+    }
+
+    private static bool RootsOverlap(string first, string second, char separator) =>
+        first.Equals(second, StringComparison.Ordinal) ||
+        first.StartsWith(second + separator, StringComparison.Ordinal) ||
+        second.StartsWith(first + separator, StringComparison.Ordinal);
+
     private static MigrationManifest LoadManifest()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -250,11 +323,22 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
             "docs",
             "signacore-legacy-migration",
             "manifest.json"));
-        return JsonSerializer.Deserialize<MigrationManifest>(stream, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true,
-        }) ?? throw new InvalidOperationException("The SignaCore legacy migration manifest is empty.");
+        return DeserializeManifest(stream);
     }
+
+    private static MigrationManifest DeserializeManifest(Stream stream) =>
+        JsonSerializer.Deserialize<MigrationManifest>(stream, SerializerOptions()) ??
+        throw new InvalidOperationException("The SignaCore legacy migration manifest is empty.");
+
+    private static MigrationManifest DeserializeManifest(string json) =>
+        JsonSerializer.Deserialize<MigrationManifest>(json, SerializerOptions()) ??
+        throw new InvalidOperationException("The SignaCore legacy migration manifest is empty.");
+
+    private static JsonSerializerOptions SerializerOptions() => new()
+    {
+        PropertyNameCaseInsensitive = true,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+    };
 
     private static string FindRepositoryRoot()
     {
@@ -286,6 +370,12 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
 
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_.<>]+$", RegexOptions.CultureInvariant)]
     private static partial Regex TestNamePattern();
+
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+(?:<[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*>)?$", RegexOptions.CultureInvariant)]
+    private static partial Regex DottedIdentifierPattern();
+
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_.]*(?:: [A-Za-z0-9_./, -]+)?$", RegexOptions.CultureInvariant)]
+    private static partial Regex LegacySymbolPattern();
 
     private sealed class MigrationManifest
     {
@@ -333,6 +423,7 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
 
         public List<string> Prerequisites { get; init; } = [];
 
+        [JsonRequired]
         public List<string> CoverageGaps { get; init; } = [];
 
         public string Disposition { get; init; } = string.Empty;
@@ -362,9 +453,16 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
 
         public List<string> Paths { get; init; } = [];
 
-        public List<string> Tests { get; init; } = [];
+        public List<BoundaryTest> Tests { get; init; } = [];
 
         public string Rationale { get; init; } = string.Empty;
+    }
+
+    private sealed class BoundaryTest
+    {
+        public string Command { get; init; } = string.Empty;
+
+        public string Test { get; init; } = string.Empty;
     }
 
     private sealed class PostDeletionAcceptance
