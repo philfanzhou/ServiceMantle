@@ -8,7 +8,7 @@ The audited source is [`philfanzhou/SignaCore@23c2f666`](https://github.com/phil
 
 1. A deletion candidate must identify the exact old paths or symbols, at least one executable behavior test, one and only one replacement reference, and its prerequisite issues.
 2. A planned replacement or any coverage gap forces `disposition=blocked`. A later PR cannot mark an item ready until the replacement exists and the gap is closed by executable tests.
-3. A deletion batch must contain every candidate in its subsystem exactly once and must be blocked by the preceding batch. The manifest tests enforce the partition and order.
+3. A deletion batch must contain every candidate in its subsystem exactly once, directly enforce every candidate prerequisite in its native `Blocked by` set, and be blocked by the preceding batch. The manifest tests enforce the partition, prerequisite containment and order.
 4. Product-owned boundaries are retained. A whole-file deletion candidate may not overlap a retained path; method-level splits are explicit (for example management audit actions can move while login history remains).
 5. The fixed source commit must be deliberately advanced and re-audited when SignaCore changes. Evidence from a moving branch is not accepted.
 
@@ -26,6 +26,10 @@ The audited source is [`philfanzhou/SignaCore@23c2f666`](https://github.com/phil
 | 8 | Consul | `consul-registration-lifecycle` | #104 | #135 |
 
 All eight tasks are native sub-issues of #106. Their GitHub `Blocked by` relationships include both capability prerequisites and the preceding deletion batch, so the prose table is not the dependency source of truth.
+
+## Post-deletion acceptance
+
+#107 runs only after #106 and all eight deletion batches complete. It validates the integrated upgrade, new-install, failure-recovery and multi-instance behavior; it is not a prerequisite of any deletion candidate or batch. Keeping this acceptance edge downstream avoids making #106 depend on its own completion.
 
 ## Explicit coverage gaps
 
@@ -58,4 +62,4 @@ Run the ServiceMantle guard tests with:
 dotnet test --project tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj
 ```
 
-`SignaCoreLegacyMigrationManifestTests` fails when a candidate loses evidence or a unique replacement, a gap is marked ready, a batch omits/duplicates a candidate, the order chain breaks, a tracking task is missing, or a retained product path overlaps a deletion path.
+`SignaCoreLegacyMigrationManifestTests` fails when a candidate loses evidence or a unique replacement, a gap is marked ready, a candidate prerequisite is not enforced by its batch, post-deletion acceptance leaks into the deletion gate, a batch omits/duplicates a candidate, the order chain breaks, a tracking task is missing, or a retained product path overlaps a deletion path.

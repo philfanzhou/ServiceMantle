@@ -149,12 +149,34 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         {
             var batch = Assert.Single(batches, batch => batch.Id == candidate.Batch);
             Assert.Contains(candidate.Id, batch.CandidateIds);
+            Assert.All(candidate.Prerequisites, prerequisite =>
+                Assert.Contains(prerequisite, batch.Prerequisites));
         }
 
         for (var index = 1; index < batches.Length; index++)
         {
             Assert.Contains($"#{batches[index - 1].TrackingIssue}", batches[index].Prerequisites);
         }
+    }
+
+    [Fact]
+    public void PostDeletionAcceptanceCannotBecomeADeletionPrerequisite()
+    {
+        var manifest = LoadManifest();
+        var acceptance = Assert.Single(manifest.PostDeletionAcceptance);
+
+        Assert.Equal("#107", acceptance.Issue);
+        Assert.Equal("#106", acceptance.AfterWorkstream);
+        Assert.NotEmpty(acceptance.Scenarios);
+        Assert.Matches(IssueReferencePattern(), acceptance.Issue);
+        Assert.Matches(IssueReferencePattern(), acceptance.AfterWorkstream);
+
+        Assert.DoesNotContain(
+            acceptance.Issue,
+            manifest.Candidates.SelectMany(candidate => candidate.Prerequisites));
+        Assert.DoesNotContain(
+            acceptance.Issue,
+            manifest.Batches.SelectMany(batch => batch.Prerequisites));
     }
 
     [Fact]
@@ -275,6 +297,8 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
 
         public List<DeletionCandidate> Candidates { get; init; } = [];
 
+        public List<PostDeletionAcceptance> PostDeletionAcceptance { get; init; } = [];
+
         public List<PreservedBoundary> PreservedBoundaries { get; init; } = [];
 
         public List<DeletionBatch> Batches { get; init; } = [];
@@ -341,6 +365,15 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         public List<string> Tests { get; init; } = [];
 
         public string Rationale { get; init; } = string.Empty;
+    }
+
+    private sealed class PostDeletionAcceptance
+    {
+        public string Issue { get; init; } = string.Empty;
+
+        public string AfterWorkstream { get; init; } = string.Empty;
+
+        public List<string> Scenarios { get; init; } = [];
     }
 
     private sealed class DeletionBatch

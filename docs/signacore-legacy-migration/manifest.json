@@ -95,7 +95,7 @@
         "reference": "#95",
         "state": "planned"
       },
-      "prerequisites": ["#54", "#55", "#95"],
+      "prerequisites": ["#95"],
       "coverageGaps": [],
       "disposition": "blocked",
       "batch": "bootstrap"
@@ -322,7 +322,7 @@
         "reference": "#101",
         "state": "planned"
       },
-      "prerequisites": ["#34", "#101"],
+      "prerequisites": ["#101"],
       "coverageGaps": [],
       "disposition": "blocked",
       "batch": "configuration"
@@ -442,7 +442,7 @@
         "reference": "#101",
         "state": "planned"
       },
-      "prerequisites": ["#79", "#101", "#107"],
+      "prerequisites": ["#79", "#101"],
       "coverageGaps": [
         "The ServiceMantle-backed upgrade path must retain the exact legacy-key alias and incomplete-import fail-closed behavior before this adapter is removed."
       ],
@@ -486,7 +486,7 @@
         "reference": "ServiceMantle.Persistence.EntityFrameworkCore.EfCoreManagementAuditWriter<TDbContext>",
         "state": "implemented"
       },
-      "prerequisites": ["#15", "#98", "#100", "#101"],
+      "prerequisites": ["#98", "#100", "#101"],
       "coverageGaps": [],
       "disposition": "blocked",
       "batch": "audit"
@@ -519,7 +519,7 @@
         "reference": "#98",
         "state": "planned"
       },
-      "prerequisites": ["#54", "#58", "#98"],
+      "prerequisites": ["#98"],
       "coverageGaps": [],
       "disposition": "blocked",
       "batch": "audit"
@@ -686,6 +686,13 @@
       "batch": "consul"
     }
   ],
+  "postDeletionAcceptance": [
+    {
+      "issue": "#107",
+      "afterWorkstream": "#106",
+      "scenarios": ["upgrade", "new-install", "failure-recovery", "multi-instance"]
+    }
+  ],
   "preservedBoundaries": [
     {
       "id": "oauth-jwt-token-domain",
@@ -835,7 +842,7 @@
       "id": "migration",
       "subsystem": "Migration",
       "candidateIds": ["migration-orchestration", "installation-state-persistence"],
-      "prerequisites": ["#70", "#71"],
+      "prerequisites": ["#70", "#71", "#105"],
       "trackingIssue": 128,
       "proposedTitle": "[SignaCore 清理][迁移] 切换迁移编排并移除重复安装状态映射"
     },
