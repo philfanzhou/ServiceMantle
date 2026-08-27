@@ -32,10 +32,13 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
     private static readonly string[] RequiredPreservedBoundaries =
     [
         "account-credential-domain",
+        "admin-console-product-ux",
         "application-gateway-domain",
         "callback-domain",
         "ldap-domain",
+        "login-history-domain",
         "oauth-jwt-token-domain",
+        "product-schema-migrations",
         "signing-key-jwks-domain",
         "sms-otp-domain",
         "wechat-domain",
@@ -97,6 +100,10 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
                 IssueReferencePattern().IsMatch(candidate.Replacement.Reference) ||
                 DottedIdentifierPattern().IsMatch(candidate.Replacement.Reference));
             Assert.Contains(candidate.Replacement.State, new[] { "implemented", "planned" });
+            if (candidate.Replacement.State == "implemented")
+            {
+                AssertImplementedReplacementExists(candidate.Replacement.Reference);
+            }
             Assert.NotEmpty(candidate.Prerequisites);
             Assert.All(candidate.Prerequisites, prerequisite =>
                 Assert.Matches(IssueReferencePattern(), prerequisite));
@@ -225,8 +232,12 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         {
             Assert.Matches(IdentifierPattern(), boundary.Id);
             Assert.NotEmpty(boundary.Paths);
+            Assert.NotEmpty(boundary.PreservedSymbols);
             Assert.NotEmpty(boundary.Tests);
             Assert.False(string.IsNullOrWhiteSpace(boundary.Rationale));
+            Assert.All(boundary.PreservedSymbols, symbol =>
+                Assert.Matches(DottedIdentifierPattern(), symbol));
+            preservedSymbolRoots.AddRange(boundary.PreservedSymbols);
             Assert.All(boundary.Tests, test =>
             {
                 Assert.True(manifest.Commands.ContainsKey(test.Command));
@@ -237,7 +248,6 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
                 AssertRepositoryRelativePath(path);
                 var preservedRoot = NormalizePathRoot(path);
                 preservedRoots.Add(preservedRoot);
-                preservedSymbolRoots.Add(PathRootToSymbolRoot(preservedRoot));
             });
         }
 
@@ -264,6 +274,9 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
             """));
         Assert.Throws<JsonException>(() => DeserializeManifest("""
             { "candidates": [{}] }
+            """));
+        Assert.Throws<JsonException>(() => DeserializeManifest("""
+            { "candidates": [{ "coverageGaps": [], "dispositionTypo": "ready" }] }
             """));
     }
 
@@ -297,17 +310,33 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         Assert.True(
             path.StartsWith("src/", StringComparison.Ordinal) ||
             path.StartsWith("tests/", StringComparison.Ordinal));
+        var pathWithoutSupportedGlob = path.EndsWith("/**", StringComparison.Ordinal)
+            ? path[..^3]
+            : path;
+        Assert.DoesNotContain('*', pathWithoutSupportedGlob);
+        Assert.DoesNotContain('?', pathWithoutSupportedGlob);
+        Assert.DoesNotContain('[', pathWithoutSupportedGlob);
+        Assert.DoesNotContain(']', pathWithoutSupportedGlob);
     }
 
     private static string NormalizePathRoot(string path) =>
         path.EndsWith("/**", StringComparison.Ordinal) ? path[..^3] : path;
 
-    private static string PathRootToSymbolRoot(string path)
+    private static void AssertImplementedReplacementExists(string reference)
     {
-        var symbolRoot = path["src/".Length..].Replace('/', '.');
-        return symbolRoot.EndsWith(".cs", StringComparison.Ordinal)
-            ? symbolRoot[..^3]
-            : symbolRoot;
+        var genericMarker = reference.IndexOf('<', StringComparison.Ordinal);
+        var metadataName = genericMarker >= 0
+            ? reference[..genericMarker] + "`1"
+            : reference;
+        var replacementAssemblies = new[]
+        {
+            typeof(ServiceMantle.Bootstrap.BootstrapFileStore).Assembly,
+            typeof(ServiceMantle.Persistence.EntityFrameworkCore.EfCoreManagementAuditWriter<>).Assembly,
+        };
+
+        Assert.Contains(
+            replacementAssemblies,
+            assembly => assembly.GetType(metadataName, throwOnError: false, ignoreCase: false) is not null);
     }
 
     private static bool RootsOverlap(string first, string second, char separator) =>
@@ -452,6 +481,9 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         public string Id { get; init; } = string.Empty;
 
         public List<string> Paths { get; init; } = [];
+
+        [JsonRequired]
+        public List<string> PreservedSymbols { get; init; } = [];
 
         public List<BoundaryTest> Tests { get; init; } = [];
 

@@ -181,11 +181,15 @@
       ],
       "legacySymbols": [
         "SignaCore.Database.IdentityDbContext.InstallationStates",
-        "SignaCore.Database.IdentityDbContext: installation_state mapping"
+        "SignaCore.Database.IdentityDbContext: installation_state mapping",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.InstallationStateEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.InstallationStateEntity"
       ],
       "callSites": [
         "src/SignaCore.Host/Installation/InstallationStateResolver.cs",
-        "src/SignaCore.Host/Configuration/LegacyConfigurationImporter.cs"
+        "src/SignaCore.Host/Configuration/LegacyConfigurationImporter.cs",
+        "src/SignaCore.Database/Migrations/IdentityDbContextModelSnapshot.cs",
+        "src/SignaCore.Database.Migrations.Sqlite/Migrations/IdentityDbContextModelSnapshot.cs"
       ],
       "evidence": [
         {
@@ -340,10 +344,15 @@
         "src/SignaCore.Domain/Keys/IConfigurationProtector.cs",
         "src/SignaCore.Domain/Keys/IMasterKeyProvider.cs"
       ],
-      "legacySymbols": [],
+      "legacySymbols": [
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.SystemSettingEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.SystemSettingEntity"
+      ],
       "callSites": [
         "src/SignaCore.Host/Program.cs",
-        "src/SignaCore.Host/Controllers/AdminSettingsController.cs"
+        "src/SignaCore.Host/Controllers/AdminSettingsController.cs",
+        "src/SignaCore.Database/Migrations/IdentityDbContextModelSnapshot.cs",
+        "src/SignaCore.Database.Migrations.Sqlite/Migrations/IdentityDbContextModelSnapshot.cs"
       ],
       "evidence": [
         {
@@ -533,9 +542,15 @@
         "src/SignaCore.Host/Security/DatabaseDataProtectionKeyRepository.cs"
       ],
       "legacySymbols": [
-        "SignaCore.Host.ServiceCollectionExtensions: IXmlRepository and AddDataProtection registration"
+        "SignaCore.Host.ServiceCollectionExtensions: IXmlRepository and AddDataProtection registration",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.DataProtectionKeyEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.DataProtectionKeyEntity"
       ],
-      "callSites": ["src/SignaCore.Host/ServiceCollectionExtensions.cs"],
+      "callSites": [
+        "src/SignaCore.Host/ServiceCollectionExtensions.cs",
+        "src/SignaCore.Database/Migrations/IdentityDbContextModelSnapshot.cs",
+        "src/SignaCore.Database.Migrations.Sqlite/Migrations/IdentityDbContextModelSnapshot.cs"
+      ],
       "evidence": [
         {
           "command": "unit",
@@ -661,7 +676,7 @@
         "SignaCore.Host.Configuration.SystemSettingKeys: Consul fields",
         "SignaCore.Host.Configuration.SystemSettingsCatalog: Consul definitions",
         "SignaCore.Host.Program: AddConsulDiscoveryIfEnabled",
-        "SignaCore.Host.SignaCore.Host.csproj: Steeltoe.Discovery.ClientCore"
+        "SignaCore.Host.SignaCore.Host.csproj: Steeltoe.Discovery.Consul"
       ],
       "callSites": [
         "src/SignaCore.Host/Program.cs",
@@ -705,6 +720,16 @@
         "src/SignaCore.Host/OAuthGrantTypes.cs",
         "src/SignaCore.Host/Services/TokenIssuanceService.cs"
       ],
+      "preservedSymbols": [
+        "SignaCore.Domain.Services.ITokenService",
+        "SignaCore.Domain.Services.JwtTokenService",
+        "SignaCore.Domain.Services.RefreshTokenService",
+        "SignaCore.Host.Controllers.OAuthTokenController",
+        "SignaCore.Host.Controllers.TokenController",
+        "SignaCore.Host.Controllers.TokenRevocationController",
+        "SignaCore.Host.OAuthGrantTypes",
+        "SignaCore.Host.Services.TokenIssuanceService"
+      ],
       "tests": [
         {
           "command": "unit",
@@ -727,6 +752,14 @@
         "src/SignaCore.Database/Repositories/PasswordCredentialRepository.cs",
         "src/SignaCore.Domain/Validators/PasswordValidator.cs"
       ],
+      "preservedSymbols": [
+        "SignaCore.Database.Entity.AccountEntity",
+        "SignaCore.Database.Entity.PasswordCredentialEntity",
+        "SignaCore.Database.Entity.UserLoginEntity",
+        "SignaCore.Database.Repositories.AccountRepository",
+        "SignaCore.Database.Repositories.PasswordCredentialRepository",
+        "SignaCore.Domain.Validators.PasswordValidator"
+      ],
       "tests": [
         {
           "command": "unit",
@@ -748,6 +781,13 @@
         "src/SignaCore.Domain/Services/GatewayValidationService.cs",
         "src/SignaCore.Host/Controllers/GatewayController.cs"
       ],
+      "preservedSymbols": [
+        "SignaCore.Database.Entity.AppRegistrationEntity",
+        "SignaCore.Database.Entity.AppExchangeTrustEntity",
+        "SignaCore.Database.Repositories.AppRegistrationRepository",
+        "SignaCore.Domain.Services.GatewayValidationService",
+        "SignaCore.Host.Controllers.GatewayController"
+      ],
       "tests": [
         {
           "command": "unit",
@@ -768,6 +808,12 @@
         "src/SignaCore.Domain/Validators/SmsValidator.cs",
         "src/SignaCore.Host/Controllers/SmsCodeController.cs"
       ],
+      "preservedSymbols": [
+        "SignaCore.Database.Entity.OtpEntity",
+        "SignaCore.Domain.Services.Sms",
+        "SignaCore.Domain.Validators.SmsValidator",
+        "SignaCore.Host.Controllers.SmsCodeController"
+      ],
       "tests": [
         {
           "command": "unit",
@@ -787,6 +833,11 @@
         "src/SignaCore.Domain/Services/Ldap/**",
         "src/SignaCore.Domain/Validators/LdapValidator.cs"
       ],
+      "preservedSymbols": [
+        "SignaCore.Database.Entity.LdapCredentialEntity",
+        "SignaCore.Domain.Services.Ldap",
+        "SignaCore.Domain.Validators.LdapValidator"
+      ],
       "tests": [
         {
           "command": "unit",
@@ -801,6 +852,11 @@
         "src/SignaCore.Database/Entity/AppWechatAccessEntity.cs",
         "src/SignaCore.Domain/Services/WeChat/**",
         "src/SignaCore.Domain/Validators/WechatValidator.cs"
+      ],
+      "preservedSymbols": [
+        "SignaCore.Database.Entity.AppWechatAccessEntity",
+        "SignaCore.Domain.Services.WeChat",
+        "SignaCore.Domain.Validators.WechatValidator"
       ],
       "tests": [
         {
@@ -820,6 +876,11 @@
         "src/SignaCore.Domain/CallbackService.cs",
         "src/SignaCore.Domain/Services/CallbackUrlValidator.cs",
         "src/SignaCore.Host/Controllers/CallbackRegistrationController.cs"
+      ],
+      "preservedSymbols": [
+        "SignaCore.Domain.CallbackService",
+        "SignaCore.Domain.CallbackUrlValidator",
+        "SignaCore.Host.Controllers.CallbackRegistrationController"
       ],
       "tests": [
         {
@@ -841,6 +902,13 @@
         "src/SignaCore.Domain/Keys/KeyManager.cs",
         "src/SignaCore.Host/JwksMapper.cs",
         "src/SignaCore.Host/DiscoveryDocument.cs"
+      ],
+      "preservedSymbols": [
+        "SignaCore.Database.Entity.SecurityKeyEntity",
+        "SignaCore.Domain.Keys.AesGcmPrivateKeyProtector",
+        "SignaCore.Domain.Keys.KeyManager",
+        "SignaCore.Host.JwksMapper",
+        "SignaCore.Host.DiscoveryDocument"
       ],
       "tests": [
         {
@@ -864,6 +932,10 @@
         "src/SignaCore.Database/Entity/LoginHistoryEntity.cs",
         "src/SignaCore.Database/Repositories/LoginHistoryRepository.cs"
       ],
+      "preservedSymbols": [
+        "SignaCore.Database.Entity.LoginHistoryEntity",
+        "SignaCore.Database.Repositories.LoginHistoryRepository"
+      ],
       "tests": [
         {
           "command": "unit",
@@ -878,6 +950,14 @@
         "src/SignaCore.Database/Migrations/**",
         "src/SignaCore.Database.Migrations.Sqlite/Migrations/**"
       ],
+      "preservedSymbols": [
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.AccountEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.AppRegistrationEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.SecurityKeyEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.AccountEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.AppRegistrationEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.SecurityKeyEntity"
+      ],
       "tests": [
         {
           "command": "integration",
@@ -888,11 +968,12 @@
           "test": "SignaCore.IntegrationTests.Integration.SqliteDatabaseContractTests"
         }
       ],
-      "rationale": "SignaCore remains the migration owner for its identity, token, application and provider tables even after orchestration moves to ServiceMantle."
+      "rationale": "SignaCore remains the migration owner for its identity, token, application and provider tables. Applied migration history is retained; infrastructure removal updates both model snapshots and adds forward drop migrations instead of deleting historical files."
     },
     {
       "id": "admin-console-product-ux",
       "paths": ["src/SignaCore.Admin/**"],
+      "preservedSymbols": ["SignaCore.Admin"],
       "tests": [
         {
           "command": "frontend",

@@ -9,7 +9,7 @@ The audited source is [`philfanzhou/SignaCore@23c2f666`](https://github.com/phil
 1. A deletion candidate must identify the exact old paths or validated symbols, at least one executable behavior test, one and only one issue or dotted-identifier replacement reference, and its prerequisite issues.
 2. A planned replacement or any coverage gap forces `disposition=blocked`. A later PR cannot mark an item ready until the replacement exists and the gap is closed by executable tests.
 3. A deletion batch must contain every candidate in its subsystem exactly once, directly enforce every candidate prerequisite in its native `Blocked by` set, and be blocked by the preceding batch. The manifest tests enforce the partition, prerequisite containment and order.
-4. Product-owned boundaries are retained. A deletion path or symbol may not contain, equal or sit beneath a retained path or symbol; method-level splits are explicit (for example management audit actions can move while login history remains).
+4. Product-owned boundaries are retained. A deletion path or symbol may not contain, equal or sit beneath a retained path or symbol; retained symbols are recorded explicitly rather than inferred from file names, and method-level splits are explicit (for example management audit actions can move while login history remains).
 5. The fixed source commit must be deliberately advanced and re-audited when SignaCore changes. Evidence from a moving branch is not accepted.
 
 ## Deletion sequence
@@ -52,7 +52,9 @@ The following are not reusable management infrastructure and are not candidates 
 - SignaCore-owned migrations for identity, token, application and provider tables;
 - the administration product UI, whose infrastructure API call sites are adapted in place.
 
-The manifest lists concrete paths plus command-keyed behavior tests for each retained boundary. Future cleanup PRs must keep those paths and symbols outside deletion scopes.
+The manifest lists concrete paths, explicit symbol roots and command-keyed behavior tests for each retained boundary. Future cleanup PRs must keep those paths and symbols outside deletion scopes.
+
+Applied migration files remain immutable history. Removing the installation-state, system-setting or data-protection-key mappings therefore requires each deletion batch to update both provider model snapshots and add forward drop migrations; it must not delete the historical `AddSystemSettingsAndInstallationState` or `PersistDataProtectionKeys` migrations. Those snapshot mappings are listed as candidate symbols so the retained migration files can be edited at symbol scope without exposing the product-owned mappings beside them.
 
 ## Executable validation
 
