@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the optional database target preparation capability (PostgreSQL server-database preparation), and product-agnostic management audit persistence are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management authentication, broader observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -39,6 +39,83 @@ using (context.BeginScope(logger, new Dictionary<string, object?>
 ```
 
 Extension fields are limited to 32, require non-null values and identifier-style names, and cannot duplicate or override the three identity fields (matching is case-insensitive). Disposing the returned handle ends the scope; standard `ILogger` async scope semantics keep concurrent execution contexts isolated. This context does not sanitize extension values or configure a logging sink, so callers remain responsible for passing only values safe for their providers.
+
+## Management identity and authorization
+
+`ServiceMantle` defines a product-agnostic management identity contract, and
+`ServiceMantle.AspNetCore` binds it to ASP.NET Core authorization. The contract fixes the claim types,
+the first-version permission set, the `ServiceMantle.ManagementAdmin` policy, a three-state identity
+provider, and a lossless projection onto the existing `ManagementAuditOperator` model.
+
+| Meaning | Value |
+| --- | --- |
+| Operator ID claim | `servicemantle.operator_id` |
+| Operator source claim | `servicemantle.operator_source` |
+| Operator display name claim | `servicemantle.operator_display_name` |
+| Permission claim | `servicemantle.permission` |
+| `ManagementPermission.Read` | `management.read` |
+| `ManagementPermission.Write` | `management.write` |
+| `ManagementPermission.Admin` | `management.admin` |
+| Helper authentication type | `ServiceMantle.Management` |
+| Admin policy name | `ServiceMantle.ManagementAdmin` |
+
+```csharp
+builder.Services.AddServiceMantleManagementAuthorization();
+
+app.MapGet("/management/settings", () => Results.Ok())
+    .RequireAuthorization(ManagementAuthorizationDefaults.AdminPolicyName);
+```
+
+A consuming service supplies credentials by implementing one method and calling it through the safe
+invoker:
+
+```csharp
+public sealed class MyIdentityProvider(IMyCredentialAccessor accessor) : IManagementIdentityProvider
+{
+    public async ValueTask<ManagementIdentityResult> GetIdentityAsync(CancellationToken token) =>
+        await accessor.TryAuthenticateAsync(token) is { } operatorId
+            ? ManagementIdentityResult.Authenticated(ManagementIdentity.Create(
+                WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+                operatorId,
+                [ManagementPermission.Admin]))
+            : ManagementIdentityResult.Unauthenticated();
+}
+
+var result = await ManagementIdentityProviderInvoker.InvokeAsync(provider, cancellationToken);
+```
+
+Claim parsing is fail-closed and matches both claim type names and claim values as an exact ordinal
+wire contract; unknown claim types are ignored. The principal must carry exactly one authenticated
+identity, and every ServiceMantle operator or permission claim must live on that identity, so a
+synthetic operator can never be assembled from several identities. Exactly one operator ID, exactly
+one operator source, zero or one display name, and at least one permission are required; duplicates,
+unknown permissions, and values that are not already in their cleaned wire form are rejected. The
+operator source is validated by parsing it with `ManagementAuditOperatorSource.TryParse` and then
+comparing the raw claim value to the parsed value ordinally, which accepts only an already normalized
+wire value without changing that parser's general normalization contract for other callers.
+
+`ManagementIdentityResult` is a closed three-state result: `Authenticated`, `Unauthenticated`, and
+`Failed(errorCode)`. `ManagementIdentityProviderInvoker` propagates `OperationCanceledException` only
+when the caller token has itself requested cancellation; a provider that cancels on its own or throws
+anything else yields the stable `management_identity.provider_failed` code. The current-operator
+resolver keeps `Unauthenticated` and `ClaimsInvalid` distinguishable for authorization and auditing.
+
+### Explicit non-guarantees
+
+- No cookie defaults, session results, Data Protection key storage, or login endpoint.
+- No local administrator, OIDC login, or break-glass provider, and no default authentication scheme or
+  concrete `IManagementIdentityProvider` registration.
+- No guarantee of identity-source authenticity: credential validation, signatures, revocation, and
+  upstream session lifetime belong to the consuming service's provider or authentication handler.
+- No dynamic permission registration, role inheritance, or fine-grained resource authorization.
+- No 401/403/503 HTTP body definition; secure session and Problem Details mapping belong downstream.
+- No provider timeout, retry, circuit breaking, or exception diagnostics; public results retain only a
+  safe classification.
+- ServiceMantle cannot constrain what a consuming provider, a custom authentication handler, or a
+  logging provider writes on its own. The sensitive-output guarantee covers only the invoker, parser,
+  results, exceptions, and authorization components added here.
+- A rejection does not hide the fact that an operator lacks the admin permission, but it never carries
+  raw claim values, tokens, cookies, credentials, or provider-internal errors.
 
 ## Instance-local Bootstrap
 
