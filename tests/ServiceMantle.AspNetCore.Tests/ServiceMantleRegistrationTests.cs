@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -146,6 +147,96 @@ public sealed class ServiceMantleRegistrationTests
             BootstrapDatabaseConfiguration database,
             CancellationToken cancellationToken) =>
             ValueTask.FromResult(BootstrapValidationResult.Success());
+    }
+
+    [Fact]
+    public void Di_bootstrap_store_canonicalizes_an_alias_registered_after_AddServiceMantle()
+    {
+        // The store must be built from the final registry snapshot, not from the empty snapshot
+        // that exists while AddServiceMantle runs.
+        var services = new ServiceCollection();
+        var serviceId = ServiceId.Parse("catalog");
+        var directory = Path.Combine(Path.GetTempPath(), "ServiceMantle.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var bootstrapPath = Path.Combine(directory, "catalog.bootstrap.json");
+
+        try
+        {
+            services
+                .AddServiceMantle(serviceId, InstanceId.Parse("catalog-01"), bootstrapPath)
+                .AddBootstrapDatabaseProvider<AliasedProvider>();
+
+            using var provider = services.BuildServiceProvider();
+            var store = provider.GetRequiredService<BootstrapFileStore>();
+
+            store.Create(new BootstrapConfiguration(
+                serviceId,
+                new BootstrapDatabaseConfiguration("aliased-db", "16", "Host=db;Password=p"),
+                "master-key"));
+
+            using var document = JsonDocument.Parse(File.ReadAllText(store.FilePath));
+            Assert.Equal(
+                "AliasedProvider",
+                document.RootElement.GetProperty("Database").GetProperty("Provider").GetString());
+            Assert.Equal("AliasedProvider", store.Load().Database.Provider);
+            Assert.Equal("AliasedProvider", provider.GetRequiredService<BootstrapConfigurationManager>()
+                .GetStatus().Provider);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Di_bootstrap_store_and_lock_registry_share_one_resolver_snapshot()
+    {
+        var services = new ServiceCollection();
+        services
+            .AddServiceMantle(
+                ServiceId.Parse("catalog"),
+                InstanceId.Parse("catalog-01"),
+                Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.json"))
+            .AddBootstrapDatabaseProvider<AliasedProvider>()
+            .AddMigrationLockProvider<AliasedMigrationLockProvider>();
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Same(
+            provider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver,
+            provider.GetRequiredService<BootstrapFileStore>().ProviderIdResolver);
+
+        // The lock provider registered itself under the canonical id; the alias must find it.
+        Assert.True(provider.GetRequiredService<DatabaseMigrationLockProviderRegistry>()
+            .TryGetProvider("aliased-db", out var lockProvider));
+        Assert.NotNull(lockProvider);
+    }
+
+    private sealed class AliasedProvider : IBootstrapDatabaseProvider
+    {
+        public BootstrapDatabaseProviderDescriptor Descriptor { get; } = new(
+            "AliasedProvider",
+            "Aliased Provider",
+            BootstrapDatabaseTargetKind.ServerDatabase,
+            BootstrapServerVersionRequirement.Optional,
+            aliases: ["aliased-db"]);
+
+        public ValueTask<BootstrapValidationResult> ValidateAsync(
+            BootstrapDatabaseConfiguration database,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(BootstrapValidationResult.Success());
+    }
+
+    private sealed class AliasedMigrationLockProvider : IDatabaseMigrationLockProvider
+    {
+        public string ProviderId => "AliasedProvider";
+
+        public ValueTask<IDatabaseMigrationLock> AcquireAsync(
+            ServiceId serviceId,
+            BootstrapDatabaseConfiguration bootstrap,
+            TimeSpan acquireTimeout,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<IDatabaseMigrationLock>(new FakeMigrationLock());
     }
 
     private sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider

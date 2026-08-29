@@ -14,16 +14,25 @@ namespace ServiceMantle.Bootstrap;
 public sealed class DatabaseTargetPreparationProviderRegistry
 {
     private readonly Dictionary<string, IDatabaseTargetPreparationProvider> registrations;
+    private readonly DatabaseProviderIdResolver providerIdResolver;
 
     /// <summary>
     /// Initializes a database target preparation provider registry.
     /// </summary>
     /// <param name="providers">All preparation providers to register. Null or empty enumerable is allowed.</param>
+    /// <param name="providerIdResolver">
+    /// The shared provider-id resolver snapshot, or null to use <see cref="DatabaseProviderIdResolver.Empty"/>.
+    /// Registration keys and lookup keys are canonicalized through it, so a bootstrap alias and the
+    /// canonical id select the same registration. Resolving an alias never implies that a
+    /// preparation provider exists for it: an unregistered capability still fails closed.
+    /// </param>
     /// <exception cref="ArgumentException">A provider is null or a provider ID is already registered.</exception>
     public DatabaseTargetPreparationProviderRegistry(
-        IEnumerable<IDatabaseTargetPreparationProvider>? providers = null)
+        IEnumerable<IDatabaseTargetPreparationProvider>? providers = null,
+        DatabaseProviderIdResolver? providerIdResolver = null)
     {
         registrations = new Dictionary<string, IDatabaseTargetPreparationProvider>(StringComparer.OrdinalIgnoreCase);
+        this.providerIdResolver = providerIdResolver ?? DatabaseProviderIdResolver.Empty;
 
         if (providers is null)
         {
@@ -37,7 +46,8 @@ public sealed class DatabaseTargetPreparationProviderRegistry
                 throw new ArgumentNullException(nameof(providers), "Provider cannot be null.");
             }
 
-            var providerId = DatabaseProviderId.Normalize(provider.ProviderId, nameof(providers));
+            var declaredProviderId = DatabaseProviderId.Normalize(provider.ProviderId, nameof(providers));
+            var providerId = this.providerIdResolver.Canonicalize(declaredProviderId);
 
             if (!Enum.IsDefined(provider.TargetKind))
             {
@@ -59,20 +69,21 @@ public sealed class DatabaseTargetPreparationProviderRegistry
     }
 
     /// <summary>
-    /// Attempts to resolve a preparation provider by database provider ID (case-insensitive).
+    /// Attempts to resolve a preparation provider by database provider ID or registered alias
+    /// (case-insensitive).
     /// </summary>
-    /// <param name="providerId">The database provider ID.</param>
+    /// <param name="providerId">The database provider ID or registered alias.</param>
     /// <param name="provider">The preparation provider when found.</param>
     /// <returns>true when a preparation provider is registered for the ID; otherwise, false.</returns>
     public bool TryGetProvider(string? providerId, out IDatabaseTargetPreparationProvider? provider)
     {
         provider = null;
 
-        if (!DatabaseProviderId.TryNormalize(providerId, out var normalizedProviderId))
+        if (!providerIdResolver.TryCanonicalize(providerId, out var canonicalProviderId))
         {
             return false;
         }
 
-        return registrations.TryGetValue(normalizedProviderId, out provider);
+        return registrations.TryGetValue(canonicalProviderId, out provider);
     }
 }

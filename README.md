@@ -52,9 +52,15 @@ By default, the file is stored at:
 
 The store distinguishes a missing file from a damaged or invalid file. `TryLoad()` returns `null` only when the file is absent; invalid JSON, unknown fields, missing required values, unsupported versions, and service-id mismatches raise `BootstrapException`. `Create()` is for first creation and never overwrites an existing file. `Replace()` atomically replaces an existing file.
 
+The store requires the shared provider-id resolver snapshot (`DatabaseProviderIdResolver`), so
+construct the provider registry first and hand the store its snapshot. There is no constructor that
+skips the resolver: a write path that accepted a provider alias but could not resolve it would put
+an unresolvable id on disk.
+
 ```csharp
 var serviceId = ServiceId.Parse("signacore");
-var store = new BootstrapFileStore(serviceId);
+var providerRegistry = new BootstrapDatabaseProviderRegistry([new PostgreSqlBootstrapDatabaseProvider()]);
+var store = new BootstrapFileStore(serviceId, providerRegistry.ProviderIdResolver);
 
 var bootstrap = new BootstrapConfiguration(
     serviceId,
@@ -67,6 +73,9 @@ var bootstrap = new BootstrapConfiguration(
 store.Create(bootstrap);
 var loaded = store.Load();
 ```
+
+Hosts using `AddServiceMantle` get this wiring automatically: the store is resolved from the
+container with the final registry snapshot, so providers added on the returned builder are included.
 
 Bootstrap files belong to individual service instances. Synchronizing or distributing them across multiple instances is not a current ServiceMantle responsibility. When backing up a business database, also back up the matching Bootstrap file for the instance that owns it.
 
@@ -162,9 +171,50 @@ The core library now provides a provider SPI so validation can be extended witho
 
 - `IBootstrapDatabaseProvider` implementations are expected in optional provider packages and receive only `BootstrapDatabaseConfiguration`.
 - `BootstrapDatabaseProviderRegistry` resolves providers by canonical `Provider` id and aliases using case-insensitive matching.
-- `BootstrapDatabaseCandidateValidator` performs generic checks (`database.provider_not_registered`, server-version constraints) and then dispatches to the matched provider.
-- Provider IDs in bootstrap files are validated for safe syntax only; registration and driver-specific behavior are handled by the candidate validator at management time.
+- `BootstrapDatabaseCandidateValidator` performs generic checks (`database.provider_not_registered`, server-version constraints) and then dispatches to the matched provider, always passing the provider its own canonical id.
+- Provider IDs in bootstrap files are validated for safe syntax and canonicalized through the shared resolver; driver-specific behavior is handled by the candidate validator at management time.
 - Driver packages are distributed separately, so the ServiceMantle core package stays free of database driver dependencies.
+
+### Canonical provider ids
+
+`BootstrapDatabaseProviderDescriptor.Aliases` is public, so a provider id that reaches the bootstrap
+file may be an alias rather than the descriptor's canonical `Id`. One immutable snapshot,
+`DatabaseProviderIdResolver`, is the single place that alias rule lives:
+`BootstrapDatabaseProviderRegistry` builds it and exposes it as `ProviderIdResolver`, and
+`BootstrapFileStore`, `DatabaseTargetPreparationProviderRegistry`, and
+`DatabaseMigrationLockProviderRegistry` all take that same snapshot instead of copying descriptor
+alias enumeration. Without it, an alias could be persisted, read back verbatim, and then miss the
+migration lock registry — producing `migration.lock_not_supported` with no write-time warning.
+
+Guaranteed:
+
+- A registered canonical id or alias, in any casing, resolves to the descriptor's exact `Id`.
+  Matching is `OrdinalIgnoreCase`; the output casing is always the descriptor's.
+- `BootstrapFileStore.Create`/`Replace` canonicalize before serializing, so a registered alias never
+  reaches disk. `Load`/`TryLoad` canonicalize after deserializing, so an alias already on disk is
+  canonical to every caller.
+- The candidate provider, the target preparation lookup, and the migration lock lookup all see the
+  same canonical id, and the keyed registries canonicalize both their registration keys and their
+  lookup keys.
+- Registration conflicts (a duplicate canonical id, an alias colliding with another alias or with any
+  canonical id, in either registration order) are rejected when the snapshot is built.
+- A snapshot is fixed at construction; one store and its related keyed registries share one snapshot.
+
+Not guaranteed:
+
+- Bytes on disk are only guaranteed for files written through the store. Hand-edited files, files
+  produced by a deployment system, and direct writes are unaffected — though a resolver-aware store
+  still canonicalizes registered aliases when reading them.
+- Reading never rewrites the file. An existing alias is canonicalized in memory only and becomes
+  canonical on disk at the next `Replace()`.
+- A string that is syntactically valid but absent from the snapshot cannot be classified as an alias
+  or a canonical id, so it is preserved as the caller declared it. The resolver never guesses at
+  aliases nobody declared. This keeps the existing third-party and deployment flow where the file is
+  written before the provider is registered.
+- Resolving an alias never implies a capability. A registered bootstrap provider does not mean a
+  target preparation provider or a migration lock provider exists; those still fail closed with
+  `database_target_preparation.capability_not_supported` and `migration.lock_not_supported`.
+- Alias priority, last-registration-wins, and case-ambiguity rules are not introduced.
 
 Current and planned provider packages are:
 
@@ -193,7 +243,8 @@ The capability models three target kinds via the existing `BootstrapDatabaseTarg
 
 ```csharp
 var preparationProviders = new DatabaseTargetPreparationProviderRegistry(
-    [new PostgreSqlDatabaseTargetPreparationProvider()]);
+    [new PostgreSqlDatabaseTargetPreparationProvider()],
+    providerRegistry.ProviderIdResolver);
 
 if (!preparationProviders.TryGetProvider(bootstrapDatabaseConfiguration.Provider, out var provider))
 {

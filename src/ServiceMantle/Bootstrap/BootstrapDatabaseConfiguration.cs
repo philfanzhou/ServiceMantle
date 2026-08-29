@@ -54,4 +54,14 @@ public sealed class BootstrapDatabaseConfiguration
     /// </summary>
     public override string ToString() =>
         $"BootstrapDatabaseConfiguration(Provider={Provider})";
+
+    /// <summary>
+    /// Returns this configuration with the canonical provider id substituted, keeping every other
+    /// field untouched.
+    /// </summary>
+    /// <param name="canonicalProvider">The canonical provider id from the shared resolver.</param>
+    internal BootstrapDatabaseConfiguration WithCanonicalProvider(string canonicalProvider) =>
+        string.Equals(Provider, canonicalProvider, StringComparison.Ordinal)
+            ? this
+            : new BootstrapDatabaseConfiguration(canonicalProvider, ServerVersion, ConnectionString);
 }

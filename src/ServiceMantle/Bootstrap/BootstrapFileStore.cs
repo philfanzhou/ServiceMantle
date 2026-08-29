@@ -24,19 +24,63 @@ public sealed class BootstrapFileStore
     };
 
     private readonly ServiceId serviceId;
+    private readonly DatabaseProviderIdResolver providerIdResolver;
 
     /// <summary>
     /// Initializes a store using the default path or an explicit path.
     /// </summary>
     /// <param name="serviceId">The expected service identifier.</param>
+    /// <param name="providerIdResolver">
+    /// The shared provider-id resolver snapshot. Every value written to and read from the file is
+    /// canonicalized through it, so a registered alias never reaches disk or a capability lookup.
+    /// </param>
     /// <param name="filePath">An optional bootstrap file path.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="serviceId"/> or <paramref name="providerIdResolver"/> is null.
+    /// </exception>
+    /// <exception cref="ArgumentException">The explicit path is empty.</exception>
+    public BootstrapFileStore(
+        ServiceId serviceId,
+        DatabaseProviderIdResolver providerIdResolver,
+        string? filePath = null)
+    {
+        ArgumentNullException.ThrowIfNull(serviceId);
+        ArgumentNullException.ThrowIfNull(providerIdResolver);
+
+        this.serviceId = serviceId;
+        this.providerIdResolver = providerIdResolver;
+        FilePath = ResolveFilePath(serviceId, filePath);
+    }
+
+    /// <summary>
+    /// Initializes a store from a service identifier string.
+    /// </summary>
+    /// <param name="serviceId">The expected service identifier.</param>
+    /// <param name="providerIdResolver">The shared provider-id resolver snapshot.</param>
+    /// <param name="filePath">An optional bootstrap file path.</param>
+    public BootstrapFileStore(
+        string serviceId,
+        DatabaseProviderIdResolver providerIdResolver,
+        string? filePath = null)
+        : this(ServiceId.Parse(serviceId), providerIdResolver, filePath)
+    {
+    }
+
+    /// <summary>
+    /// Resolves the absolute bootstrap file path a store would use, without constructing one.
+    /// </summary>
+    /// <param name="serviceId">The expected service identifier.</param>
+    /// <param name="filePath">An optional bootstrap file path.</param>
+    /// <remarks>
+    /// Hosts that must know the path before the provider registry snapshot exists use this instead
+    /// of constructing a store early; the store itself is then built lazily with the final snapshot.
+    /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="serviceId"/> is null.</exception>
     /// <exception cref="ArgumentException">The explicit path is empty.</exception>
-    public BootstrapFileStore(ServiceId serviceId, string? filePath = null)
+    public static string ResolveFilePath(ServiceId serviceId, string? filePath = null)
     {
         ArgumentNullException.ThrowIfNull(serviceId);
 
-        this.serviceId = serviceId;
         var candidatePath = filePath ?? Path.Combine(
             AppContext.BaseDirectory,
             "config",
@@ -47,23 +91,18 @@ public sealed class BootstrapFileStore
             throw new ArgumentException("The bootstrap file path cannot be empty.", nameof(filePath));
         }
 
-        FilePath = Path.GetFullPath(candidatePath);
-    }
-
-    /// <summary>
-    /// Initializes a store from a service identifier string.
-    /// </summary>
-    /// <param name="serviceId">The expected service identifier.</param>
-    /// <param name="filePath">An optional bootstrap file path.</param>
-    public BootstrapFileStore(string serviceId, string? filePath = null)
-        : this(ServiceId.Parse(serviceId), filePath)
-    {
+        return Path.GetFullPath(candidatePath);
     }
 
     /// <summary>
     /// Gets the service identifier expected in the bootstrap file.
     /// </summary>
     public ServiceId ServiceId => serviceId;
+
+    /// <summary>
+    /// Gets the provider-id resolver snapshot this store canonicalizes through.
+    /// </summary>
+    public DatabaseProviderIdResolver ProviderIdResolver => providerIdResolver;
 
     /// <summary>
     /// Gets the absolute path of the bootstrap file.
@@ -198,11 +237,18 @@ public sealed class BootstrapFileStore
             throw Failure("does not contain a MasterKey.");
         }
 
+        // Reading canonicalizes in memory only. An existing file that still holds a registered
+        // alias is never rewritten by a read; it becomes canonical on disk at the next Replace().
+        if (!providerIdResolver.TryCanonicalize(document.Database.Provider, out var canonicalProvider))
+        {
+            throw Failure("contains an unsupported or invalid database configuration.");
+        }
+
         BootstrapDatabaseConfiguration database;
         try
         {
             database = new BootstrapDatabaseConfiguration(
-                document.Database.Provider,
+                canonicalProvider,
                 document.Database.ServerVersion,
                 document.Database.ConnectionString);
         }
@@ -256,7 +302,7 @@ public sealed class BootstrapFileStore
                 directoryPath,
                 $".{Path.GetFileName(FilePath)}.{Path.GetRandomFileName()}.tmp");
 
-            WriteTemporaryFile(temporaryPath, configuration);
+            WriteTemporaryFile(temporaryPath, configuration, providerIdResolver);
 
             if (replace)
             {
@@ -318,7 +364,10 @@ public sealed class BootstrapFileStore
         }
     }
 
-    private static void WriteTemporaryFile(string temporaryPath, BootstrapConfiguration configuration)
+    private static void WriteTemporaryFile(
+        string temporaryPath,
+        BootstrapConfiguration configuration,
+        DatabaseProviderIdResolver providerIdResolver)
     {
         var document = new BootstrapJsonDocument
         {
@@ -326,7 +375,9 @@ public sealed class BootstrapFileStore
             ServiceId = configuration.ServiceId.Value,
             Database = new BootstrapJsonDatabase
             {
-                Provider = configuration.Database.Provider,
+                // A registered alias is resolved to the declaring descriptor id before it reaches
+                // disk; an unregistered but syntactically valid id is persisted as declared.
+                Provider = providerIdResolver.Canonicalize(configuration.Database.Provider),
                 ServerVersion = configuration.Database.ServerVersion,
                 ConnectionString = configuration.Database.ConnectionString
             },

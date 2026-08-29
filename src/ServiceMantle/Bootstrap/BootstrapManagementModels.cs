@@ -482,7 +482,7 @@ public sealed class BootstrapDatabaseProviderRegistry
         ArgumentNullException.ThrowIfNull(providers);
 
         this.registrations = new Dictionary<string, ProviderRegistration>(StringComparer.OrdinalIgnoreCase);
-        var descriptorList = new List<BootstrapDatabaseProviderDescriptor>();
+        var registrationList = new List<ProviderRegistration>();
 
         foreach (var provider in providers)
         {
@@ -497,32 +497,18 @@ public sealed class BootstrapDatabaseProviderRegistry
                 throw new ArgumentException("Provider descriptor cannot be null.", nameof(providers));
             }
 
-            if (this.registrations.ContainsKey(descriptor.Id))
-            {
-                throw new ArgumentException(
-                    $"The provider id '{descriptor.Id}' is already registered.",
-                    nameof(providers));
-            }
+            registrationList.Add(new ProviderRegistration(provider, descriptor));
+        }
 
-            var registration = new ProviderRegistration(
-                provider,
-                descriptor);
+        var descriptorList = registrationList.Select(item => item.Descriptor).ToList();
 
-            this.registrations.Add(descriptor.Id, registration);
+        // The resolver owns the alias table and rejects every canonical/alias collision, so this
+        // registry never maintains a second copy of the alias rules.
+        ProviderIdResolver = DatabaseProviderIdResolver.Create(descriptorList, nameof(providers));
 
-            foreach (var alias in descriptor.Aliases)
-            {
-                if (this.registrations.ContainsKey(alias))
-                {
-                    throw new ArgumentException(
-                        $"The alias '{alias}' conflicts with a registered canonical id.",
-                        nameof(providers));
-                }
-
-                this.registrations.Add(alias, registration);
-            }
-
-            descriptorList.Add(descriptor);
+        foreach (var registration in registrationList)
+        {
+            this.registrations.Add(registration.Descriptor.Id, registration);
         }
 
         this.descriptors = descriptorList
@@ -537,19 +523,23 @@ public sealed class BootstrapDatabaseProviderRegistry
     public IReadOnlyList<BootstrapDatabaseProviderDescriptor> Descriptors => descriptors;
 
     /// <summary>
+    /// Gets the immutable provider-id resolver snapshot for the registered descriptors.
+    /// </summary>
+    /// <remarks>
+    /// This is the snapshot that <see cref="BootstrapFileStore"/> and the keyed capability
+    /// registries must share so that a persisted alias, a dispatched provider, and a capability
+    /// lookup all agree on one canonical id.
+    /// </remarks>
+    public DatabaseProviderIdResolver ProviderIdResolver { get; }
+
+    /// <summary>
     /// Looks up a provider by canonical id or alias.
     /// </summary>
     /// <param name="providerId">The provider id or alias.</param>
     /// <param name="provider">The provider instance when found.</param>
     public bool TryGetProvider(string providerId, out IBootstrapDatabaseProvider? provider)
     {
-        if (string.IsNullOrWhiteSpace(providerId))
-        {
-            provider = null;
-            return false;
-        }
-
-        if (!registrations.TryGetValue(providerId, out var registration))
+        if (!TryGetRegistration(providerId, out var registration) || registration is null)
         {
             provider = null;
             return false;
@@ -560,16 +550,18 @@ public sealed class BootstrapDatabaseProviderRegistry
     }
 
     internal bool TryGetRegistration(
-        string providerId,
+        string? providerId,
         out ProviderRegistration? registration)
     {
-        if (string.IsNullOrWhiteSpace(providerId))
+        registration = null;
+
+        if (!ProviderIdResolver.TryResolveRegisteredId(providerId, out var canonicalProviderId) ||
+            canonicalProviderId is null)
         {
-            registration = null;
             return false;
         }
 
-        return registrations.TryGetValue(providerId, out registration);
+        return registrations.TryGetValue(canonicalProviderId, out registration);
     }
 
     internal sealed class ProviderRegistration
@@ -620,7 +612,10 @@ public sealed class BootstrapDatabaseCandidateValidator : IBootstrapCandidateVal
         }
 
         var descriptor = registration.Descriptor;
-        var serverVersion = candidate.Database.ServerVersion;
+
+        // The provider only ever sees its own canonical id, never the alias the caller used.
+        var database = candidate.Database.WithCanonicalProvider(descriptor.Id);
+        var serverVersion = database.ServerVersion;
 
         if (descriptor.ServerVersionRequirement == BootstrapServerVersionRequirement.Required &&
             string.IsNullOrWhiteSpace(serverVersion))
@@ -636,7 +631,7 @@ public sealed class BootstrapDatabaseCandidateValidator : IBootstrapCandidateVal
 
         try
         {
-            var result = await registration.Provider.ValidateAsync(candidate.Database, cancellationToken)
+            var result = await registration.Provider.ValidateAsync(database, cancellationToken)
                 .ConfigureAwait(false);
 
             return result ?? BootstrapValidationResult.Failure("database.provider_invalid_result");

@@ -98,7 +98,7 @@ public sealed class BootstrapFileStoreTests
     public void Default_path_uses_the_normalized_service_id()
     {
         var serviceId = ServiceId.Parse("  SignaCore-Prod  ");
-        var store = new BootstrapFileStore(serviceId);
+        var store = new BootstrapFileStore(serviceId, DatabaseProviderIdResolver.Empty);
 
         Assert.True(Path.IsPathFullyQualified(store.FilePath));
         Assert.Equal("signacore-prod.bootstrap.json", Path.GetFileName(store.FilePath));
@@ -109,7 +109,10 @@ public sealed class BootstrapFileStoreTests
     {
         using var directory = TemporaryDirectory.Create();
         var relativePath = Path.Combine(directory.Path, "custom", "bootstrap.json");
-        var store = new BootstrapFileStore(ServiceId.Parse("signacore"), relativePath);
+        var store = new BootstrapFileStore(
+            ServiceId.Parse("signacore"),
+            DatabaseProviderIdResolver.Empty,
+            relativePath);
 
         Assert.Equal(Path.GetFullPath(relativePath), store.FilePath);
     }
@@ -411,6 +414,7 @@ public sealed class BootstrapFileStoreTests
         var configurationDirectory = Path.Combine(directory.Path, "new-config");
         var store = new BootstrapFileStore(
             ServiceId.Parse("signacore"),
+            DatabaseProviderIdResolver.Empty,
             Path.Combine(configurationDirectory, "signacore.bootstrap.json"));
 
         store.Create(CreateConfiguration());
@@ -436,13 +440,15 @@ public sealed class BootstrapFileStoreTests
 
     private static BootstrapFileStore CreateStore(
         TemporaryDirectory directory,
-        ServiceId? serviceId = null)
+        ServiceId? serviceId = null,
+        DatabaseProviderIdResolver? providerIdResolver = null)
     {
         var actualServiceId = serviceId ?? ServiceId.Parse("signacore");
         var filePath = Path.Combine(directory.Path, "config", "signacore.bootstrap.json");
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         return new BootstrapFileStore(
             actualServiceId,
+            providerIdResolver ?? DatabaseProviderIdResolver.Empty,
             filePath);
     }
 
@@ -456,30 +462,5 @@ public sealed class BootstrapFileStoreTests
             actualServiceId,
             new BootstrapDatabaseConfiguration(provider, "15", connectionString),
             "test-master-key");
-    }
-
-    private sealed class TemporaryDirectory : IDisposable
-    {
-        private TemporaryDirectory(string path)
-        {
-            Path = path;
-            Directory.CreateDirectory(path);
-        }
-
-        public string Path { get; }
-
-        public static TemporaryDirectory Create() =>
-            new(System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                "ServiceMantle.Tests",
-                Guid.NewGuid().ToString("N")));
-
-        public void Dispose()
-        {
-            if (Directory.Exists(Path))
-            {
-                Directory.Delete(Path, recursive: true);
-            }
-        }
     }
 }
