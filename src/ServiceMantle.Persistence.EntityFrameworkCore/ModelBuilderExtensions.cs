@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using ServiceMantle.Installation;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore;
 
@@ -46,6 +47,21 @@ public static class ModelBuilderExtensions
                 .HasColumnName("version")
                 .IsRequired()
                 .IsConcurrencyToken();
+
+            entity.Property(item => item.SetupCodeGeneration)
+                .HasColumnName("setup_code_generation")
+                .IsRequired()
+                .HasDefaultValue(0);
+
+            entity.Property(item => item.SetupCodeDigest)
+                .HasColumnName("setup_code_digest")
+                .HasMaxLength(SetupCodeDigest.ValueLength);
+
+            entity.Property(item => item.SetupCodeIssuedAtUtc)
+                .HasColumnName("setup_code_issued_at_utc");
+
+            entity.Property(item => item.SetupCodeExpiresAtUtc)
+                .HasColumnName("setup_code_expires_at_utc");
         });
 
         return modelBuilder;

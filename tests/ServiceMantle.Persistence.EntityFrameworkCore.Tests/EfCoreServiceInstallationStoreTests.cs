@@ -254,7 +254,7 @@ public sealed class EfCoreServiceInstallationStoreTests
     }
 
     [Fact]
-    public async Task MarkCompletedAsync_updates_state_and_version()
+    public async Task MarkCompletedAsync_refuses_to_complete_a_pending_installation()
     {
         using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -274,18 +274,20 @@ public sealed class EfCoreServiceInstallationStoreTests
 
         var completedTime = new DateTimeOffset(2026, 8, 1, 10, 5, 0, TimeSpan.Zero);
         var store = new EfCoreServiceInstallationStore<TestDbContext>(context, new FixedTimeProvider(completedTime));
-        var result = await store.MarkCompletedAsync(serviceId, TestContext.Current.CancellationToken);
+        var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
+            store.MarkCompletedAsync(serviceId, TestContext.Current.CancellationToken).AsTask());
 
-        Assert.True(result.IsCompleted);
+        // Completing a pending installation must consume its Setup Code, so this entry point cannot
+        // bypass validation any more.
+        Assert.Equal("installation.setup_code_required", exception.ErrorCode);
 
         var entity = await context.ServiceInstallations.AsNoTracking().SingleAsync(
             item => item.ServiceId == serviceId.Value,
             TestContext.Current.CancellationToken);
-        Assert.Equal(InstallationStatus.Completed, entity.Status);
-        Assert.Equal(completedTime.UtcDateTime, entity.CompletedAtUtc);
-        Assert.Equal(2, entity.Version);
+        Assert.Equal(InstallationStatus.PendingSetup, entity.Status);
+        Assert.Null(entity.CompletedAtUtc);
+        Assert.Equal(1, entity.Version);
     }
-
     [Fact]
     public async Task MarkCompletedAsync_is_idempotent_for_completed_state()
     {
@@ -335,7 +337,7 @@ public sealed class EfCoreServiceInstallationStoreTests
     }
 
     [Fact]
-    public async Task MarkCompletedAsync_handles_concurrent_completion_without_data_loss()
+    public async Task MarkCompletedAsync_refuses_concurrent_pending_completion_without_data_loss()
     {
         using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -358,84 +360,70 @@ public sealed class EfCoreServiceInstallationStoreTests
         var storeA = new EfCoreServiceInstallationStore<TestDbContext>(contextA, new FixedTimeProvider(fixedTime));
         var storeB = new EfCoreServiceInstallationStore<TestDbContext>(contextB, new FixedTimeProvider(fixedTime));
 
-        var first = storeA.MarkCompletedAsync(serviceId, TestContext.Current.CancellationToken);
-        var second = storeB.MarkCompletedAsync(serviceId, TestContext.Current.CancellationToken);
-        var results = await Task.WhenAll(first.AsTask(), second.AsTask());
-
-        Assert.All(results, item => Assert.True(item.IsCompleted));
+        foreach (var store in new[] { storeA, storeB })
+        {
+            var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
+                store.MarkCompletedAsync(serviceId, TestContext.Current.CancellationToken).AsTask());
+            Assert.Equal("installation.setup_code_required", exception.ErrorCode);
+        }
 
         var entity = await contextA.ServiceInstallations.AsNoTracking().SingleAsync(
             item => item.ServiceId == serviceId.Value,
             TestContext.Current.CancellationToken);
-        Assert.Equal(InstallationStatus.Completed, entity.Status);
+        Assert.Equal(InstallationStatus.PendingSetup, entity.Status);
+        Assert.Equal(5, entity.Version);
         Assert.Equal(
             1,
             await contextA.ServiceInstallations.CountAsync(
                 item => item.ServiceId == serviceId.Value,
                 TestContext.Current.CancellationToken));
     }
-
     [Fact]
-    public async Task MarkCompletedAsync_detaches_stale_entity_after_deterministic_concurrency_conflict()
+    public async Task MarkCompletedAsync_leaves_no_tracked_entry_behind_for_a_pending_installation()
     {
         using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync(TestContext.Current.CancellationToken);
 
-        await using var contextA = CreateContext(connection);
-        await using var contextB = CreateContext(connection);
-        await contextA.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        await using var context = CreateContext(connection);
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
 
         var serviceId = ServiceId.Parse("signacore");
-        contextA.ServiceInstallations.Add(new ServiceInstallationEntity
+        context.ServiceInstallations.Add(new ServiceInstallationEntity
         {
             ServiceId = serviceId.Value,
             Status = InstallationStatus.PendingSetup,
             CreatedAtUtc = new DateTime(2026, 8, 1, 11, 0, 0, DateTimeKind.Utc),
             Version = 1
         });
-        await contextA.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        context.ChangeTracker.Clear();
 
-        var loadedA = await contextA.ServiceInstallations.SingleAsync(
-            item => item.ServiceId == serviceId.Value,
-            TestContext.Current.CancellationToken);
-        var loadedB = await contextB.ServiceInstallations.SingleAsync(
-            item => item.ServiceId == serviceId.Value,
-            TestContext.Current.CancellationToken);
-        Assert.Equal(loadedA.Version, loadedB.Version);
+        var store = new EfCoreServiceInstallationStore<TestDbContext>(
+            context,
+            new FixedTimeProvider(new DateTimeOffset(2026, 8, 1, 11, 5, 0, TimeSpan.Zero)));
+        var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
+            store.MarkCompletedAsync(serviceId, TestContext.Current.CancellationToken).AsTask());
 
-        var completedAt = new DateTimeOffset(2026, 8, 1, 11, 5, 0, TimeSpan.Zero);
-        var storeA = new EfCoreServiceInstallationStore<TestDbContext>(
-            contextA,
-            new FixedTimeProvider(completedAt));
-        var storeB = new EfCoreServiceInstallationStore<TestDbContext>(
-            contextB,
-            new FixedTimeProvider(completedAt));
-
-        var first = await storeA.MarkCompletedAsync(serviceId, TestContext.Current.CancellationToken);
-        var second = await storeB.MarkCompletedAsync(serviceId, TestContext.Current.CancellationToken);
-
-        Assert.True(first.IsCompleted);
-        Assert.True(second.IsCompleted);
+        Assert.Equal("installation.setup_code_required", exception.ErrorCode);
         Assert.DoesNotContain(
-            contextB.ChangeTracker.Entries<ServiceInstallationEntity>(),
+            context.ChangeTracker.Entries<ServiceInstallationEntity>(),
             entry => entry.Entity.ServiceId == serviceId.Value);
 
-        contextB.ServiceInstallations.Add(new ServiceInstallationEntity
+        context.ServiceInstallations.Add(new ServiceInstallationEntity
         {
             ServiceId = "other-service",
             Status = InstallationStatus.PendingSetup,
             CreatedAtUtc = new DateTime(2026, 8, 1, 11, 0, 0, DateTimeKind.Utc),
             Version = 1
         });
-        await contextB.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(
-            InstallationStatus.Completed,
-            (await contextA.ServiceInstallations.AsNoTracking().SingleAsync(
-                item => item.ServiceId == serviceId.Value,
-                TestContext.Current.CancellationToken)).Status);
+        var stored = await context.ServiceInstallations.AsNoTracking().SingleAsync(
+            item => item.ServiceId == serviceId.Value,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(InstallationStatus.PendingSetup, stored.Status);
+        Assert.Equal(1, stored.Version);
     }
-
     [Fact]
     public async Task Entity_state_validation_rejects_pending_completion_timestamp()
     {
@@ -579,7 +567,8 @@ public sealed class EfCoreServiceInstallationStoreTests
         var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
             store.MarkCompletedAsync(serviceId, TestContext.Current.CancellationToken).AsTask());
 
-        Assert.Equal("installation.state_invariant_violation", exception.ErrorCode);
+        // The pending row is refused before the clock check is ever reached.
+        Assert.Equal("installation.setup_code_required", exception.ErrorCode);
         Assert.Equal(InstallationStatus.PendingSetup, entity.Status);
         Assert.Null(entity.CompletedAtUtc);
         Assert.Equal(1, entity.Version);
@@ -655,10 +644,13 @@ public sealed class EfCoreServiceInstallationStoreTests
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var store = CreateStore(context);
-        _ = await store.MarkCompletedAsync(alpha, TestContext.Current.CancellationToken);
+        var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
+            store.MarkCompletedAsync(alpha, TestContext.Current.CancellationToken).AsTask());
 
+        // Refusing to complete alpha must leave beta entirely untouched.
+        Assert.Equal("installation.setup_code_required", exception.ErrorCode);
         Assert.Equal(
-            InstallationStatus.Completed,
+            InstallationStatus.PendingSetup,
             (await context.ServiceInstallations.AsNoTracking().SingleAsync(
                 item => item.ServiceId == alpha.Value,
                 TestContext.Current.CancellationToken)).Status);
@@ -667,6 +659,7 @@ public sealed class EfCoreServiceInstallationStoreTests
             (await context.ServiceInstallations.AsNoTracking().SingleAsync(
                 item => item.ServiceId == beta.Value,
                 TestContext.Current.CancellationToken)).Status);
+        Assert.Null(await store.FindAsync(ServiceId.Parse("gamma"), TestContext.Current.CancellationToken));
     }
 
     [Fact]
