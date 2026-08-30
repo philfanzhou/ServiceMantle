@@ -14,7 +14,7 @@ public static class ServiceMantleServiceCollectionExtensions
 {
     /// <summary>
     /// Registers service identity, startup-phase resolution, local Bootstrap management,
-    /// and provider-independent migration registries.
+    /// and provider-independent database capability registries.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="serviceId">The stable identity shared by all service instances.</param>
@@ -92,6 +92,10 @@ public static class ServiceMantleServiceCollectionExtensions
             resolvedBootstrapFilePath));
         services.TryAddSingleton<IBootstrapCandidateValidator, BootstrapDatabaseCandidateValidator>();
         services.TryAddSingleton<BootstrapConfigurationManager>();
+        services.TryAddSingleton<DatabaseTargetPreparationProviderRegistry>(serviceProvider =>
+            new DatabaseTargetPreparationProviderRegistry(
+                serviceProvider.GetServices<IDatabaseTargetPreparationProvider>(),
+                serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver));
         services.TryAddSingleton<DatabaseMigrationLockProviderRegistry>(serviceProvider =>
             new DatabaseMigrationLockProviderRegistry(
                 serviceProvider.GetServices<IDatabaseMigrationLockProvider>(),
@@ -112,6 +116,20 @@ public static class ServiceMantleServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IBootstrapDatabaseProvider, TProvider>());
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds a provider-specific database target preparation capability without introducing a
+    /// driver dependency into ServiceMantle.AspNetCore.
+    /// </summary>
+    public static ServiceMantleBuilder AddDatabaseTargetPreparationProvider<TProvider>(
+        this ServiceMantleBuilder builder)
+        where TProvider : class, IDatabaseTargetPreparationProvider
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IDatabaseTargetPreparationProvider, TProvider>());
         return builder;
     }
 

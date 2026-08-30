@@ -14,7 +14,7 @@ namespace ServiceMantle.AspNetCore.Tests;
 public sealed class ServiceMantleRegistrationTests
 {
     [Fact]
-    public void AddServiceMantle_registers_identity_bootstrap_phase_and_migration_foundation()
+    public void AddServiceMantle_registers_identity_bootstrap_phase_and_database_foundation()
     {
         var services = new ServiceCollection();
         var serviceId = ServiceId.Parse("catalog");
@@ -32,6 +32,7 @@ public sealed class ServiceMantleRegistrationTests
             provider.GetRequiredService<BootstrapFileStore>().FilePath);
         Assert.NotNull(provider.GetRequiredService<BootstrapConfigurationManager>());
         Assert.Empty(provider.GetRequiredService<BootstrapDatabaseProviderRegistry>().Descriptors);
+        Assert.NotNull(provider.GetRequiredService<DatabaseTargetPreparationProviderRegistry>());
         Assert.NotNull(provider.GetRequiredService<DatabaseMigrationLockProviderRegistry>());
         Assert.NotNull(provider.GetRequiredService<IServiceStartupPhaseResolver>());
         Assert.Null(provider.GetService<DatabaseMigrationOrchestrator>());
@@ -94,6 +95,7 @@ public sealed class ServiceMantleRegistrationTests
         services
             .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
             .AddBootstrapDatabaseProvider<FakeBootstrapProvider>()
+            .AddDatabaseTargetPreparationProvider<FakeTargetPreparationProvider>()
             .AddMigrationLockProvider<FakeMigrationLockProvider>()
             .AddDatabaseMigration<FakeMigrationExecutor>();
 
@@ -105,10 +107,50 @@ public sealed class ServiceMantleRegistrationTests
         Assert.True(bootstrapRegistry.TryGetProvider("fake", out var bootstrapProvider));
         Assert.IsType<FakeBootstrapProvider>(bootstrapProvider);
 
+        var preparationRegistry = provider.GetRequiredService<DatabaseTargetPreparationProviderRegistry>();
+        Assert.True(preparationRegistry.TryGetProvider("fake", out var preparationProvider));
+        Assert.IsType<FakeTargetPreparationProvider>(preparationProvider);
+
         var migrationRegistry = provider.GetRequiredService<DatabaseMigrationLockProviderRegistry>();
         Assert.True(migrationRegistry.TryGetProvider("fake", out var lockProvider));
         Assert.IsType<FakeMigrationLockProvider>(lockProvider);
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<DatabaseMigrationOrchestrator>());
+    }
+
+    [Fact]
+    public void Bootstrap_provider_registration_does_not_imply_preparation_support()
+    {
+        var services = new ServiceCollection();
+        services
+            .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+            .AddBootstrapDatabaseProvider<FakeBootstrapProvider>();
+
+        using var provider = services.BuildServiceProvider();
+        var registry = provider.GetRequiredService<DatabaseTargetPreparationProviderRegistry>();
+
+        Assert.False(registry.TryGetProvider("fake", out var preparationProvider));
+        Assert.Null(preparationProvider);
+    }
+
+    [Fact]
+    public void AddDatabaseTargetPreparationProvider_is_idempotent_and_does_not_imply_bootstrap_support()
+    {
+        var services = new ServiceCollection();
+        var builder = services.AddServiceMantle(
+            ServiceId.Parse("catalog"),
+            InstanceId.Parse("catalog-01"));
+
+        builder.AddDatabaseTargetPreparationProvider<FakeTargetPreparationProvider>();
+        builder.AddDatabaseTargetPreparationProvider<FakeTargetPreparationProvider>();
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Single(provider.GetServices<IDatabaseTargetPreparationProvider>());
+        Assert.Empty(provider.GetServices<IBootstrapDatabaseProvider>());
+        Assert.Empty(provider.GetRequiredService<BootstrapDatabaseProviderRegistry>().Descriptors);
+        Assert.Same(
+            provider.GetRequiredService<DatabaseTargetPreparationProviderRegistry>(),
+            provider.GetRequiredService<DatabaseTargetPreparationProviderRegistry>());
     }
 
     [Fact]
@@ -189,7 +231,7 @@ public sealed class ServiceMantleRegistrationTests
     }
 
     [Fact]
-    public void Di_bootstrap_store_and_lock_registry_share_one_resolver_snapshot()
+    public void Di_bootstrap_store_and_capability_registries_share_one_resolver_snapshot()
     {
         var services = new ServiceCollection();
         services
@@ -198,6 +240,7 @@ public sealed class ServiceMantleRegistrationTests
                 InstanceId.Parse("catalog-01"),
                 Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.json"))
             .AddBootstrapDatabaseProvider<AliasedProvider>()
+            .AddDatabaseTargetPreparationProvider<AliasedTargetPreparationProvider>()
             .AddMigrationLockProvider<AliasedMigrationLockProvider>();
 
         using var provider = services.BuildServiceProvider();
@@ -209,10 +252,34 @@ public sealed class ServiceMantleRegistrationTests
             provider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver,
             provider.GetRequiredService<BootstrapFileStore>().ProviderIdResolver);
 
-        // The lock provider registered itself under the canonical id; the alias must find it.
+        // Both capability providers registered under the canonical id; the alias from the shared
+        // Bootstrap resolver snapshot must find each one.
+        var preparationRegistry = provider.GetRequiredService<DatabaseTargetPreparationProviderRegistry>();
+        Assert.True(preparationRegistry.TryGetProvider("aliased-db", out var preparationByAlias));
+        Assert.True(preparationRegistry.TryGetProvider("AliasedProvider", out var preparationByCanonicalId));
+        Assert.Same(preparationByCanonicalId, preparationByAlias);
+
         Assert.True(provider.GetRequiredService<DatabaseMigrationLockProviderRegistry>()
             .TryGetProvider("aliased-db", out var lockProvider));
         Assert.NotNull(lockProvider);
+    }
+
+    private sealed class AliasedTargetPreparationProvider : IDatabaseTargetPreparationProvider
+    {
+        public string ProviderId => "AliasedProvider";
+
+        public BootstrapDatabaseTargetKind TargetKind => BootstrapDatabaseTargetKind.ServerDatabase;
+
+        public ValueTask<DatabaseTargetObservation> ObserveAsync(
+            BootstrapDatabaseConfiguration target,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(DatabaseTargetObservation.TargetMissing());
+
+        public ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
+            DatabaseTargetPreparationRequest request,
+            TimeSpan timeout,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created));
     }
 
     private sealed class AliasedProvider : IBootstrapDatabaseProvider
@@ -252,6 +319,24 @@ public sealed class ServiceMantleRegistrationTests
             TimeSpan acquireTimeout,
             CancellationToken cancellationToken = default) =>
             ValueTask.FromResult<IDatabaseMigrationLock>(new FakeMigrationLock());
+    }
+
+    private sealed class FakeTargetPreparationProvider : IDatabaseTargetPreparationProvider
+    {
+        public string ProviderId => "fake";
+
+        public BootstrapDatabaseTargetKind TargetKind => BootstrapDatabaseTargetKind.ServerDatabase;
+
+        public ValueTask<DatabaseTargetObservation> ObserveAsync(
+            BootstrapDatabaseConfiguration target,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(DatabaseTargetObservation.TargetMissing());
+
+        public ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
+            DatabaseTargetPreparationRequest request,
+            TimeSpan timeout,
+            CancellationToken cancellationToken) =>
+            ValueTask.FromResult(DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created));
     }
 
     private sealed class FakeMigrationLock : IDatabaseMigrationLock
