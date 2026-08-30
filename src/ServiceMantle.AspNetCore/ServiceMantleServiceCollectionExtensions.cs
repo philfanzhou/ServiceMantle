@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle;
@@ -5,6 +7,7 @@ using ServiceMantle.AspNetCore;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Http;
 using ServiceMantle.Logging;
+using ServiceMantle.Management;
 using ServiceMantle.Migration;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -177,6 +180,80 @@ public static class ServiceMantleServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Adds the secure ServiceMantle management cookie authentication capability.
+    /// </summary>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="configure">An optional action that customizes the safe cookie lifetime settings.</param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// The capability also registers the management authorization policy. Equivalent duplicate
+    /// registrations are idempotent; conflicting or unsafe settings fail when the host starts.
+    /// A presented cookie that cannot be authenticated uses the closed expired-session response so
+    /// that invalid ticket details are not exposed.
+    /// </remarks>
+    public static ServiceMantleBuilder AddManagementCookieAuthentication(
+        this ServiceMantleBuilder builder,
+        Action<ServiceMantleManagementCookieOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var hostRegistration = builder.Services
+            .Where(descriptor => descriptor.ServiceType == typeof(ServiceMantleRegistration))
+            .Select(descriptor => descriptor.ImplementationInstance as ServiceMantleRegistration)
+            .Single(registration => registration is not null)!;
+        var options = new ServiceMantleManagementCookieOptions();
+        configure?.Invoke(options);
+        var registration = ServiceMantleManagementCookieRegistration.Create(
+            options,
+            hostRegistration.ServiceId);
+        var firstRegistration = !builder.Services.Any(descriptor =>
+            descriptor.ServiceType == typeof(ServiceMantleManagementCookieRegistration));
+
+        builder.Services.AddSingleton(registration);
+        if (!firstRegistration)
+        {
+            return builder;
+        }
+
+        builder.Services.AddServiceMantleManagementAuthorization();
+        builder.Services.AddDataProtection().SetApplicationName(registration.ApplicationName);
+        builder.Services
+            .AddAuthentication(authenticationOptions =>
+            {
+                authenticationOptions.DefaultAuthenticateScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                authenticationOptions.DefaultChallengeScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                authenticationOptions.DefaultForbidScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                authenticationOptions.DefaultSignInScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                authenticationOptions.DefaultSignOutScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+            })
+            .AddCookie(
+                ServiceMantleManagementSessionDefaults.AuthenticationScheme,
+                cookieOptions =>
+                {
+                    cookieOptions.Cookie.Name = ServiceMantleManagementSessionDefaults.CookieName;
+                    cookieOptions.Cookie.HttpOnly = registration.HttpOnly;
+                    cookieOptions.Cookie.SecurePolicy = registration.SecurePolicy;
+                    cookieOptions.Cookie.SameSite = registration.SameSite;
+                    cookieOptions.Cookie.IsEssential = registration.IsEssential;
+                    cookieOptions.Cookie.Path = "/";
+                    cookieOptions.Cookie.Domain = null;
+                    cookieOptions.ExpireTimeSpan = registration.ExpireTimeSpan;
+                    cookieOptions.SlidingExpiration = registration.SlidingExpiration;
+                    cookieOptions.Events = ServiceMantleManagementCookieEvents.Create();
+                });
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IHostedService,
+            ServiceMantleManagementCookieStartupValidator>());
+
+        return builder;
+    }
+
+    /// <summary>
     /// Adds an exact exception-type mapping to the ServiceMantle Problem Details table.
     /// </summary>
     /// <typeparam name="TException">The exact exception type handled by the mapping.</typeparam>
@@ -211,6 +288,40 @@ public static class ServiceMantleServiceCollectionExtensions
                 errorCode,
                 title,
                 extensionFields));
+        return builder;
+    }
+
+    /// <summary>Adds an explicit, startup-validated forwarded-header trust boundary.</summary>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="configure">Configures trusted proxies, networks, hosts, and chain limit.</param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// This capability is opt-in and is not added by <c>AddServiceMantle</c>. Repeated normalized
+    /// configurations are idempotent; conflicting registrations fail when the host starts.
+    /// </remarks>
+    public static ServiceMantleBuilder AddForwardedHeaders(
+        this ServiceMantleBuilder builder,
+        Action<ServiceMantleForwardedHeadersOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var options = new ServiceMantleForwardedHeadersOptions();
+        configure(options);
+        builder.Services.AddSingleton(new ServiceMantleForwardedHeadersRegistration(options));
+        builder.Services.TryAddSingleton<ServiceMantleForwardedHeadersSnapshotProvider>();
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IHostedService,
+            ServiceMantleForwardedHeadersStartupValidator>());
+        return builder;
+    }
+
+    /// <summary>Adds the mandatory security response-header capability.</summary>
+    /// <remarks>This opt-in registration is idempotent and exposes no weakening options.</remarks>
+    public static ServiceMantleBuilder AddSecurityResponseHeaders(this ServiceMantleBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Services.TryAddSingleton<ServiceMantleSecurityResponseHeadersRegistration>();
         return builder;
     }
 }

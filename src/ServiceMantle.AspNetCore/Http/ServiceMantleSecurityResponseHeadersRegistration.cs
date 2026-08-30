@@ -1,0 +1,3 @@
+namespace ServiceMantle.AspNetCore;
+
+internal sealed class ServiceMantleSecurityResponseHeadersRegistration;

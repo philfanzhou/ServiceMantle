@@ -51,6 +51,22 @@
       ]
     },
     {
+      "id": "ServiceMantle.Database.Sqlite",
+      "project": "src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj",
+      "optional": true,
+      "dependencies": [
+        "Microsoft.Data.Sqlite",
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.Serilog",
       "project": "src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
       "optional": true,
