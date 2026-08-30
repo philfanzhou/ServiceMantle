@@ -16,6 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\\..\\src\\ServiceMantle.Database.PostgreSql\\ServiceMantle.Database.PostgreSql.csproj" />
     <ProjectReference Include="..\\..\\src\\ServiceMantle.Persistence.EntityFrameworkCore\\ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\\ServiceMantle.Testing\\ServiceMantle.Testing.csproj" />
   </ItemGroup>
 
 </Project>

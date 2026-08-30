@@ -129,19 +129,48 @@ internal static class Program
     {
         foreach (var test in registry.Packages.SelectMany(package => package.Tests))
         {
+            if (test.RealDatabase)
+            {
+                await RunDotnetAsync(
+                    root,
+                    [
+                        "test",
+                        "--project",
+                        test.Project,
+                        "--configuration",
+                        "Release",
+                        "--no-build",
+                        "--no-restore",
+                        "--list-tests",
+                        "--filter-trait",
+                        "Category=RealDatabase",
+                        "--minimum-expected-tests",
+                        "1",
+                    ],
+                    null,
+                    cancellationToken);
+            }
+
+            var arguments = new List<string>
+            {
+                "test",
+                "--project",
+                test.Project,
+                "--configuration",
+                "Release",
+                "--no-build",
+                "--no-restore",
+                "--minimum-expected-tests",
+                "1",
+            };
+            if (test.RealDatabase)
+            {
+                arguments.AddRange(["--zero-tests-policy", "strict", "--fail-skips", "on"]);
+            }
+
             await RunDotnetAsync(
                 root,
-                [
-                    "test",
-                    "--project",
-                    test.Project,
-                    "--configuration",
-                    "Release",
-                    "--no-build",
-                    "--no-restore",
-                    "--minimum-expected-tests",
-                    "1",
-                ],
+                arguments,
                 test.Environment,
                 cancellationToken);
         }
@@ -342,6 +371,8 @@ internal sealed class RegisteredTest
 {
     public string Project { get; init; } = string.Empty;
 
+    public bool RealDatabase { get; init; }
+
     public Dictionary<string, string> Environment { get; init; } = [];
 }
 
@@ -451,6 +482,15 @@ internal static class RegistryValidator
             {
                 throw new ReleaseToolException("A registered test environment value is invalid.");
             }
+        }
+
+        if (test.RealDatabase && !test.Environment.Any(variable =>
+                variable.Key.StartsWith("RUN_SERVICEMANTLE_", StringComparison.Ordinal) &&
+                variable.Key.EndsWith("_TESTS", StringComparison.Ordinal) &&
+                string.Equals(variable.Value, "true", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ReleaseToolException(
+                "A registered real-database test must declare a required RUN_SERVICEMANTLE_*_TESTS environment variable.");
         }
     }
 

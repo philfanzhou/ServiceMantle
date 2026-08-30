@@ -43,6 +43,7 @@
       "tests": [
         {
           "project": "tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj",
+          "realDatabase": true,
           "environment": {
             "RUN_SERVICEMANTLE_POSTGRES_TESTS": "true"
           }
@@ -79,6 +80,7 @@
       "tests": [
         {
           "project": "tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj",
+          "realDatabase": true,
           "environment": {
             "RUN_SERVICEMANTLE_SQLSERVER_TESTS": "true"
           }
