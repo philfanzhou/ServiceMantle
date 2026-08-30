@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle;
@@ -5,6 +7,7 @@ using ServiceMantle.AspNetCore;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Http;
 using ServiceMantle.Logging;
+using ServiceMantle.Management;
 using ServiceMantle.Migration;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -173,6 +176,80 @@ public static class ServiceMantleServiceCollectionExtensions
 
         builder.Services.TryAddScoped<IDatabaseMigrationExecutor, TExecutor>();
         builder.Services.TryAddScoped<DatabaseMigrationOrchestrator>();
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds the secure ServiceMantle management cookie authentication capability.
+    /// </summary>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="configure">An optional action that customizes the safe cookie lifetime settings.</param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// The capability also registers the management authorization policy. Equivalent duplicate
+    /// registrations are idempotent; conflicting or unsafe settings fail when the host starts.
+    /// A presented cookie that cannot be authenticated uses the closed expired-session response so
+    /// that invalid ticket details are not exposed.
+    /// </remarks>
+    public static ServiceMantleBuilder AddManagementCookieAuthentication(
+        this ServiceMantleBuilder builder,
+        Action<ServiceMantleManagementCookieOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var hostRegistration = builder.Services
+            .Where(descriptor => descriptor.ServiceType == typeof(ServiceMantleRegistration))
+            .Select(descriptor => descriptor.ImplementationInstance as ServiceMantleRegistration)
+            .Single(registration => registration is not null)!;
+        var options = new ServiceMantleManagementCookieOptions();
+        configure?.Invoke(options);
+        var registration = ServiceMantleManagementCookieRegistration.Create(
+            options,
+            hostRegistration.ServiceId);
+        var firstRegistration = !builder.Services.Any(descriptor =>
+            descriptor.ServiceType == typeof(ServiceMantleManagementCookieRegistration));
+
+        builder.Services.AddSingleton(registration);
+        if (!firstRegistration)
+        {
+            return builder;
+        }
+
+        builder.Services.AddServiceMantleManagementAuthorization();
+        builder.Services.AddDataProtection().SetApplicationName(registration.ApplicationName);
+        builder.Services
+            .AddAuthentication(authenticationOptions =>
+            {
+                authenticationOptions.DefaultAuthenticateScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                authenticationOptions.DefaultChallengeScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                authenticationOptions.DefaultForbidScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                authenticationOptions.DefaultSignInScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                authenticationOptions.DefaultSignOutScheme =
+                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+            })
+            .AddCookie(
+                ServiceMantleManagementSessionDefaults.AuthenticationScheme,
+                cookieOptions =>
+                {
+                    cookieOptions.Cookie.Name = ServiceMantleManagementSessionDefaults.CookieName;
+                    cookieOptions.Cookie.HttpOnly = registration.HttpOnly;
+                    cookieOptions.Cookie.SecurePolicy = registration.SecurePolicy;
+                    cookieOptions.Cookie.SameSite = registration.SameSite;
+                    cookieOptions.Cookie.IsEssential = registration.IsEssential;
+                    cookieOptions.Cookie.Path = "/";
+                    cookieOptions.Cookie.Domain = null;
+                    cookieOptions.ExpireTimeSpan = registration.ExpireTimeSpan;
+                    cookieOptions.SlidingExpiration = registration.SlidingExpiration;
+                    cookieOptions.Events = ServiceMantleManagementCookieEvents.Create();
+                });
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IHostedService,
+            ServiceMantleManagementCookieStartupValidator>());
+
         return builder;
     }
 
