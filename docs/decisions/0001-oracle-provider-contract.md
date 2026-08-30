@@ -186,7 +186,7 @@ Preparation failure mapping is fixed as follows:
 | Required direct privilege missing | `database_target_preparation.permission_denied` |
 | Existing user is not connectable with the supplied target identity, including a losing create race | `database_target_preparation.target_conflict` |
 | Administrative connection or session is lost, including a DDL statement whose acknowledgement never arrives | `database_target_preparation.connection_failed` |
-| The caller-provided overall timeout expires, and no permitted compensation failed | `database_target_preparation.timeout` |
+| The caller-provided overall timeout expires, no permitted compensation failed, and the caller did not cancel | `database_target_preparation.timeout` |
 | Unexpected Oracle failure, or a permitted compensation that did not verifiably remove this call's new user | `database_target_preparation.preparation_failed` |
 | Caller cancellation, and no permitted compensation failed | throw `OperationCanceledException` |
 
