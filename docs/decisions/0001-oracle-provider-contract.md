@@ -110,16 +110,30 @@ opens the administrative connection, then probes `ALL_USERS` before any DDL:
    followed by `GRANT CREATE SESSION` and a fresh target connection probe.
 4. If a concurrent `CREATE USER` wins, re-query and re-probe. Return `AlreadyExists`
    only when the supplied target credentials connect as the expected user; otherwise
-   return `TargetConflict`.
-5. If any step after this call's `CREATE USER` fails or is cancelled, attempt bounded
-   compensation with `DROP USER` without `CASCADE`. Compensation is allowed only for
-   the user this invocation proved absent and then created. A compensation failure
-   returns `PreparationFailed` because the final state is not known to be ready.
+   return `TargetConflict`. A probe rejection that follows a positive `ALL_USERS` read
+   is reported as `TargetConflict`, never as absence: a concurrent creator may still be
+   inside its own create/grant window, or may have just compensated. This call does not
+   re-create the user, and the caller may retry.
+5. Compensation ownership ends at adoption, not at authorship. `DROP USER` without
+   `CASCADE` is attempted only when this invocation proved the user absent, created it,
+   and has **not** yet completed a successful `GRANT CREATE SESSION` for it. The grant
+   is the boundary because it is the exact point from which any concurrent call holding
+   the same target credentials can connect as that user and return `AlreadyExists` under
+   rule 1 or rule 4. ServiceMantle must never delete a target that another executor has
+   already reported as prepared, so a failure, an overall timeout, or caller cancellation
+   occurring after a successful grant leaves the created user in place and performs no
+   compensation. Oracle DDL visibility means "this call created it" does not prove "this
+   call still exclusively owns it".
+6. When compensation is permitted it runs on its own bounded budget, which is not tied
+   to the caller's cancellation token, because the most common trigger for compensation
+   is that token already being cancelled. A compensation attempt that does not verifiably
+   remove the user returns `PreparationFailed`, because the final state is not known.
 
 The minimum direct administrative privileges are:
 
 - `CREATE USER` in the target PDB;
-- `DROP USER` in the target PDB, used only for compensation of this call's new user;
+- `DROP USER` in the target PDB, used only to compensate a user this call created and
+  has not yet granted `CREATE SESSION`;
 - `CREATE SESSION WITH ADMIN OPTION`, so the administrator can grant only
   `CREATE SESSION` to the new user.
 
@@ -136,6 +150,19 @@ its [GRANT reference](https://docs.oracle.com/en/database/oracle/oracle-database
 requires either the granted privilege's `ADMIN OPTION` or the broader
 `GRANT ANY PRIVILEGE`.
 
+More than one of these outcomes can be true at the end of a single call. Preparation
+resolves them in this fixed precedence, highest first, so that implementers do not have
+to choose:
+
+1. Compensation was permitted, attempted, and did not verifiably remove the user:
+   `database_target_preparation.preparation_failed`. This outranks caller cancellation,
+   because an `OperationCanceledException` would hide a leaked, non-connectable user.
+2. Otherwise caller cancellation: throw `OperationCanceledException`. This holds whether
+   or not a permitted compensation succeeded, and whether or not the grant boundary had
+   already been crossed.
+3. Otherwise the caller-provided overall timeout: `database_target_preparation.timeout`.
+4. Otherwise the triggering failure's own code from the table below.
+
 Preparation failure mapping is fixed as follows:
 
 | Failure | Error code |
@@ -146,9 +173,9 @@ Preparation failure mapping is fixed as follows:
 | Required direct privilege missing | `database_target_preparation.permission_denied` |
 | Existing user is not connectable with the supplied target identity, including a losing create race | `database_target_preparation.target_conflict` |
 | Administrative connection or session is lost | `database_target_preparation.connection_failed` |
-| The caller-provided overall timeout expires | `database_target_preparation.timeout` |
-| Unexpected Oracle failure or failed compensation | `database_target_preparation.preparation_failed` |
-| Caller cancellation | throw `OperationCanceledException` |
+| The caller-provided overall timeout expires, and no permitted compensation failed | `database_target_preparation.timeout` |
+| Unexpected Oracle failure, or a permitted compensation that did not verifiably remove this call's new user | `database_target_preparation.preparation_failed` |
+| Caller cancellation, and no permitted compensation failed | throw `OperationCanceledException` |
 
 The provider grants no tablespace quota or schema-object privilege. A created target is
 ready for a direct session, not for an arbitrary consumer migration. The consumer DBA
@@ -253,11 +280,19 @@ Issue #66 must cover:
   `ORA-01017`, wrong service, cancellation, and safe diagnostics;
 - missing-user creation, existing-user protection, wrong-owner/credential conflict,
   concurrent same-credential creation, privilege denial at create/grant/drop,
-  compensation success/failure, overall timeout, cancellation precedence, and
-  administrative pool isolation;
+  compensation attempted before the grant, compensation refused after the grant,
+  compensation success/failure, failed compensation outranking caller cancellation,
+  overall timeout, cancellation precedence, and administrative pool isolation;
+- an explicit adoption-race test: one actor creates and grants, a second actor adopts the
+  user and returns `AlreadyExists`, then the first actor is cancelled or times out during
+  its fresh target probe. The user must survive and the second actor's result must remain
+  correct;
+- a create/grant-window test proving that a concurrent call observing the user before the
+  grant returns `TargetConflict` and neither drops nor re-creates it;
 - real `FREEPDB1` tests for the same success, failure, cancellation, safety, and
-  deterministic two-actor race paths. #66 is blocked by #115 and #189 so it can use the
-  shared hard-fail harness and the standard preparation registration seam.
+  deterministic two-actor race paths, including the adoption race above. #66 is blocked
+  by #115 and #189 so it can use the shared hard-fail harness and the standard
+  preparation registration seam.
 
 Issue #67 must cover:
 
@@ -293,6 +328,9 @@ capabilities stay in ServiceMantle.
   schema, not a database, tablespace, common user, or arbitrary current schema.
 - Preparation is least-privilege and non-destructive for pre-existing users, but it does
   not make arbitrary migrations possible. Consumers retain schema DDL and quota policy.
+- Automatic deletion is confined to a user that is not yet connectable, so an
+  `AlreadyExists` result returned by one executor can never be undone by another
+  executor's later failure, timeout, or cancellation.
 - A restricted environment without user-management privileges or `DBMS_LOCK` fails with
   a stable existing code; there is no conditional enablement.
 - `ALLOCATE_UNIQUE_AUTONOMOUS` writes Oracle's own lock-name catalog row. It writes no
@@ -309,7 +347,15 @@ capabilities stay in ServiceMantle.
 - Preparation does not grant quota, object DDL privileges, roles, or `DBMS_LOCK` access,
   and does not repair an existing account.
 - Failed compensation can leave a newly created but non-connectable user; the result is
-  `PreparationFailed` and requires consumer DBA remediation.
+  `PreparationFailed`, it outranks caller cancellation, and it requires consumer DBA
+  remediation.
+- Preparation is not transactional. A call that fails, times out, or is cancelled after
+  its `GRANT CREATE SESSION` succeeded deliberately leaves the created, connectable user
+  in place; the state converges on a later call rather than rolling back.
+- Simultaneous first-time preparers are not promised a single-attempt success. A call
+  that observes another call's create/grant window returns `TargetConflict` rather than
+  `AlreadyExists`, and the ADR only promises that no such call is destructive and that a
+  retry converges.
 - Oracle session loss cannot undo migration work already performed before the loss was
   detected.
 - CI proves the pinned Oracle Database Free build on `linux/amd64`; it does not prove
