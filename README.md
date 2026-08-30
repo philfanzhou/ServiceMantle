@@ -372,6 +372,12 @@ Bootstrap changes affect only the current instance's local Bootstrap file and re
 - `EfCoreServiceInstallationStore<TDbContext>` implementing `IServiceInstallationStore`.
 - `EfCoreServiceSetupCodeStore<TDbContext>` implementing `IServiceSetupCodeStore`.
 
+Installation-state reads propagate caller cancellation as `OperationCanceledException`. Connection,
+command, and provider failures are normalized to `ServiceInstallationStoreException` with
+`installation.storage_error`; its public message and `ToString()` contain only the stable
+classification and safe text. `InnerException` may retain provider diagnostics and must only be
+inspected at a controlled diagnostic boundary, never written directly to untrusted output.
+
 This layer only standardizes installation state access; it does not generate migrations, execute `Database.MigrateAsync`, or assume ownership of bootstrap secrets. `service_installations` rows are owned by the consuming service database.
 
 Management consumers should implement a minimal integration model, for example:

@@ -36,10 +36,7 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
         ArgumentNullException.ThrowIfNull(serviceId);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var entity = await dbContext.ServiceInstallations
-            .AsNoTracking()
-            .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
-            .ConfigureAwait(false);
+        var entity = await LoadAsync(serviceId, cancellationToken).ConfigureAwait(false);
 
         return entity is null ? null : ServiceInstallationEntityStateMapper.ConvertToState(entity);
     }
@@ -63,10 +60,7 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
                 "A clean DbContext is required to create a pending installation state.");
         }
 
-        var existing = await dbContext.ServiceInstallations
-            .AsNoTracking()
-            .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
-            .ConfigureAwait(false);
+        var existing = await LoadAsync(serviceId, cancellationToken).ConfigureAwait(false);
 
         if (existing is not null)
         {
@@ -160,6 +154,30 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
             "Failed to create a pending installation state.",
             exception);
 
+    private async ValueTask<ServiceInstallationEntity?> LoadAsync(
+        ServiceId serviceId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await dbContext.ServiceInstallations
+                .AsNoTracking()
+                .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new ServiceInstallationStoreException(
+                "installation.storage_error",
+                "Failed to read the service installation state.",
+                exception);
+        }
+    }
+
     /// <summary>
     /// Returns completed installation state, or refuses to complete a pending installation.
     /// </summary>
@@ -177,10 +195,7 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
         ArgumentNullException.ThrowIfNull(serviceId);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var entity = await dbContext.ServiceInstallations
-            .AsNoTracking()
-            .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
-            .ConfigureAwait(false);
+        var entity = await LoadAsync(serviceId, cancellationToken).ConfigureAwait(false);
 
         if (entity is null)
         {
