@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the request Correlation ID middleware, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the request Correlation ID middleware, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -245,6 +245,7 @@ Bootstrap changes affect only the current instance's local Bootstrap file and re
 - `IServiceMantleDbContext` contract that business DbContexts implement.
 - `ModelBuilder` extension `AddServiceMantleInstallation()` for model registration.
 - `EfCoreServiceInstallationStore<TDbContext>` implementing `IServiceInstallationStore`.
+- `EfCoreServiceSetupCodeStore<TDbContext>` implementing `IServiceSetupCodeStore`.
 
 This layer only standardizes installation state access; it does not generate migrations, execute `Database.MigrateAsync`, or assume ownership of bootstrap secrets. `service_installations` rows are owned by the consuming service database.
 
@@ -266,10 +267,137 @@ public sealed class MyDbContext : DbContext, IServiceMantleDbContext
 
 - `service_settings`
 - `service_data_protection_keys`
-- Setup code metadata
 - administrator identity/state tables
 
 Shared migration ownership is intentionally moved to the consuming service. In deployments against existing business databases, services must create migration entries and keep installation table ownership in their own startup/deployment process.
+
+## One-time Setup Code
+
+A pending installation carries a one-time Setup Code as attached state on the same
+`service_installations` row. `service_installations.Status` stays the only durable authority for
+whether an installation is complete; no second Pending/Completed source is introduced.
+
+The row gains a non-negative 32-bit `SetupCodeGeneration` counter plus nullable
+`SetupCodeDigest`, `SetupCodeIssuedAtUtc`, and `SetupCodeExpiresAtUtc` columns. Generation 0 with all
+three nullable fields empty means never issued; a positive generation with complete, well-ordered
+material means issued. Every other combination is `setup_code.storage_corrupt` and fails closed. The
+generation counter is what makes a fresh pending row distinguishable from a row whose material was
+deleted after being issued - without it, both would present as one set of nulls - so it is retained
+after completion as a non-sensitive issuance history marker.
+
+A code is 24 bytes (192 bit) of cryptographically secure randomness rendered as unpadded Base64URL:
+exactly 32 case-sensitive `[A-Za-z0-9_-]` characters. Only the digest is stored, in the fixed
+`sha256-v1:` plus 64 lowercase hexadecimal format, computed over the exact UTF-8 bytes of the code and
+compared in constant time. An unknown digest version or a malformed stored digest is storage
+corruption, never an ordinary invalid code. The default lifetime is 30 minutes and the configurable
+range is the closed interval from 5 minutes to 24 hours.
+
+| Current state | Operation | Result |
+| --- | --- | --- |
+| Pending, never issued | Create | generation 1, plaintext returned by this result only |
+| Pending, already issued | Create | `setup_code.already_exists` |
+| Pending, issued, generation < `int.MaxValue` | Rotate | generation + 1, material replaced atomically |
+| Pending, issued, generation == `int.MaxValue` | Rotate | `setup_code.generation_exhausted` |
+| Pending, never issued | Rotate | `setup_code.not_created` |
+| Pending, corrupt material | any | `setup_code.storage_corrupt` |
+| Pending, valid code | Validate | valid, read-only |
+| Pending, malformed or mismatched candidate | Validate | `setup_code.invalid` |
+| Pending, expired material | Validate / StageConsume | `setup_code.expired` |
+| Pending, valid code | StageConsume | material cleared, Completed staged, not saved |
+| Completed | any | `installation.completed` |
+
+Except for programming errors and caller cancellation, every operation decides in this fixed order:
+DbContext ownership precondition (`installation.dirty_context`), `installation.not_found`,
+`installation.state_invariant_violation`, `installation.completed`, `setup_code.storage_corrupt`,
+`setup_code.generation_exhausted`, candidate format (`setup_code.invalid`), expiry
+(`setup_code.expired`), and finally the digest comparison (`setup_code.invalid`). Deciding expiry
+before the digest comparison keeps expired material a stable `expired` answer even when the candidate
+does not match, and a completed installation is never mis-reported as an invalid code because the
+caller submitted a malformed one.
+
+Every rejection carries a classification from the closed `WellKnownSetupCodeErrorCodes` set, never
+free text: `SetupCodeIssueResult.Rejected`, `SetupCodeValidationResult.Rejected`, and
+`SetupCodeConsumptionResult.Rejected` reject any other value. A Setup Code is 32 unpadded Base64URL
+characters, so a character-shape rule alone would accept a candidate verbatim and publish it through
+`ErrorCode` and `ToString()`. Use `WellKnownSetupCodeErrorCodes.IsDefined` to test membership. A
+corrupt base installation row is projected onto the declared
+`installation.state_invariant_violation` classification, so an unreadable row never breaks the closed
+result contract either.
+
+Reads are part of that contract. A connection, command, or provider failure while loading the
+installation row raises `ServiceInstallationStoreException` with the stable
+`installation.storage_error` code and a message that carries no provider detail; it is never
+downgraded to a candidate rejection. Caller cancellation still propagates as
+`OperationCanceledException`.
+
+```csharp
+var setupCodeStore = new EfCoreServiceSetupCodeStore<MyDbContext>(dbContext);
+
+var issued = await setupCodeStore.CreateAsync(serviceId, cancellationToken);
+if (issued.IsIssued)
+{
+    // The only moment the plaintext exists outside the operator's hands.
+    ShowOnce(issued.SetupCode!.Reveal());
+}
+```
+
+Create and Rotate are standalone writes: they call `SaveChangesAsync` once, never create, commit, or
+take over a database transaction, and refuse to run at all when the DbContext already carries any
+`Added`, `Modified`, or `Deleted` entry (`installation.dirty_context`). Unrelated `Unchanged` entries
+are fine. The precondition detects changes explicitly before reading entry states, so it still holds
+when the caller has set `ChangeTracker.AutoDetectChangesEnabled` to false; that setting is read, never
+changed. A short-lived dedicated DbContext is the recommended shape. The plaintext is only built into
+a result after that save has succeeded; when the caller wraps the call in a larger external
+transaction, success only means the save joined that transaction, and after an external rollback the
+plaintext simply no longer validates.
+
+`StageConsumeAsync` stages the material clearing, the Completed status, the completion timestamp, and
+the version increment without saving, so the caller commits it together with its own work:
+
+```csharp
+await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+var consumption = await setupCodeStore.StageConsumeAsync(serviceId, candidate, cancellationToken);
+if (!consumption.IsStaged)
+{
+    return consumption.ErrorCode;
+}
+
+await contributors.StageAsync(dbContext, cancellationToken);
+await dbContext.SaveChangesAsync(cancellationToken);
+await transaction.CommitAsync(cancellationToken);
+```
+
+It tolerates unrelated dirty entries so it can join a larger unit of work, but the target installation
+entry must be untracked or `Unchanged` beforehand; an already `Added`, `Modified`, or `Deleted` target
+returns `installation.dirty_context` rather than validating against uncommitted caller values.
+
+A database rollback restores only the database. It does **not** restore the Completed status and
+current values already staged in the EF Core change tracker. After a rollback the caller must dispose
+that DbContext, or explicitly reload, restore, or detach the installation entry, before reusing it -
+never retry on, or read installation authority from, an unrestored tracker.
+
+`IServiceInstallationStore.MarkCompletedAsync` is retained so that no unrelated public API is removed,
+but its behaviour is fixed: a pending row stably raises `ServiceInstallationStoreException` with
+`installation.setup_code_required`, and an already completed row stays an idempotent read. Every path
+that completes a pending installation now goes through `StageConsumeAsync`.
+
+### Explicit non-guarantees
+
+- No contributor ordering or execution, HTTP endpoint, rate limiting, or real multi-instance
+  PostgreSQL contention proof.
+- No decision about whether a brand-new database or an upgraded existing database may create the
+  initial pending row; that belongs to the consuming migration or adoption work.
+- No anonymous rotate or repair channel. Corrupt pending material fails closed and is only resolvable
+  by an explicit operational repair or migration.
+- No guarantee that a caller who received a plaintext once will not copy or log it. The guarantee is
+  that ServiceMantle's own persistence, exceptions, log value projections, and diagnostics never echo
+  it.
+- The SHA-256 scheme relies on the 192-bit high-entropy random code. It is not for user passwords and
+  claims no confidentiality once both the database and process memory are compromised.
+- No guarantee that a caller's external transaction is ultimately committed; ServiceMantle never takes
+  that transaction over.
+- No guarantee that an external rollback restores the in-memory tracking state of the same DbContext.
 
 ## Management audit persistence
 

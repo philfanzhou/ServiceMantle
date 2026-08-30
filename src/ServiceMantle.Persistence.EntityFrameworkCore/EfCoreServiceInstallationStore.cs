@@ -69,7 +69,11 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
             Status = InstallationStatus.PendingSetup,
             CreatedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
             CompletedAtUtc = null,
-            Version = 1
+            Version = 1,
+            SetupCodeGeneration = 0,
+            SetupCodeDigest = null,
+            SetupCodeIssuedAtUtc = null,
+            SetupCodeExpiresAtUtc = null
         };
         var pendingEntry = dbContext.ServiceInstallations.Add(pending);
 
@@ -111,8 +115,15 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
     }
 
     /// <summary>
-    /// Marks installation as completed when pending.
+    /// Returns completed installation state, or refuses to complete a pending installation.
     /// </summary>
+    /// <remarks>
+    /// This entry point is retained so that no unrelated public API is removed, but its behaviour is
+    /// fixed: a pending row stably raises <c>installation.setup_code_required</c>, because completing
+    /// a pending installation must go through
+    /// <see cref="IServiceSetupCodeStore.StageConsumeAsync"/> so that the Setup Code is actually
+    /// validated and consumed. An already completed row stays an idempotent read.
+    /// </remarks>
     public async ValueTask<ServiceInstallationState> MarkCompletedAsync(
         ServiceId serviceId,
         CancellationToken cancellationToken = default)
@@ -121,6 +132,7 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
         cancellationToken.ThrowIfCancellationRequested();
 
         var entity = await dbContext.ServiceInstallations
+            .AsNoTracking()
             .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
             .ConfigureAwait(false);
 
@@ -138,75 +150,8 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
             return ServiceInstallationEntityStateMapper.ConvertToState(entity);
         }
 
-        if (entity.Status != InstallationStatus.PendingSetup)
-        {
-            throw new ServiceInstallationStoreException(
-                "installation.state_unsupported",
-                "The installation state cannot be completed.");
-        }
-
-        var completedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        if (completedAtUtc < entity.CreatedAtUtc)
-        {
-            throw new ServiceInstallationStoreException(
-                "installation.state_invariant_violation",
-                "The installation completion time is before creation time.");
-        }
-
-        if (entity.Version == int.MaxValue)
-        {
-            throw new ServiceInstallationStoreException(
-                "installation.state_invariant_violation",
-                "The installation version cannot be incremented safely.");
-        }
-
-        var nextVersion = entity.Version + 1;
-        entity.Status = InstallationStatus.Completed;
-        entity.CompletedAtUtc = completedAtUtc;
-        entity.Version = nextVersion;
-
-        try
-        {
-            await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            dbContext.Entry(entity).State = EntityState.Detached;
-            throw;
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            dbContext.Entry(entity).State = EntityState.Detached;
-
-            var finalState = await dbContext.ServiceInstallations
-                .AsNoTracking()
-                .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (finalState is null)
-            {
-                throw;
-            }
-
-            var final = ServiceInstallationEntityStateMapper.ConvertToState(finalState);
-            if (final.IsCompleted)
-            {
-                return final;
-            }
-
-            throw new ServiceInstallationStoreException(
-                "installation.concurrency_conflict",
-                "The installation state was concurrently updated.");
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            dbContext.Entry(entity).State = EntityState.Detached;
-            throw new ServiceInstallationStoreException(
-                "installation.storage_error",
-                "Failed to mark installation as completed.",
-                exception);
-        }
-
-        return ServiceInstallationEntityStateMapper.ConvertToState(entity);
+        throw new ServiceInstallationStoreException(
+            WellKnownSetupCodeErrorCodes.SetupCodeRequired,
+            "A pending installation must be completed by consuming its Setup Code.");
     }
 }
