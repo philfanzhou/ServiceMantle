@@ -304,18 +304,6 @@ public sealed class StructuredLogSanitizer
             return NormalizeSafeScalar(value);
         }
 
-        if (type.IsEnum)
-        {
-            try
-            {
-                return Convert.ToInt64(value, CultureInfo.InvariantCulture);
-            }
-            catch
-            {
-                return SanitizationFailed;
-            }
-        }
-
         if (value is Uri uri)
         {
             return SanitizeFreeText(uri.AbsoluteUri);
@@ -824,6 +812,7 @@ public sealed class StructuredLogSanitizer
         sensitiveTypes.Any(sensitiveType => sensitiveType.IsAssignableFrom(actualType));
 
     private static bool IsSafeScalar(Type type) =>
+        type.IsEnum ||
         Type.GetTypeCode(type) is
             TypeCode.Boolean or
             TypeCode.Byte or
@@ -850,14 +839,20 @@ public sealed class StructuredLogSanitizer
     /// </summary>
     private static object NormalizeSafeScalar(object value) => value switch
     {
+        Enum enumeration => NormalizeEnum(enumeration),
         double number when !double.IsFinite(number) => UnrepresentableValue,
         float number when !float.IsFinite(number) => UnrepresentableValue,
         _ => value,
     };
 
+    private static long NormalizeEnum(Enum value) =>
+        Enum.GetUnderlyingType(value.GetType()) == typeof(ulong)
+            ? unchecked((long)Convert.ToUInt64(value, CultureInfo.InvariantCulture))
+            : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+
     private static bool IsSupportedJsonValueScalar(object? value) =>
         value is JsonElement or string or char ||
-        value is not null && (IsSafeScalar(value.GetType()) || value.GetType().IsEnum);
+        value is not null && IsSafeScalar(value.GetType());
 
     private static bool IsBinary(object value) =>
         value is Memory<byte> or
@@ -878,6 +873,9 @@ public sealed class StructuredLogSanitizer
                 return true;
             case byte or sbyte or short or ushort or int or uint or long or ulong:
                 fieldName = Convert.ToString(key, CultureInfo.InvariantCulture)!;
+                return true;
+            case Enum enumeration:
+                fieldName = NormalizeEnum(enumeration).ToString(CultureInfo.InvariantCulture);
                 return true;
             default:
                 fieldName = string.Empty;
