@@ -236,7 +236,8 @@ public sealed class ServiceSettingPersistenceTests
         await using var harness = await Harness.CreateAsync();
         var store = harness.Store(
             beforeSave: _ => throw new DbUpdateException(
-                "constraint failure Password=provider-secret"));
+                "constraint failure Password=provider-secret",
+                new SqlStateDbException("23514", "constraint provider detail")));
 
         var result = await store.UpdateAsync(
             Service,
@@ -250,6 +251,26 @@ public sealed class ServiceSettingPersistenceTests
         Assert.Equal(0, (await harness.Store().LoadAsync(
             Service,
             TestContext.Current.CancellationToken)).Version);
+    }
+
+    [Fact]
+    public async Task Non_constraint_update_failure_uses_the_storage_error_classification()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var store = harness.Store(
+            beforeSave: _ => throw new DbUpdateException(
+                "write failure Password=provider-secret",
+                new SqliteException("disk I/O error Password=provider-secret", 10)));
+
+        var result = await store.UpdateAsync(
+            Service,
+            Update(0, new Dictionary<string, string?> { ["key"] = "value-secret" }),
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownServiceSettingStoreErrorCodes.StorageError, result.ErrorCode);
+        Assert.DoesNotContain("provider-secret", result.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("value-secret", result.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -270,7 +291,7 @@ public sealed class ServiceSettingPersistenceTests
         Assert.Equal(WellKnownServiceSettingStoreErrorCodes.StorageError, exception.ErrorCode);
         Assert.DoesNotContain("read-secret", exception.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("Host=db", exception.ToString(), StringComparison.Ordinal);
-        Assert.Contains(providerDetail, exception.InnerException!.Message, StringComparison.Ordinal);
+        Assert.Null(exception.InnerException);
         Assert.Equal(WellKnownServiceSettingStoreErrorCodes.StorageError, result.ErrorCode);
         Assert.DoesNotContain("value-secret", result.ToString(), StringComparison.Ordinal);
     }
@@ -297,6 +318,14 @@ public sealed class ServiceSettingPersistenceTests
                 UpdatedAtUtc = Now.UtcDateTime,
                 UpdatedBy = "operator-1",
             });
+            context.Set<ServiceSettingEntity>().Add(new ServiceSettingEntity
+            {
+                ServiceId = "metadata-corrupt-service",
+                ValuesJson = "{}",
+                Version = 1,
+                UpdatedAtUtc = Now.UtcDateTime,
+                UpdatedBy = " ",
+            });
             await context.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
@@ -310,12 +339,28 @@ public sealed class ServiceSettingPersistenceTests
             ServiceId.Parse("exhausted-service"),
             Update(long.MaxValue, new Dictionary<string, string?> { ["key"] = "new-secret" }),
             TestContext.Current.CancellationToken);
+        var metadataCorruptException = await Assert.ThrowsAsync<ServiceSettingStoreException>(() =>
+            harness.Store().LoadAsync(
+                ServiceId.Parse("metadata-corrupt-service"),
+                TestContext.Current.CancellationToken).AsTask());
+        var metadataCorruptUpdate = await harness.Store().UpdateAsync(
+            ServiceId.Parse("metadata-corrupt-service"),
+            Update(1, new Dictionary<string, string?> { ["key"] = "new-secret" }),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(WellKnownServiceSettingStoreErrorCodes.StorageCorrupt, corruptException.ErrorCode);
         Assert.DoesNotContain("stored-secret", corruptException.ToString(), StringComparison.Ordinal);
+        Assert.Null(corruptException.InnerException);
         Assert.Equal(WellKnownServiceSettingStoreErrorCodes.StorageCorrupt, corruptUpdate.ErrorCode);
         Assert.Equal(WellKnownServiceSettingStoreErrorCodes.VersionExhausted, exhaustedUpdate.ErrorCode);
         Assert.DoesNotContain("new-secret", exhaustedUpdate.ToString(), StringComparison.Ordinal);
+        Assert.Equal(
+            WellKnownServiceSettingStoreErrorCodes.StorageCorrupt,
+            metadataCorruptException.ErrorCode);
+        Assert.Null(metadataCorruptException.InnerException);
+        Assert.Equal(
+            WellKnownServiceSettingStoreErrorCodes.StorageCorrupt,
+            metadataCorruptUpdate.ErrorCode);
     }
 
     private static ServiceSettingStoreUpdate Update(
@@ -422,6 +467,11 @@ public sealed class ServiceSettingPersistenceTests
             CommandEventData eventData,
             InterceptionResult<DbDataReader> result,
             CancellationToken cancellationToken = default) => throw failure();
+    }
+
+    private sealed class SqlStateDbException(string sqlState, string message) : DbException(message)
+    {
+        public override string? SqlState => sqlState;
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider

@@ -222,9 +222,8 @@ public sealed class ServiceSettingStoreException : Exception
 {
     private ServiceSettingStoreException(
         string errorCode,
-        string message,
-        Exception? innerException = null)
-        : base(message, innerException)
+        string message)
+        : base(message)
     {
         ErrorCode = errorCode;
     }
@@ -233,9 +232,7 @@ public sealed class ServiceSettingStoreException : Exception
     public string ErrorCode { get; }
 
     /// <summary>Creates a safe read failure without exposing provider diagnostics.</summary>
-    public static ServiceSettingStoreException Failure(
-        string errorCode,
-        Exception? innerException = null)
+    public static ServiceSettingStoreException Failure(string errorCode)
     {
         var message = errorCode switch
         {
@@ -248,7 +245,7 @@ public sealed class ServiceSettingStoreException : Exception
                 nameof(errorCode)),
         };
 
-        return new ServiceSettingStoreException(errorCode, message, innerException);
+        return new ServiceSettingStoreException(errorCode, message);
     }
 
     /// <summary>Returns safe information without provider diagnostics or setting values.</summary>

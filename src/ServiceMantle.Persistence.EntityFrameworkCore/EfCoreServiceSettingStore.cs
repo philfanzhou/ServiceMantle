@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -17,6 +18,8 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
     where TDbContext : DbContext
 {
+    private const int MaximumOperatorIdLength = 256;
+
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         MaxDepth = 64
@@ -64,9 +67,9 @@ public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
         {
             throw;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            throw StorageException(exception);
+            throw StorageException();
         }
     }
 
@@ -112,7 +115,7 @@ public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
             {
                 values = entity is null
                     ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    : DeserializeValues(entity.ValuesJson);
+                    : ReadPersistedValues(entity);
             }
             catch (JsonException)
             {
@@ -165,7 +168,7 @@ public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
             return ServiceSettingStoreUpdateResult.Failure(
                 WellKnownServiceSettingStoreErrorCodes.VersionConflict);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException exception)
         {
             await RollbackAsync(transaction).ConfigureAwait(false);
             if (update.ExpectedVersion == 0 && await RowExistsAsync(serviceId).ConfigureAwait(false))
@@ -175,7 +178,9 @@ public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
             }
 
             return ServiceSettingStoreUpdateResult.Failure(
-                WellKnownServiceSettingStoreErrorCodes.ConstraintViolation);
+                IsConstraintViolation(exception)
+                    ? WellKnownServiceSettingStoreErrorCodes.ConstraintViolation
+                    : WellKnownServiceSettingStoreErrorCodes.StorageError);
         }
         catch (JsonException)
         {
@@ -231,19 +236,27 @@ public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
         return materialized;
     }
 
+    private static Dictionary<string, string> ReadPersistedValues(ServiceSettingEntity entity)
+    {
+        if (entity.Version <= 0 ||
+            entity.UpdatedAtUtc == default ||
+            string.IsNullOrWhiteSpace(entity.UpdatedBy) ||
+            entity.UpdatedBy.Length > MaximumOperatorIdLength ||
+            entity.UpdatedBy.Any(char.IsControl))
+        {
+            throw new JsonException("The persisted setting metadata is invalid.");
+        }
+
+        return DeserializeValues(entity.ValuesJson);
+    }
+
     private static ServiceSettingStoreSnapshot ToSnapshot(
         ServiceId serviceId,
         ServiceSettingEntity entity)
     {
-        if (entity.Version <= 0 || entity.UpdatedAtUtc == default)
-        {
-            throw ServiceSettingStoreException.Failure(
-                WellKnownServiceSettingStoreErrorCodes.StorageCorrupt);
-        }
-
         try
         {
-            var values = DeserializeValues(entity.ValuesJson);
+            var values = ReadPersistedValues(entity);
             return new ServiceSettingStoreSnapshot(
                 serviceId,
                 entity.Version,
@@ -252,12 +265,25 @@ public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
                 entity.UpdatedBy,
                 entity.RestartRequired);
         }
-        catch (JsonException exception)
+        catch (Exception exception) when (exception is JsonException or ArgumentException)
         {
             throw ServiceSettingStoreException.Failure(
-                WellKnownServiceSettingStoreErrorCodes.StorageCorrupt,
-                exception);
+                WellKnownServiceSettingStoreErrorCodes.StorageCorrupt);
         }
+    }
+
+    private static bool IsConstraintViolation(DbUpdateException exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is DbException { SqlState: { } sqlState } &&
+                sqlState.StartsWith("23", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static ServiceSettingStoreSnapshot EmptySnapshot(ServiceId serviceId) =>
@@ -307,8 +333,7 @@ public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
     private static OperationCanceledException SafeCancellation(CancellationToken cancellationToken) =>
         new("The shared setting operation was cancelled by the caller.", cancellationToken);
 
-    private static ServiceSettingStoreException StorageException(Exception exception) =>
+    private static ServiceSettingStoreException StorageException() =>
         ServiceSettingStoreException.Failure(
-            WellKnownServiceSettingStoreErrorCodes.StorageError,
-            exception);
+            WellKnownServiceSettingStoreErrorCodes.StorageError);
 }

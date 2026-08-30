@@ -322,6 +322,8 @@ cannot commit a consumer shared work unit. A batch with a stale expected version
 `service_settings.version_conflict` without merging, retrying, or partially writing values. Product
 types, defaults, required values, sensitivity, and composite constraints remain the responsibility
 of `ServiceSettingDefinitionRegistry`; this persistence layer stores the caller-supplied raw form.
+Read failures expose only a stable `ServiceSettingStoreException` classification and safe message;
+the exception never retains provider diagnostics, connection strings, credentials, or setting values.
 
 Management consumers should implement a minimal integration model, for example:
 
@@ -337,9 +339,9 @@ public sealed class MyDbContext : DbContext, IServiceMantleDbContext
 }
 ```
 
-`service_installations` and `service_audit_logs` (see below) are defined. Planned future tables (not in this release):
+`service_installations`, `service_settings`, and `service_audit_logs` (see below) are defined. Planned
+future tables (not in this release):
 
-- `service_settings`
 - `service_data_protection_keys`
 - administrator identity/state tables
 
