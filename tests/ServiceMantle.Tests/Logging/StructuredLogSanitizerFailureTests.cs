@@ -40,6 +40,22 @@ public sealed class StructuredLogSanitizerFailureTests
     }
 
     [Fact]
+    public void Public_members_keep_ordinal_order_and_stop_before_getters_beyond_the_limit()
+    {
+        var input = new OrderedProperties();
+        var sanitizer = new StructuredLogSanitizer(new StructuredLogSanitizerOptions
+        {
+            MaximumCollectionCount = 2
+        });
+
+        var output = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(
+            sanitizer.Sanitize(input));
+
+        Assert.Equal(["Alpha", "Bravo", "CollectionTruncated"], output.Keys);
+        Assert.Equal(["Alpha", "Bravo"], input.ReadMembers);
+    }
+
+    [Fact]
     public void Throwing_enumerator_discards_partial_output_and_returns_only_failure_marker()
     {
         const string secret = "enumerated-secret";
@@ -443,6 +459,25 @@ public sealed class StructuredLogSanitizerFailureTests
         }
 
         public string PublicValue => throw new InvalidOperationException("getter-secret");
+    }
+
+    private sealed class OrderedProperties
+    {
+        private readonly List<string> readMembers = [];
+
+        internal IReadOnlyList<string> ReadMembers => readMembers;
+
+        public string Zulu => Read(nameof(Zulu));
+
+        public string Alpha => Read(nameof(Alpha));
+
+        public string Bravo => Read(nameof(Bravo));
+
+        private string Read(string member)
+        {
+            readMembers.Add(member);
+            return member;
+        }
     }
 
     private sealed class ThrowingEnumerable(string secret) : IEnumerable<object?>
