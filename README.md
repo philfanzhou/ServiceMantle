@@ -271,6 +271,19 @@ public sealed class MyDbContext : DbContext, IServiceMantleDbContext
 
 Shared migration ownership is intentionally moved to the consuming service. In deployments against existing business databases, services must create migration entries and keep installation table ownership in their own startup/deployment process.
 
+`IServiceInstallationStore.CreatePendingAsync` is a standalone write: when the row is absent it calls
+`SaveChangesAsync` once, never creates or commits a transaction, and refuses to run when the DbContext
+already carries any `Added`, `Modified`, or `Deleted` entry. That refusal raises
+`ServiceInstallationStoreException` with `installation.dirty_context`; unrelated `Unchanged` entries
+are allowed. The precondition explicitly detects changes, including when automatic change detection
+is disabled. Use a short-lived dedicated DbContext. If the call joins an external transaction,
+success does not guarantee that the caller will commit it.
+
+Concurrent insertion remains idempotent only when EF Core identifies the failed entry as the
+`service_installations` insert and a follow-up read finds the competing row. Other update failures use
+the safe `installation.storage_error` exception channel even if a row happens to exist; classification
+does not depend on provider-specific error numbers.
+
 ## One-time Setup Code
 
 A pending installation carries a one-time Setup Code as attached state on the same
@@ -384,8 +397,9 @@ that completes a pending installation now goes through `StageConsumeAsync`.
 
 ### Explicit non-guarantees
 
-- No contributor ordering or execution, HTTP endpoint, rate limiting, or real multi-instance
-  PostgreSQL contention proof.
+- No contributor ordering or execution, HTTP endpoint, or rate limiting. Real PostgreSQL contention
+  coverage in this release is limited to concurrent creation of the pending installation row; Setup
+  Code issue, rotation, and consumption have no real multi-instance PostgreSQL contention proof.
 - No decision about whether a brand-new database or an upgraded existing database may create the
   initial pending row; that belongs to the consuming migration or adoption work.
 - No anonymous rotate or repair channel. Corrupt pending material fails closed and is only resolvable

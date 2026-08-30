@@ -130,6 +130,7 @@ public sealed class EfCoreServiceInstallationStoreTests
         var result = await store.CreatePendingAsync(serviceId, TestContext.Current.CancellationToken);
 
         Assert.Equal(InstallationStatus.PendingSetup, result.Status);
+        Assert.Equal(1, context.SaveChangesCallCount);
 
         var saved = await context.ServiceInstallations.AsNoTracking().SingleAsync(
             item => item.ServiceId == serviceId.Value,
@@ -137,6 +138,196 @@ public sealed class EfCoreServiceInstallationStoreTests
         Assert.Equal(fixedTime.UtcDateTime, saved.CreatedAtUtc);
         Assert.Null(saved.CompletedAtUtc);
         Assert.Equal(1, saved.Version);
+    }
+
+    [Theory]
+    [InlineData(EntityState.Added)]
+    [InlineData(EntityState.Modified)]
+    [InlineData(EntityState.Deleted)]
+    public async Task CreatePendingAsync_refuses_pre_existing_consumer_changes_without_saving(
+        EntityState dirtyState)
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var context = CreateContext(connection);
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+
+        context.ConsumerEntities.Add(new ConsumerEntity { Id = 1, Value = "stored" });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        context.ChangeTracker.Clear();
+
+        if (dirtyState == EntityState.Added)
+        {
+            context.ConsumerEntities.Add(new ConsumerEntity { Id = 2, Value = "pending" });
+        }
+        else
+        {
+            var consumer = await context.ConsumerEntities.SingleAsync(
+                item => item.Id == 1,
+                TestContext.Current.CancellationToken);
+            if (dirtyState == EntityState.Modified)
+            {
+                consumer.Value = "changed";
+            }
+            else
+            {
+                context.ConsumerEntities.Remove(consumer);
+            }
+        }
+
+        var saveCount = context.SaveChangesCallCount;
+        var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
+            CreateStore(context)
+                .CreatePendingAsync(
+                    ServiceId.Parse("signacore"),
+                    TestContext.Current.CancellationToken)
+                .AsTask());
+
+        Assert.Equal(WellKnownSetupCodeErrorCodes.DirtyContext, exception.ErrorCode);
+        Assert.Equal(saveCount, context.SaveChangesCallCount);
+        Assert.Contains(context.ChangeTracker.Entries(), entry => entry.State == dirtyState);
+        Assert.Empty(await context.ServiceInstallations.AsNoTracking().ToListAsync(
+            TestContext.Current.CancellationToken));
+
+        await using var verification = CreateContext(connection);
+        var stored = await verification.ConsumerEntities.AsNoTracking().SingleAsync(
+            item => item.Id == 1,
+            TestContext.Current.CancellationToken);
+        Assert.Equal("stored", stored.Value);
+    }
+
+    [Fact]
+    public async Task CreatePendingAsync_detects_modification_when_auto_detection_is_disabled()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var context = CreateContext(connection);
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+
+        context.ConsumerEntities.Add(new ConsumerEntity { Id = 1, Value = "stored" });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        context.ChangeTracker.Clear();
+        context.ChangeTracker.AutoDetectChangesEnabled = false;
+        var consumer = await context.ConsumerEntities.SingleAsync(
+            item => item.Id == 1,
+            TestContext.Current.CancellationToken);
+        consumer.Value = "changed";
+
+        var saveCount = context.SaveChangesCallCount;
+        var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
+            CreateStore(context)
+                .CreatePendingAsync(
+                    ServiceId.Parse("signacore"),
+                    TestContext.Current.CancellationToken)
+                .AsTask());
+
+        Assert.Equal(WellKnownSetupCodeErrorCodes.DirtyContext, exception.ErrorCode);
+        Assert.Equal(saveCount, context.SaveChangesCallCount);
+        Assert.False(context.ChangeTracker.AutoDetectChangesEnabled);
+        Assert.Equal(EntityState.Modified, context.Entry(consumer).State);
+    }
+
+    [Fact]
+    public async Task CreatePendingAsync_allows_unrelated_unchanged_entries()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var context = CreateContext(connection);
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+
+        context.ConsumerEntities.Add(new ConsumerEntity { Id = 1, Value = "stored" });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        context.ChangeTracker.Clear();
+        var consumer = await context.ConsumerEntities.SingleAsync(
+            item => item.Id == 1,
+            TestContext.Current.CancellationToken);
+        var saveCount = context.SaveChangesCallCount;
+
+        var result = await CreateStore(context).CreatePendingAsync(
+            ServiceId.Parse("signacore"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(InstallationStatus.PendingSetup, result.Status);
+        Assert.Equal(saveCount + 1, context.SaveChangesCallCount);
+        Assert.Equal(EntityState.Unchanged, context.Entry(consumer).State);
+    }
+
+    [Fact]
+    public async Task CreatePendingAsync_does_not_recover_an_unrelated_update_failure_as_a_race()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var competingContext = CreateContext(connection);
+        TestDbContext? context = null;
+        context = CreateContext(
+            connection,
+            beforeSaveChangesAsync: async cancellationToken =>
+            {
+                var consumer = new ConsumerEntity { Id = 1, Value = "pending" };
+                context!.ConsumerEntities.Add(consumer);
+                competingContext.ServiceInstallations.Add(new ServiceInstallationEntity
+                {
+                    ServiceId = "signacore",
+                    Status = InstallationStatus.PendingSetup,
+                    CreatedAtUtc = new DateTime(2026, 8, 1, 12, 0, 0, DateTimeKind.Utc),
+                    Version = 1,
+                });
+                await competingContext.SaveChangesAsync(cancellationToken);
+                throw new DbUpdateException(
+                    "consumer failure contains provider detail",
+                    new InvalidOperationException("Password=consumer-secret"),
+                    [context.Entry(consumer)]);
+            });
+        await using (context)
+        {
+            await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+            var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
+                CreateStore(context)
+                    .CreatePendingAsync(
+                        ServiceId.Parse("signacore"),
+                        TestContext.Current.CancellationToken)
+                    .AsTask());
+
+            Assert.Equal("installation.storage_error", exception.ErrorCode);
+            Assert.DoesNotContain("consumer failure", exception.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("consumer-secret", exception.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                context.ChangeTracker.Entries<ServiceInstallationEntity>(),
+                entry => entry.State == EntityState.Added);
+            Assert.Contains(
+                context.ChangeTracker.Entries<ConsumerEntity>(),
+                entry => entry.State == EntityState.Added);
+            Assert.Equal(
+                1,
+                await competingContext.ServiceInstallations.AsNoTracking().CountAsync(
+                    item => item.ServiceId == "signacore",
+                    TestContext.Current.CancellationToken));
+        }
+    }
+
+    [Fact]
+    public async Task CreatePendingAsync_propagates_cancellation_from_its_save_and_detaches_its_insert()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        using var cancellation = new CancellationTokenSource();
+        await using var context = CreateContext(
+            connection,
+            beforeSaveChangesAsync: _ =>
+            {
+                cancellation.Cancel();
+                throw new OperationCanceledException(cancellation.Token);
+            });
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateStore(context)
+                .CreatePendingAsync(ServiceId.Parse("signacore"), cancellation.Token)
+                .AsTask());
+
+        Assert.DoesNotContain(
+            context.ChangeTracker.Entries<ServiceInstallationEntity>(),
+            entry => entry.State == EntityState.Added);
     }
 
     [Fact]
@@ -779,8 +970,13 @@ public sealed class EfCoreServiceInstallationStoreTests
 
         public DbSet<ServiceInstallationEntity> ServiceInstallations { get; set; } = null!;
 
+        public DbSet<ConsumerEntity> ConsumerEntities { get; set; } = null!;
+
+        public int SaveChangesCallCount { get; private set; }
+
         public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
+            SaveChangesCallCount++;
             if (beforeSaveChangesAsync is { } callback)
             {
                 beforeSaveChangesAsync = null;
@@ -797,12 +993,20 @@ public sealed class EfCoreServiceInstallationStoreTests
                 modelBuilder.Entity<ServiceInstallationEntity>().HasKey(item => item.ServiceId);
             }
 
+            modelBuilder.Entity<ConsumerEntity>().HasKey(item => item.Id);
             modelBuilder.AddServiceMantleInstallation();
             if (invokeExtensionTwice)
             {
                 modelBuilder.AddServiceMantleInstallation();
             }
         }
+    }
+
+    private sealed class ConsumerEntity
+    {
+        public int Id { get; set; }
+
+        public string Value { get; set; } = string.Empty;
     }
 
     private sealed class FixedTimeProvider : TimeProvider
