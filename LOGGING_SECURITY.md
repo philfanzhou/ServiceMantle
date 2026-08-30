@@ -20,7 +20,7 @@ The sanitized graph is built only from these shapes:
 - `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`, `Guid`
 - `IReadOnlyDictionary<string, object?>` and `IReadOnlyList<object?>` composed of the above
 
-`JsonSerializer.Serialize` is guaranteed not to throw on the result under its default options. Enums are normalized to `long`. Non-finite `float`/`double` values (`NaN`, `PositiveInfinity`, `NegativeInfinity`) cannot be represented by every sink, so they are replaced with `[UNREPRESENTABLE_VALUE]` at the single point where a scalar becomes output; no input path can bypass this.
+`JsonSerializer.Serialize` is guaranteed not to throw on the result under its default options. Enums are normalized to `long`; enum dictionary keys use that normalized value's invariant decimal text. For a `ulong`-backed enum above `long.MaxValue`, normalization preserves the 64-bit pattern through an unchecked conversion and therefore produces the corresponding negative `long`; it does not preserve the original unsigned numeric value. Non-finite `float`/`double` values (`NaN`, `PositiveInfinity`, `NegativeInfinity`) cannot be represented by every sink, so they are replaced with `[UNREPRESENTABLE_VALUE]` at the single point where a scalar becomes output; no input path can bypass this.
 
 ## Cost bounds and explicit non-guarantees
 
