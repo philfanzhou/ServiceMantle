@@ -25,6 +25,10 @@ The core package defines the contract and orchestration logic without any databa
 4. **`DatabaseMigrationLockProviderRegistry`** - Case-insensitive lookup
    - Accumulates lock providers at startup
    - Rejects duplicate registrations
+   - Takes the shared `DatabaseProviderIdResolver` snapshot so that registration keys and lookup
+     keys are canonicalized identically, and a bootstrap provider alias finds the lock provider
+     registered under the canonical id. Resolving an alias never implies lock capability: an
+     unregistered capability still returns `migration.lock_not_supported`.
 
 5. **`DatabaseMigrationOrchestrator`** - The orchestration engine
    - Implements the authority flow described below
@@ -145,6 +149,7 @@ The lock key is:
   - Lease release count for every success and failure path (via `FakeMigrationLockProvider.LeaseDisposeCount`)
   - Double-instance scenario with shared in-memory state (only one instance executes)
 - `DatabaseMigrationLockProviderRegistryTests` - registry lookup, case-insensitivity, duplicate/null rejection
+- `ProviderIdCanonicalizationTests` - alias-to-canonical resolution across persistence, provider dispatch, target preparation, and lock lookup
 
 **`ServiceMantle.Database.PostgreSql.Tests.Migration`:**
 - `ServiceIdToLockKeyDeriverTests` - lock key derivation is deterministic, differs per ServiceId, matches fixed SHA-256 vectors, and rejects null input
@@ -263,7 +268,8 @@ public sealed class MyServiceMigrationExecutor : IDatabaseMigrationExecutor
 
 // 2. Register lock provider and create orchestrator
 var lockProviders = new DatabaseMigrationLockProviderRegistry(
-    [new PostgreSqlMigrationLockProvider()]);
+    [new PostgreSqlMigrationLockProvider()],
+    providerRegistry.ProviderIdResolver);
 
 var executor = new MyServiceMigrationExecutor(dbContext);
 var orchestrator = new DatabaseMigrationOrchestrator(executor, lockProviders);

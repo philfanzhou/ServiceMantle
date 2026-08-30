@@ -18,7 +18,7 @@ public class DatabaseMigrationOrchestratorTests
     {
         var executor = new FakeMigrationExecutor(MigrationObservationState.CurrentVersionCompatible);
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -41,7 +41,7 @@ public class DatabaseMigrationOrchestratorTests
         var executor = new FakeMigrationExecutor(
             new[] { MigrationObservationState.Empty, MigrationObservationState.CurrentVersionCompatible });
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -63,7 +63,7 @@ public class DatabaseMigrationOrchestratorTests
         var executor = new FakeMigrationExecutor(
             new[] { MigrationObservationState.PendingMigration, MigrationObservationState.CurrentVersionCompatible });
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -82,7 +82,7 @@ public class DatabaseMigrationOrchestratorTests
     {
         var executor = new FakeMigrationExecutor(MigrationObservationState.VersionTooNew);
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -104,7 +104,7 @@ public class DatabaseMigrationOrchestratorTests
             MigrationObservationState.Empty,
             inspectException: new InvalidOperationException("Inspect failed"));
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -127,7 +127,7 @@ public class DatabaseMigrationOrchestratorTests
             new[] { MigrationObservationState.PendingMigration },
             executeException: new InvalidOperationException("Migration failed"));
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -151,7 +151,7 @@ public class DatabaseMigrationOrchestratorTests
             inspectExceptionAtCall: new InvalidOperationException("Final inspect failed"),
             inspectExceptionCallNumber: 2);
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -180,7 +180,7 @@ public class DatabaseMigrationOrchestratorTests
                 await Task.Delay(Timeout.Infinite, ct);
             });
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         using var cts = new CancellationTokenSource();
@@ -206,7 +206,7 @@ public class DatabaseMigrationOrchestratorTests
         var executor = new FakeMigrationExecutor(
             new[] { MigrationObservationState.PendingMigration, MigrationObservationState.PendingMigration });
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -225,7 +225,7 @@ public class DatabaseMigrationOrchestratorTests
     public async Task OrchestrateMigration_WhenLockNotSupported_FailsSafely()
     {
         var executor = new FakeMigrationExecutor();
-        var registry = new DatabaseMigrationLockProviderRegistry([]); // No providers
+        var registry = new DatabaseMigrationLockProviderRegistry([], DatabaseProviderIdResolver.Empty); // No providers
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -244,7 +244,7 @@ public class DatabaseMigrationOrchestratorTests
     {
         var executor = new FakeMigrationExecutor();
         var lockProvider = new FakeMigrationLockProvider(returnNullLease: true);
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -268,7 +268,7 @@ public class DatabaseMigrationOrchestratorTests
             acquireException: new DatabaseMigrationLockException(
                 WellKnownMigrationErrorCodes.LockTimeout,
                 "Lock acquisition timed out."));
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var result = await orchestrator.OrchestrateMigrationAsync(
@@ -287,7 +287,7 @@ public class DatabaseMigrationOrchestratorTests
     {
         var executor = new FakeMigrationExecutor();
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         using var cts = new CancellationTokenSource();
@@ -319,7 +319,7 @@ public class DatabaseMigrationOrchestratorTests
     public async Task OrchestrateMigration_InvalidTimeout_ThrowsArgumentException()
     {
         var executor = new FakeMigrationExecutor();
-        var registry = new DatabaseMigrationLockProviderRegistry([]);
+        var registry = new DatabaseMigrationLockProviderRegistry([], DatabaseProviderIdResolver.Empty);
         var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(
@@ -341,7 +341,7 @@ public class DatabaseMigrationOrchestratorTests
         // First instance
         var executor1 = new SharedStateExecutor(sharedState);
         var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
         var orchestrator1 = new DatabaseMigrationOrchestrator(executor1, registry);
 
         // Second instance

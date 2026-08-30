@@ -35,7 +35,10 @@ public static class ServiceMantleServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(serviceId);
         ArgumentNullException.ThrowIfNull(instanceId);
 
-        var bootstrapFileStore = new BootstrapFileStore(serviceId, bootstrapFilePath);
+        // The store is created lazily so that its provider-id resolver snapshot contains every
+        // provider registered on the returned builder, not only the ones registered before this
+        // call. Only the path is needed eagerly, for the duplicate-registration check below.
+        var resolvedBootstrapFilePath = BootstrapFileStore.ResolveFilePath(serviceId, bootstrapFilePath);
         var resolvedServiceVersion = ServiceLogContext.ResolveServiceVersion(serviceVersion);
         var existingRegistration = services
             .Where(descriptor => descriptor.ServiceType == typeof(ServiceMantleRegistration))
@@ -52,7 +55,7 @@ public static class ServiceMantleServiceCollectionExtensions
                     StringComparison.Ordinal) ||
                 !string.Equals(
                     existingRegistration.BootstrapFilePath,
-                    bootstrapFileStore.FilePath,
+                    resolvedBootstrapFilePath,
                     StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
@@ -75,20 +78,24 @@ public static class ServiceMantleServiceCollectionExtensions
         services.AddSingleton(new ServiceMantleRegistration(
             serviceId,
             instanceId,
-            bootstrapFileStore.FilePath,
+            resolvedBootstrapFilePath,
             resolvedServiceVersion));
         services.AddSingleton(serviceId);
         services.AddSingleton(instanceId);
-        services.AddSingleton(bootstrapFileStore);
         services.AddSingleton(new ServiceLogContext(serviceId, instanceId, resolvedServiceVersion));
         services.TryAddSingleton<BootstrapDatabaseProviderRegistry>(serviceProvider =>
             new BootstrapDatabaseProviderRegistry(
                 serviceProvider.GetServices<IBootstrapDatabaseProvider>()));
+        services.AddSingleton(serviceProvider => new BootstrapFileStore(
+            serviceId,
+            serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>(),
+            resolvedBootstrapFilePath));
         services.TryAddSingleton<IBootstrapCandidateValidator, BootstrapDatabaseCandidateValidator>();
         services.TryAddSingleton<BootstrapConfigurationManager>();
         services.TryAddSingleton<DatabaseMigrationLockProviderRegistry>(serviceProvider =>
             new DatabaseMigrationLockProviderRegistry(
-                serviceProvider.GetServices<IDatabaseMigrationLockProvider>()));
+                serviceProvider.GetServices<IDatabaseMigrationLockProvider>(),
+                serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver));
         services.TryAddSingleton<IServiceStartupPhaseResolver, DefaultServiceStartupPhaseResolver>();
 
         return new ServiceMantleBuilder(services);

@@ -379,12 +379,16 @@ public sealed class BootstrapConfigurationManagerTests
 
     private static BootstrapFileStore CreateStore(
         TemporaryDirectory directory,
-        ServiceId? serviceId = null)
+        ServiceId? serviceId = null,
+        BootstrapDatabaseProviderRegistry? providerRegistry = null)
     {
         var actualServiceId = serviceId ?? ServiceId.Parse("signacore");
         var filePath = Path.Combine(directory.Path, "config", "signacore.bootstrap.json");
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
-        return new BootstrapFileStore(actualServiceId, filePath);
+        return new BootstrapFileStore(
+            actualServiceId,
+            providerRegistry ?? new BootstrapDatabaseProviderRegistry([]),
+            filePath);
     }
 
     private static BootstrapCreateRequest CreateRequest(
@@ -507,31 +511,6 @@ public sealed class BootstrapConfigurationManagerTests
             }
 
             return handler(database, cancellationToken);
-        }
-    }
-
-    private sealed class TemporaryDirectory : IDisposable
-    {
-        private TemporaryDirectory(string path)
-        {
-            Path = path;
-            Directory.CreateDirectory(path);
-        }
-
-        public string Path { get; }
-
-        public static TemporaryDirectory Create() =>
-            new(System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                "ServiceMantle.Tests",
-                Guid.NewGuid().ToString("N")));
-
-        public void Dispose()
-        {
-            if (Directory.Exists(Path))
-            {
-                Directory.Delete(Path, recursive: true);
-            }
         }
     }
 }

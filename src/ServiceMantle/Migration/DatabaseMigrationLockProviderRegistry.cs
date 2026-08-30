@@ -1,3 +1,5 @@
+using ServiceMantle.Bootstrap;
+
 namespace ServiceMantle.Migration;
 
 /// <summary>
@@ -7,15 +9,33 @@ namespace ServiceMantle.Migration;
 public sealed class DatabaseMigrationLockProviderRegistry
 {
     private readonly Dictionary<string, IDatabaseMigrationLockProvider> registrations;
+    private readonly DatabaseProviderIdResolver providerIdResolver;
 
     /// <summary>
     /// Initializes a lock provider registry.
     /// </summary>
     /// <param name="providers">All lock providers to register. Null or empty enumerable is allowed.</param>
+    /// <param name="providerIdResolver">
+    /// The shared provider-id resolver snapshot, normally
+    /// <see cref="BootstrapDatabaseProviderRegistry.ProviderIdResolver"/> of the same registry the
+    /// bootstrap store uses, or <see cref="DatabaseProviderIdResolver.Empty"/> when no bootstrap
+    /// provider is registered. It is required so that a caller cannot silently pair this registry
+    /// with a different snapshot than the one that persisted the provider id. Registration keys and
+    /// lookup keys are canonicalized through it, so a bootstrap alias and the canonical id select
+    /// the same registration. Resolving an alias never implies that a lock provider exists for it:
+    /// an unregistered capability still fails closed with
+    /// <see cref="WellKnownMigrationErrorCodes.LockNotSupported"/>.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="providerIdResolver"/> is null.</exception>
     /// <exception cref="ArgumentException">A provider is null or a provider ID is already registered.</exception>
-    public DatabaseMigrationLockProviderRegistry(IEnumerable<IDatabaseMigrationLockProvider>? providers = null)
+    public DatabaseMigrationLockProviderRegistry(
+        IEnumerable<IDatabaseMigrationLockProvider>? providers,
+        DatabaseProviderIdResolver providerIdResolver)
     {
+        ArgumentNullException.ThrowIfNull(providerIdResolver);
+
         registrations = new Dictionary<string, IDatabaseMigrationLockProvider>(StringComparer.OrdinalIgnoreCase);
+        this.providerIdResolver = providerIdResolver;
 
         if (providers is null)
         {
@@ -29,11 +49,10 @@ public sealed class DatabaseMigrationLockProviderRegistry
                 throw new ArgumentNullException(nameof(providers), "Provider cannot be null.");
             }
 
-            var providerId = provider.ProviderId;
-            if (string.IsNullOrWhiteSpace(providerId))
+            if (!this.providerIdResolver.TryCanonicalize(provider.ProviderId, out var providerId))
             {
                 throw new ArgumentException(
-                    "Provider ID cannot be null or whitespace.",
+                    "Provider ID must be a syntactically valid database provider id.",
                     nameof(providers));
             }
 
@@ -49,20 +68,20 @@ public sealed class DatabaseMigrationLockProviderRegistry
     }
 
     /// <summary>
-    /// Attempts to resolve a lock provider by provider ID (case-insensitive).
+    /// Attempts to resolve a lock provider by provider ID or registered alias (case-insensitive).
     /// </summary>
-    /// <param name="providerId">The database provider ID.</param>
+    /// <param name="providerId">The database provider ID or registered alias.</param>
     /// <param name="provider">The lock provider when found.</param>
     /// <returns>true when a lock provider is registered for the ID; otherwise, false.</returns>
     public bool TryGetProvider(string? providerId, out IDatabaseMigrationLockProvider? provider)
     {
         provider = null;
 
-        if (string.IsNullOrWhiteSpace(providerId))
+        if (!providerIdResolver.TryCanonicalize(providerId, out var canonicalProviderId))
         {
             return false;
         }
 
-        return registrations.TryGetValue(providerId, out provider);
+        return registrations.TryGetValue(canonicalProviderId, out provider);
     }
 }
