@@ -11,6 +11,60 @@
     "integration": "dotnet test --project tests/SignaCore.IntegrationTests/SignaCore.IntegrationTests.csproj --configuration Release",
     "frontend": "npm --prefix src/SignaCore.Admin test"
   },
+  "snapshotEntitySets": [
+    {
+      "id": "postgresql-model-snapshot",
+      "provider": "PostgreSQL",
+      "path": "src/SignaCore.Database/Migrations/IdentityDbContextModelSnapshot.cs",
+      "symbolPrefix": "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot",
+      "entities": [
+        "AccountEntity",
+        "AppExchangeTrustEntity",
+        "AppLdapAccessEntity",
+        "AppRegistrationEntity",
+        "AppSmsAccessEntity",
+        "AppWechatAccessEntity",
+        "AuditLogEntity",
+        "DataProtectionKeyEntity",
+        "InstallationStateEntity",
+        "LdapCredentialEntity",
+        "LoginAttemptEntity",
+        "LoginHistoryEntity",
+        "OtpEntity",
+        "PasswordCredentialEntity",
+        "RefreshTokenEntity",
+        "SecurityKeyEntity",
+        "SystemSettingEntity",
+        "UserLoginEntity"
+      ]
+    },
+    {
+      "id": "sqlite-model-snapshot",
+      "provider": "SQLite",
+      "path": "src/SignaCore.Database.Migrations.Sqlite/Migrations/IdentityDbContextModelSnapshot.cs",
+      "symbolPrefix": "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot",
+      "entities": [
+        "AccountEntity",
+        "AppExchangeTrustEntity",
+        "AppLdapAccessEntity",
+        "AppRegistrationEntity",
+        "AppSmsAccessEntity",
+        "AppWechatAccessEntity",
+        "AuditLogEntity",
+        "DataProtectionKeyEntity",
+        "InstallationStateEntity",
+        "LdapCredentialEntity",
+        "LoginAttemptEntity",
+        "LoginHistoryEntity",
+        "OtpEntity",
+        "PasswordCredentialEntity",
+        "RefreshTokenEntity",
+        "SecurityKeyEntity",
+        "SystemSettingEntity",
+        "UserLoginEntity"
+      ]
+    }
+  ],
   "candidates": [
     {
       "id": "bootstrap-file-lifecycle",
@@ -468,11 +522,15 @@
       ],
       "legacySymbols": [
         "SignaCore.Domain.Services.AuditService.RecordActionAsync",
-        "SignaCore.Domain.Services.IAuditService.RecordActionAsync"
+        "SignaCore.Domain.Services.IAuditService.RecordActionAsync",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.AuditLogEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.AuditLogEntity"
       ],
       "callSites": [
         "src/SignaCore.Host/Installation/InstallationSetupService.cs",
-        "src/SignaCore.Host/Controllers/AdminSettingsController.cs"
+        "src/SignaCore.Host/Controllers/AdminSettingsController.cs",
+        "src/SignaCore.Database/Migrations/IdentityDbContextModelSnapshot.cs",
+        "src/SignaCore.Database.Migrations.Sqlite/Migrations/IdentityDbContextModelSnapshot.cs"
       ],
       "evidence": [
         {
@@ -720,6 +778,7 @@
         "src/SignaCore.Host/OAuthGrantTypes.cs",
         "src/SignaCore.Host/Services/TokenIssuanceService.cs"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Domain.Services.ITokenService",
         "SignaCore.Domain.Services.JwtTokenService",
@@ -752,6 +811,7 @@
         "src/SignaCore.Database/Repositories/PasswordCredentialRepository.cs",
         "src/SignaCore.Domain/Validators/PasswordValidator.cs"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Database.Entity.AccountEntity",
         "SignaCore.Database.Entity.PasswordCredentialEntity",
@@ -781,6 +841,7 @@
         "src/SignaCore.Domain/Services/GatewayValidationService.cs",
         "src/SignaCore.Host/Controllers/GatewayController.cs"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Database.Entity.AppRegistrationEntity",
         "SignaCore.Database.Entity.AppExchangeTrustEntity",
@@ -808,6 +869,7 @@
         "src/SignaCore.Domain/Validators/SmsValidator.cs",
         "src/SignaCore.Host/Controllers/SmsCodeController.cs"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Database.Entity.OtpEntity",
         "SignaCore.Domain.Services.Sms",
@@ -833,6 +895,7 @@
         "src/SignaCore.Domain/Services/Ldap/**",
         "src/SignaCore.Domain/Validators/LdapValidator.cs"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Database.Entity.LdapCredentialEntity",
         "SignaCore.Domain.Services.Ldap",
@@ -853,6 +916,7 @@
         "src/SignaCore.Domain/Services/WeChat/**",
         "src/SignaCore.Domain/Validators/WechatValidator.cs"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Database.Entity.AppWechatAccessEntity",
         "SignaCore.Domain.Services.WeChat",
@@ -877,6 +941,7 @@
         "src/SignaCore.Domain/Services/CallbackUrlValidator.cs",
         "src/SignaCore.Host/Controllers/CallbackRegistrationController.cs"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Domain.CallbackService",
         "SignaCore.Domain.CallbackUrlValidator",
@@ -903,6 +968,7 @@
         "src/SignaCore.Host/JwksMapper.cs",
         "src/SignaCore.Host/DiscoveryDocument.cs"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Database.Entity.SecurityKeyEntity",
         "SignaCore.Domain.Keys.AesGcmPrivateKeyProtector",
@@ -932,6 +998,7 @@
         "src/SignaCore.Database/Entity/LoginHistoryEntity.cs",
         "src/SignaCore.Database/Repositories/LoginHistoryRepository.cs"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Database.Entity.LoginHistoryEntity",
         "SignaCore.Database.Repositories.LoginHistoryRepository"
@@ -950,13 +1017,36 @@
         "src/SignaCore.Database/Migrations/**",
         "src/SignaCore.Database.Migrations.Sqlite/Migrations/**"
       ],
+      "coverage": "path-and-symbol",
       "preservedSymbols": [
         "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.AccountEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.AppExchangeTrustEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.AppLdapAccessEntity",
         "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.AppRegistrationEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.AppSmsAccessEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.AppWechatAccessEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.LdapCredentialEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.LoginAttemptEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.LoginHistoryEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.OtpEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.PasswordCredentialEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.RefreshTokenEntity",
         "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.SecurityKeyEntity",
+        "SignaCore.Database.Migrations.IdentityDbContextModelSnapshot.UserLoginEntity",
         "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.AccountEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.AppExchangeTrustEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.AppLdapAccessEntity",
         "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.AppRegistrationEntity",
-        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.SecurityKeyEntity"
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.AppSmsAccessEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.AppWechatAccessEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.LdapCredentialEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.LoginAttemptEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.LoginHistoryEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.OtpEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.PasswordCredentialEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.RefreshTokenEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.SecurityKeyEntity",
+        "SignaCore.Database.Migrations.Sqlite.Migrations.IdentityDbContextModelSnapshot.UserLoginEntity"
       ],
       "tests": [
         {
@@ -973,7 +1063,8 @@
     {
       "id": "admin-console-product-ux",
       "paths": ["src/SignaCore.Admin/**"],
-      "preservedSymbols": ["SignaCore.Admin"],
+      "coverage": "path-only",
+      "preservedSymbols": [],
       "tests": [
         {
           "command": "frontend",

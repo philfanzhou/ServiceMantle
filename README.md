@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the optional database target preparation capability (PostgreSQL server-database preparation), and product-agnostic management audit persistence are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management authentication, broader observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the request Correlation ID middleware, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -38,7 +38,156 @@ using (context.BeginScope(logger, new Dictionary<string, object?>
 }
 ```
 
-Extension fields are limited to 32, require non-null values and identifier-style names, and cannot duplicate or override the three identity fields (matching is case-insensitive). Disposing the returned handle ends the scope; standard `ILogger` async scope semantics keep concurrent execution contexts isolated. This context does not sanitize extension values or configure a logging sink, so callers remain responsible for passing only values safe for their providers.
+Extension fields are limited to 32, require non-null values and identifier-style names, and cannot duplicate or override the four protected identity fields `ServiceName`, `ServiceVersion`, `InstanceId`, and `CorrelationId` (matching is case-insensitive). Disposing the returned handle ends the scope; standard `ILogger` async scope semantics keep concurrent execution contexts isolated. This context does not sanitize extension values or configure a logging sink, so callers remain responsible for passing only values safe for their providers.
+
+## Request Correlation ID
+
+`UseServiceMantleCorrelationId()` resolves exactly one Correlation ID per request and publishes that
+single value to the request context, the response header, and the downstream `ILogger` scope.
+
+```csharp
+var app = builder.Build();
+app.UseServiceMantleCorrelationId();
+
+app.MapGet("/orders", (HttpContext context) =>
+    Results.Ok(context.GetServiceMantleCorrelationId()));
+```
+
+The request and response header name is `ServiceMantleHeaderNames.CorrelationId` (`x-correlation-id`)
+and the structured field name is `ServiceLogFieldNames.CorrelationId` (`CorrelationId`). The middleware
+requires `AddServiceMantle` and throws `InvalidOperationException` at pipeline composition time
+otherwise.
+
+A caller value is reused verbatim only when the request carries exactly one header value of 1-64
+characters whose first character is an ASCII letter or digit and whose remaining characters are ASCII
+letters, digits, `.`, `_`, or `-`. Missing, empty, whitespace, overlong, illegal, comma-joined, and
+repeated headers are discarded as a whole and replaced by a newly generated value matching
+`^[0-9a-f]{32}$`. Accepted values are never trimmed, normalized, truncated, escaped, or partially
+selected, and the original request header is never rewritten.
+
+The header is read once on entry. The resolved value is stored under a private, non-collidable
+`HttpContext.Items` key that `GetServiceMantleCorrelationId()` and
+`TryGetServiceMantleCorrelationId()` read back, so the accessor, the log scope, and the response
+header always agree. A single `Response.OnStarting` callback assigns the response header, collapsing
+any downstream values to one. When the response has already started on entry, no callback is
+registered and nothing is thrown, but the request context and log scope are still established. The
+scope wraps the whole downstream call and is released on success, failure, and cancellation alike; the
+middleware logs nothing itself and never swallows a downstream exception or cancellation.
+
+### Explicit non-guarantees
+
+- A Correlation ID is **not** unique, unguessable, or unforgeable, and must never be used for
+  authorization, idempotency, replay protection, or audit subject identity. Its generated shape only
+  exists to keep log correlation stable.
+- It is not propagated to `HttpClient`, message queues, or any other outbound call.
+- It is not mapped to W3C `traceparent`, `Activity.TraceId`, or OpenTelemetry.
+- No logging sink, Serilog, or console configuration is included.
+- Responses produced outside the middleware - Kestrel/transport errors, connection aborts, or a
+  response already sent before the middleware ran - are not guaranteed to carry the header.
+- Logs written by an outer exception handler are not guaranteed to inherit this scope; only the
+  downstream execution and the middleware's own lifetime are covered.
+- The original request header is not rewritten, and consumers, downstream middleware, the host, and
+  logging providers can still read and record it. The rejected raw value is kept out of the request
+  slot, the log scope, the response header, and any diagnostic object this middleware creates - and
+  nothing beyond that.
+- No other headers or log fields are cleaned; structured value cleaning stays with the existing
+  sanitizer.
+
+## Management identity and authorization
+
+`ServiceMantle` defines a product-agnostic management identity contract, and
+`ServiceMantle.AspNetCore` binds it to ASP.NET Core authorization. The contract fixes the claim types,
+the first-version permission set, the `ServiceMantle.ManagementAdmin` policy, a three-state identity
+provider, and a lossless projection onto the existing `ManagementAuditOperator` model.
+
+| Meaning | Value |
+| --- | --- |
+| Operator ID claim | `servicemantle.operator_id` |
+| Operator source claim | `servicemantle.operator_source` |
+| Operator display name claim | `servicemantle.operator_display_name` |
+| Permission claim | `servicemantle.permission` |
+| `ManagementPermission.Read` | `management.read` |
+| `ManagementPermission.Write` | `management.write` |
+| `ManagementPermission.Admin` | `management.admin` |
+| Helper authentication type | `ServiceMantle.Management` |
+| Admin policy name | `ServiceMantle.ManagementAdmin` |
+
+```csharp
+builder.Services.AddServiceMantleManagementAuthorization();
+
+app.MapGet("/management/settings", () => Results.Ok())
+    .RequireAuthorization(ManagementAuthorizationDefaults.AdminPolicyName);
+```
+
+A consuming service supplies credentials by implementing one method and calling it through the safe
+invoker:
+
+```csharp
+public sealed class MyIdentityProvider(IMyCredentialAccessor accessor) : IManagementIdentityProvider
+{
+    public async ValueTask<ManagementIdentityResult> GetIdentityAsync(CancellationToken token) =>
+        await accessor.TryAuthenticateAsync(token) is { } operatorId
+            ? ManagementIdentityResult.Authenticated(ManagementIdentity.Create(
+                WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+                operatorId,
+                [ManagementPermission.Admin]))
+            : ManagementIdentityResult.Unauthenticated();
+}
+
+var result = await ManagementIdentityProviderInvoker.InvokeAsync(provider, cancellationToken);
+```
+
+Claim parsing is fail-closed and matches both claim type names and claim values as an exact ordinal
+wire contract; unknown claim types are ignored. The principal must carry exactly one authenticated
+identity, and every ServiceMantle operator or permission claim must live on that identity, so a
+synthetic operator can never be assembled from several identities. Exactly one operator ID, exactly
+one operator source, zero or one display name, and at least one permission are required; duplicates,
+unknown permissions, and values that are not already in their cleaned wire form are rejected. The
+operator source is validated by parsing it with `ManagementAuditOperatorSource.TryParse` and then
+comparing the raw claim value to the parsed value ordinally, which accepts only an already normalized
+wire value without changing that parser's general normalization contract for other callers.
+
+A principal that carries a ServiceMantle operator or permission claim on an identity that is not
+authenticated is rejected rather than ignored, so asserting an operator without an authenticated
+identity behind it stays distinguishable from simply not being signed in. An unauthenticated identity
+that carries no ServiceMantle claim still takes no part in parsing.
+
+`ManagementIdentity.Permissions` and `ManagementPermissions.All` are exposed as `IReadOnlyList<T>` but
+backed by a `ReadOnlyCollection<T>`, so neither the permissions of a validated identity nor the fixed
+permission set can be changed by casting the declared interface back to an array.
+
+Rejections produced by ServiceMantle itself carry a classification from the closed
+`WellKnownManagementIdentityErrorCodes` set, never free text:
+`ManagementClaimsParseResult.Invalid` and `ManagementCurrentOperatorResult.ClaimsInvalid` reject any
+other value, so no claim value or credential fragment can reach a public `ErrorCode` or `ToString()`.
+Use `WellKnownManagementIdentityErrorCodes.IsDefined` to test membership.
+
+`ManagementIdentityResult` is a closed three-state result: `Authenticated`, `Unauthenticated`, and
+`Failed(errorCode)`. `Failed` is the one result whose code originates in the consuming service's own
+provider, so it enforces the safe 1-64 character ASCII shape rather than the closed set; the provider
+is responsible for supplying a classification and never exception text, credentials, or an upstream
+response. `ManagementIdentityProviderInvoker` propagates `OperationCanceledException` only
+when the caller token has itself requested cancellation; a provider that cancels on its own or throws
+anything else yields the stable `management_identity.provider_failed` code, which is the only code
+ServiceMantle itself ever puts into a `Failed` result. The current-operator resolver keeps
+`Unauthenticated` and `ClaimsInvalid` distinguishable for authorization and auditing.
+
+### Explicit non-guarantees
+
+- No cookie defaults, session results, Data Protection key storage, or login endpoint.
+- No local administrator, OIDC login, or break-glass provider, and no default authentication scheme or
+  concrete `IManagementIdentityProvider` registration.
+- No guarantee of identity-source authenticity: credential validation, signatures, revocation, and
+  upstream session lifetime belong to the consuming service's provider or authentication handler.
+- No dynamic permission registration, role inheritance, or fine-grained resource authorization.
+- No 401/403/503 HTTP body definition; secure session and Problem Details mapping belong downstream.
+- No provider timeout, retry, circuit breaking, or exception diagnostics; public results retain only a
+  safe classification.
+- ServiceMantle cannot constrain what a consuming provider, a custom authentication handler, or a
+  logging provider writes on its own. The sensitive-output guarantee covers only the invoker, parser,
+  results, exceptions, and authorization components added here.
+- A rejection does not hide the fact that an operator lacks the admin permission, but it never carries
+  raw claim values, tokens, cookies, credentials, or provider-internal errors.
 
 ## Instance-local Bootstrap
 

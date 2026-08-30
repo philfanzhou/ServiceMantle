@@ -144,10 +144,4 @@ public static class ServiceMantleServiceCollectionExtensions
         builder.Services.TryAddScoped<DatabaseMigrationOrchestrator>();
         return builder;
     }
-
-    private sealed record ServiceMantleRegistration(
-        ServiceId ServiceId,
-        InstanceId InstanceId,
-        string BootstrapFilePath,
-        string ServiceVersion);
 }
