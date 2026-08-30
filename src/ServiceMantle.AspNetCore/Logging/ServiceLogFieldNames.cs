@@ -19,4 +19,14 @@ public static class ServiceLogFieldNames
     /// The running instance identity field.
     /// </summary>
     public const string InstanceId = "InstanceId";
+
+    /// <summary>
+    /// The per-request Correlation ID field.
+    /// </summary>
+    /// <remarks>
+    /// Only the trusted request scope opened by the ServiceMantle Correlation ID middleware writes
+    /// this field; it can never be supplied through <see cref="ServiceLogContext.BeginScope"/>
+    /// extension fields.
+    /// </remarks>
+    public const string CorrelationId = "CorrelationId";
 }
