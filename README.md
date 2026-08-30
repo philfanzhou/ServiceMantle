@@ -309,8 +309,13 @@ Bootstrap changes affect only the current instance's local Bootstrap file and re
 - `ModelBuilder` extension `AddServiceMantleInstallation()` for model registration.
 - `EfCoreServiceInstallationStore<TDbContext>` implementing `IServiceInstallationStore`.
 - `EfCoreServiceSetupCodeStore<TDbContext>` implementing `IServiceSetupCodeStore`.
+- `AddServiceMantleDataProtectionKeys()` and `EfCoreDataProtectionKeyRepository<TDbContext>` for
+  encrypted, service-isolated ASP.NET Core Data Protection key rings.
 
-This layer only standardizes installation state access; it does not generate migrations, execute `Database.MigrateAsync`, or assume ownership of bootstrap secrets. `service_installations` rows are owned by the consuming service database.
+This layer standardizes installation state and encrypted Data Protection key persistence; it does not
+generate migrations, execute `Database.MigrateAsync`, or assume ownership of Bootstrap secrets.
+`service_installations` and `service_data_protection_keys` rows are owned by the consuming service
+database.
 
 Management consumers should implement a minimal integration model, for example:
 
@@ -326,10 +331,35 @@ public sealed class MyDbContext : DbContext, IServiceMantleDbContext
 }
 ```
 
-`service_installations` and `service_audit_logs` (see below) are defined. Planned future tables (not in this release):
+`service_data_protection_keys` uses `(service_id, key_id)` as its identity and stores only an
+authenticated `sm:v1:` envelope in `encrypted_xml`. The repository derives a distinct encryption
+context for each service and key through `SensitiveValueProtector`; a wrong Bootstrap root key,
+damaged ciphertext, or ciphertext copied to another service fails closed. Each call creates its own
+DbContext, and each insert owns an explicit transaction, so it cannot commit a consumer's shared work
+unit. Register the consuming context as an `IDbContextFactory<TDbContext>`, add the mapping, and connect
+Data Protection through the package extension:
+
+```csharp
+services.AddDbContextFactory<MyDbContext>(options => /* provider configuration */);
+services.AddDataProtection()
+    .PersistKeysToServiceMantleEfCore<MyDbContext>(
+        ServiceId.Parse("orders-api"),
+        serviceProvider => serviceProvider
+            .GetRequiredService<MyBootstrapState>()
+            .DataProtectionRootKey);
+
+// MyDbContext.OnModelCreating:
+modelBuilder.AddServiceMantleDataProtectionKeys();
+```
+
+ServiceMantle does not generate migrations or manage, distribute, or rotate the external root key.
+Those remain consumer and deployment responsibilities. ASP.NET Core Data Protection continues to own
+its key lifecycle.
+
+`service_installations`, `service_data_protection_keys`, and `service_audit_logs` (see below) are
+defined. Planned future tables (not in this release):
 
 - `service_settings`
-- `service_data_protection_keys`
 - administrator identity/state tables
 
 Shared migration ownership is intentionally moved to the consuming service. In deployments against existing business databases, services must create migration entries and keep installation table ownership in their own startup/deployment process.

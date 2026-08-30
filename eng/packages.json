@@ -73,6 +73,7 @@
       "project": "src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj",
       "optional": true,
       "dependencies": [
+        "Microsoft.AspNetCore.DataProtection",
         "Microsoft.EntityFrameworkCore.Relational",
         "ServiceMantle"
       ],
