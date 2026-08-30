@@ -169,19 +169,35 @@ public sealed class ProviderIdCanonicalizationTests
             new BootstrapFileStore("signacore", null!));
     }
 
-    [Fact]
-    public void Store_has_no_constructor_that_skips_the_resolver()
+    [Theory]
+    [InlineData(typeof(BootstrapFileStore))]
+    [InlineData(typeof(DatabaseTargetPreparationProviderRegistry))]
+    [InlineData(typeof(DatabaseMigrationLockProviderRegistry))]
+    public void Type_has_no_constructor_that_skips_the_resolver(Type type)
     {
-        // Guards the invariant that there is no public write path which accepts an alias and
-        // cannot resolve it. Every public constructor must take the shared snapshot.
-        var constructors = typeof(BootstrapFileStore).GetConstructors();
+        // Guards the invariant that no public construction path can accept an alias it cannot
+        // resolve. Every public constructor must take the shared snapshot, and it must be required:
+        // an optional parameter that defaults to an empty snapshot is the same bypass with a
+        // different spelling, because the caller silently gets a snapshot other than the one that
+        // persisted the provider id.
+        var constructors = type.GetConstructors();
 
         Assert.NotEmpty(constructors);
         Assert.All(
             constructors,
             constructor => Assert.Contains(
                 constructor.GetParameters(),
-                parameter => parameter.ParameterType == typeof(DatabaseProviderIdResolver)));
+                parameter => parameter.ParameterType == typeof(DatabaseProviderIdResolver) &&
+                    !parameter.IsOptional));
+    }
+
+    [Fact]
+    public void Capability_registries_reject_a_null_resolver()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new DatabaseTargetPreparationProviderRegistry([], null!));
+        Assert.Throws<ArgumentNullException>(() =>
+            new DatabaseMigrationLockProviderRegistry([], null!));
     }
 
     [Fact]

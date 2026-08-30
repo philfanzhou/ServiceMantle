@@ -122,12 +122,21 @@ public sealed class DatabaseProviderIdResolverTests
     }
 
     [Fact]
-    public void Alias_equal_to_its_own_canonical_id_is_accepted()
+    public void Alias_equal_to_its_own_canonical_id_is_rejected()
     {
-        var resolver = CreateResolver(Descriptor("PostgreSQL", "postgresql", "postgres"));
+        // Re-declaring the descriptor's own id as an alias is a duplicate registration, and the
+        // registry has always rejected it. The shared snapshot must not relax that rule.
+        var exception = Assert.Throws<ArgumentException>(() =>
+            CreateResolver(Descriptor("PostgreSQL", "postgresql", "postgres")));
 
-        Assert.Equal("PostgreSQL", resolver.Canonicalize("POSTGRESQL"));
-        Assert.Equal("PostgreSQL", resolver.Canonicalize("postgres"));
+        Assert.Contains("postgresql", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Alias_repeated_by_the_same_descriptor_is_rejected()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            CreateResolver(Descriptor("PostgreSQL", "postgres", "POSTGRES")));
     }
 
     [Fact]

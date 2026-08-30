@@ -148,6 +148,7 @@ public sealed class DatabaseProviderIdResolver
         // Materialize once: the snapshot must not depend on a lazy sequence being stable.
         var descriptorList = descriptors.ToList();
         var snapshot = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var canonicalIdSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Canonical ids are claimed first so that an alias colliding with a canonical id is
         // rejected regardless of the order the descriptors were supplied in.
@@ -166,26 +167,29 @@ public sealed class DatabaseProviderIdResolver
             }
 
             snapshot.Add(descriptor.Id, descriptor.Id);
+            canonicalIdSet.Add(descriptor.Id);
         }
 
+        // Every canonical id is now claimed, so an alias collision is rejected no matter which
+        // descriptor declared it first. A descriptor may not re-declare its own canonical id as an
+        // alias either: that is a duplicate registration, not a redundant-but-harmless mapping.
         foreach (var descriptor in descriptorList)
         {
             foreach (var alias in descriptor.Aliases)
             {
-                if (snapshot.TryGetValue(alias, out var existingCanonicalId))
+                if (canonicalIdSet.Contains(alias))
                 {
-                    if (!string.Equals(existingCanonicalId, descriptor.Id, StringComparison.Ordinal))
-                    {
-                        throw new ArgumentException(
-                            $"The alias '{alias}' conflicts with a registered provider id.",
-                            parameterName);
-                    }
-
-                    // The descriptor repeated its own canonical id or alias; the mapping already holds.
-                    continue;
+                    throw new ArgumentException(
+                        $"The alias '{alias}' conflicts with a registered provider id.",
+                        parameterName);
                 }
 
-                snapshot.Add(alias, descriptor.Id);
+                if (!snapshot.TryAdd(alias, descriptor.Id))
+                {
+                    throw new ArgumentException(
+                        $"The alias '{alias}' is already registered.",
+                        parameterName);
+                }
             }
         }
 

@@ -180,7 +180,7 @@ public sealed class DatabaseTargetPreparationTests
     public void Registry_resolves_provider_by_id_case_insensitively()
     {
         var provider = new FakeProvider(WellKnownDatabaseProviderIds.PostgreSql);
-        var registry = new DatabaseTargetPreparationProviderRegistry([provider]);
+        var registry = new DatabaseTargetPreparationProviderRegistry([provider], DatabaseProviderIdResolver.Empty);
 
         var found = registry.TryGetProvider("postgresql", out var resolved);
 
@@ -191,7 +191,7 @@ public sealed class DatabaseTargetPreparationTests
     [Fact]
     public void Registry_reports_capability_not_supported_when_provider_is_not_registered()
     {
-        var registry = new DatabaseTargetPreparationProviderRegistry([new FakeProvider(WellKnownDatabaseProviderIds.PostgreSql)]);
+        var registry = new DatabaseTargetPreparationProviderRegistry([new FakeProvider(WellKnownDatabaseProviderIds.PostgreSql)], DatabaseProviderIdResolver.Empty);
 
         var found = registry.TryGetProvider(WellKnownDatabaseProviderIds.Sqlite, out var provider);
 
@@ -202,7 +202,7 @@ public sealed class DatabaseTargetPreparationTests
     [Fact]
     public void Registry_lookup_returns_false_for_null_or_empty_id()
     {
-        var registry = new DatabaseTargetPreparationProviderRegistry();
+        var registry = new DatabaseTargetPreparationProviderRegistry(null, DatabaseProviderIdResolver.Empty);
 
         Assert.False(registry.TryGetProvider(null, out _));
         Assert.False(registry.TryGetProvider("", out _));
@@ -212,8 +212,8 @@ public sealed class DatabaseTargetPreparationTests
     [Fact]
     public void Registry_allows_empty_or_null_provider_collection()
     {
-        var emptyRegistry = new DatabaseTargetPreparationProviderRegistry([]);
-        var nullRegistry = new DatabaseTargetPreparationProviderRegistry();
+        var emptyRegistry = new DatabaseTargetPreparationProviderRegistry([], DatabaseProviderIdResolver.Empty);
+        var nullRegistry = new DatabaseTargetPreparationProviderRegistry(null, DatabaseProviderIdResolver.Empty);
 
         Assert.False(emptyRegistry.TryGetProvider("anything", out _));
         Assert.False(nullRegistry.TryGetProvider("anything", out _));
@@ -225,21 +225,21 @@ public sealed class DatabaseTargetPreparationTests
         var first = new FakeProvider("PostgreSQL");
         var second = new FakeProvider("postgresql");
 
-        Assert.Throws<ArgumentException>(() => new DatabaseTargetPreparationProviderRegistry([first, second]));
+        Assert.Throws<ArgumentException>(() => new DatabaseTargetPreparationProviderRegistry([first, second], DatabaseProviderIdResolver.Empty));
     }
 
     [Fact]
     public void Registry_normalizes_provider_id_before_duplicate_detection_and_lookup()
     {
         var provider = new FakeProvider(" PostgreSQL ");
-        var registry = new DatabaseTargetPreparationProviderRegistry([provider]);
+        var registry = new DatabaseTargetPreparationProviderRegistry([provider], DatabaseProviderIdResolver.Empty);
 
         Assert.True(registry.TryGetProvider(" postgresql ", out var resolved));
         Assert.Same(provider, resolved);
 
         Assert.Throws<ArgumentException>(() =>
             new DatabaseTargetPreparationProviderRegistry(
-                [provider, new FakeProvider("postgresql")]));
+                [provider, new FakeProvider("postgresql")], DatabaseProviderIdResolver.Empty));
     }
 
     [Theory]
@@ -250,7 +250,7 @@ public sealed class DatabaseTargetPreparationTests
     public void Registry_rejects_non_canonical_provider_id(string providerId)
     {
         Assert.Throws<ArgumentException>(() =>
-            new DatabaseTargetPreparationProviderRegistry([new FakeProvider(providerId)]));
+            new DatabaseTargetPreparationProviderRegistry([new FakeProvider(providerId)], DatabaseProviderIdResolver.Empty));
     }
 
     [Fact]
@@ -258,14 +258,14 @@ public sealed class DatabaseTargetPreparationTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new DatabaseTargetPreparationProviderRegistry(
-                [new FakeProvider("InvalidKind", (BootstrapDatabaseTargetKind)99)]));
+                [new FakeProvider("InvalidKind", (BootstrapDatabaseTargetKind)99)], DatabaseProviderIdResolver.Empty));
     }
 
     [Fact]
     public void Registry_rejects_null_provider()
     {
         Assert.Throws<ArgumentNullException>(
-            () => new DatabaseTargetPreparationProviderRegistry([null!]));
+            () => new DatabaseTargetPreparationProviderRegistry([null!], DatabaseProviderIdResolver.Empty));
     }
 
     [Fact]

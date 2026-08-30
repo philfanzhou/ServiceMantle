@@ -16,19 +16,26 @@ public sealed class DatabaseMigrationLockProviderRegistry
     /// </summary>
     /// <param name="providers">All lock providers to register. Null or empty enumerable is allowed.</param>
     /// <param name="providerIdResolver">
-    /// The shared provider-id resolver snapshot, or null to use <see cref="DatabaseProviderIdResolver.Empty"/>.
-    /// Registration keys and lookup keys are canonicalized through it, so a bootstrap alias and the
-    /// canonical id select the same registration. Resolving an alias never implies that a lock
-    /// provider exists for it: an unregistered capability still fails closed with
+    /// The shared provider-id resolver snapshot, normally
+    /// <see cref="BootstrapDatabaseProviderRegistry.ProviderIdResolver"/> of the same registry the
+    /// bootstrap store uses, or <see cref="DatabaseProviderIdResolver.Empty"/> when no bootstrap
+    /// provider is registered. It is required so that a caller cannot silently pair this registry
+    /// with a different snapshot than the one that persisted the provider id. Registration keys and
+    /// lookup keys are canonicalized through it, so a bootstrap alias and the canonical id select
+    /// the same registration. Resolving an alias never implies that a lock provider exists for it:
+    /// an unregistered capability still fails closed with
     /// <see cref="WellKnownMigrationErrorCodes.LockNotSupported"/>.
     /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="providerIdResolver"/> is null.</exception>
     /// <exception cref="ArgumentException">A provider is null or a provider ID is already registered.</exception>
     public DatabaseMigrationLockProviderRegistry(
-        IEnumerable<IDatabaseMigrationLockProvider>? providers = null,
-        DatabaseProviderIdResolver? providerIdResolver = null)
+        IEnumerable<IDatabaseMigrationLockProvider>? providers,
+        DatabaseProviderIdResolver providerIdResolver)
     {
+        ArgumentNullException.ThrowIfNull(providerIdResolver);
+
         registrations = new Dictionary<string, IDatabaseMigrationLockProvider>(StringComparer.OrdinalIgnoreCase);
-        this.providerIdResolver = providerIdResolver ?? DatabaseProviderIdResolver.Empty;
+        this.providerIdResolver = providerIdResolver;
 
         if (providers is null)
         {

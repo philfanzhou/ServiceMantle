@@ -9,7 +9,7 @@ public class DatabaseMigrationLockProviderRegistryTests
     [Fact]
     public void Constructor_WithNullEnumerable_AllowsEmptyRegistry()
     {
-        var registry = new DatabaseMigrationLockProviderRegistry(null);
+        var registry = new DatabaseMigrationLockProviderRegistry(null, DatabaseProviderIdResolver.Empty);
         Assert.NotNull(registry);
         Assert.False(registry.TryGetProvider("PostgreSQL", out _));
     }
@@ -17,7 +17,7 @@ public class DatabaseMigrationLockProviderRegistryTests
     [Fact]
     public void Constructor_WithEmptyEnumerable_CreatesEmptyRegistry()
     {
-        var registry = new DatabaseMigrationLockProviderRegistry([]);
+        var registry = new DatabaseMigrationLockProviderRegistry([], DatabaseProviderIdResolver.Empty);
         Assert.NotNull(registry);
         Assert.False(registry.TryGetProvider("PostgreSQL", out _));
     }
@@ -26,7 +26,7 @@ public class DatabaseMigrationLockProviderRegistryTests
     public void Constructor_WithValidProviders_RegistersThem()
     {
         var lockProvider = new FakeMigrationLockProvider("PostgreSQL");
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
 
         Assert.True(registry.TryGetProvider("PostgreSQL", out var retrieved));
         Assert.NotNull(retrieved);
@@ -36,7 +36,7 @@ public class DatabaseMigrationLockProviderRegistryTests
     public void TryGetProvider_IsCaseInsensitive()
     {
         var lockProvider = new FakeMigrationLockProvider("PostgreSQL");
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
 
         Assert.True(registry.TryGetProvider("postgresql", out var retrieved));
         Assert.NotNull(retrieved);
@@ -49,7 +49,7 @@ public class DatabaseMigrationLockProviderRegistryTests
         var provider2 = new FakeMigrationLockProvider("PostgreSQL");
 
         var ex = Assert.Throws<ArgumentException>(
-            () => new DatabaseMigrationLockProviderRegistry([provider1, provider2]));
+            () => new DatabaseMigrationLockProviderRegistry([provider1, provider2], DatabaseProviderIdResolver.Empty));
 
         Assert.Contains("already registered", ex.Message);
     }
@@ -58,7 +58,7 @@ public class DatabaseMigrationLockProviderRegistryTests
     public void TryGetProvider_WithNullProvider_ThrowsArgumentNullException()
     {
         var ex = Assert.Throws<ArgumentNullException>(
-            () => new DatabaseMigrationLockProviderRegistry([null!]));
+            () => new DatabaseMigrationLockProviderRegistry([null!], DatabaseProviderIdResolver.Empty));
 
         Assert.NotNull(ex);
     }
@@ -69,7 +69,7 @@ public class DatabaseMigrationLockProviderRegistryTests
         var provider = new BadMigrationLockProvider("  ");
 
         var ex = Assert.Throws<ArgumentException>(
-            () => new DatabaseMigrationLockProviderRegistry([provider]));
+            () => new DatabaseMigrationLockProviderRegistry([provider], DatabaseProviderIdResolver.Empty));
 
         Assert.NotNull(ex);
     }
@@ -78,7 +78,7 @@ public class DatabaseMigrationLockProviderRegistryTests
     public void TryGetProvider_NotFound_ReturnsFalse()
     {
         var lockProvider = new FakeMigrationLockProvider("PostgreSQL");
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
 
         var found = registry.TryGetProvider("MySQL", out var retrieved);
 
@@ -90,7 +90,7 @@ public class DatabaseMigrationLockProviderRegistryTests
     public void TryGetProvider_WithNullId_ReturnsFalse()
     {
         var lockProvider = new FakeMigrationLockProvider("PostgreSQL");
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
 
         var found = registry.TryGetProvider(null, out var retrieved);
 
@@ -102,7 +102,7 @@ public class DatabaseMigrationLockProviderRegistryTests
     public void TryGetProvider_WithEmptyId_ReturnsFalse()
     {
         var lockProvider = new FakeMigrationLockProvider("PostgreSQL");
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
 
         var found = registry.TryGetProvider("", out var retrieved);
 

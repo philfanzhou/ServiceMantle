@@ -338,7 +338,9 @@ The `DatabaseMigrationOrchestrator` is instantiated with the executor and a lock
 
 ```csharp
 var executor = new MyServiceMigrationExecutor(dbContext);
-var lockProviders = new DatabaseMigrationLockProviderRegistry([new PostgreSqlMigrationLockProvider()]);
+var lockProviders = new DatabaseMigrationLockProviderRegistry(
+    [new PostgreSqlMigrationLockProvider()],
+    providerRegistry.ProviderIdResolver);
 var orchestrator = new DatabaseMigrationOrchestrator(executor, lockProviders);
 
 var result = await orchestrator.OrchestrateMigrationAsync(

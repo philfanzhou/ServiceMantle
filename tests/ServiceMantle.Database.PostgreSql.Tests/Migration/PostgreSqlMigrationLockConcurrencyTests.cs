@@ -413,8 +413,8 @@ public class PostgreSqlMigrationLockConcurrencyTests : IAsyncLifetime
             var executor1 = new GatedRealDatabaseExecutor(connectionString!, executionStarted, allowExecutionToComplete);
             var executor2 = new GatedRealDatabaseExecutor(connectionString!, executionStarted, allowExecutionToComplete);
 
-            var registry1 = new DatabaseMigrationLockProviderRegistry([lockProvider]);
-            var registry2 = new DatabaseMigrationLockProviderRegistry([lockProvider]);
+            var registry1 = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
+            var registry2 = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
 
             var orchestrator1 = new DatabaseMigrationOrchestrator(executor1, registry1);
             var orchestrator2 = new DatabaseMigrationOrchestrator(executor2, registry2);
