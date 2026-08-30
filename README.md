@@ -309,7 +309,16 @@ Every rejection carries a classification from the closed `WellKnownSetupCodeErro
 free text: `SetupCodeIssueResult.Rejected`, `SetupCodeValidationResult.Rejected`, and
 `SetupCodeConsumptionResult.Rejected` reject any other value. A Setup Code is 32 unpadded Base64URL
 characters, so a character-shape rule alone would accept a candidate verbatim and publish it through
-`ErrorCode` and `ToString()`. Use `WellKnownSetupCodeErrorCodes.IsDefined` to test membership.
+`ErrorCode` and `ToString()`. Use `WellKnownSetupCodeErrorCodes.IsDefined` to test membership. A
+corrupt base installation row is projected onto the declared
+`installation.state_invariant_violation` classification, so an unreadable row never breaks the closed
+result contract either.
+
+Reads are part of that contract. A connection, command, or provider failure while loading the
+installation row raises `ServiceInstallationStoreException` with the stable
+`installation.storage_error` code and a message that carries no provider detail; it is never
+downgraded to a candidate rejection. Caller cancellation still propagates as
+`OperationCanceledException`.
 
 ```csharp
 var setupCodeStore = new EfCoreServiceSetupCodeStore<MyDbContext>(dbContext);

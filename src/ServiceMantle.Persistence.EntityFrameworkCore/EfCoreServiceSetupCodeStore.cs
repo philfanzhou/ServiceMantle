@@ -323,6 +323,17 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
             : WellKnownSetupCodeErrorCodes.Invalid;
     }
 
+    /// <summary>
+    /// Projects a base installation row failure onto the declared Setup Code classification.
+    /// </summary>
+    /// <remarks>
+    /// All four operations reach the base state check through this single point, so the projection
+    /// belongs here. The mapper reports its own codes, and they are not part of the closed Setup
+    /// Code rejection set - an undefined <see cref="InstallationStatus"/> raises
+    /// <c>installation.entity_invalid</c>, which a rejection factory refuses. Every base state
+    /// failure means the same thing to a Setup Code caller: the installation row itself is not a
+    /// usable authority, which is the declared <c>installation.state_invariant_violation</c>.
+    /// </remarks>
     private static string? ValidateBaseState(ServiceInstallationEntity entity)
     {
         try
@@ -330,9 +341,9 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
             ServiceInstallationEntityStateMapper.Validate(entity);
             return null;
         }
-        catch (ServiceInstallationStoreException exception)
+        catch (ServiceInstallationStoreException)
         {
-            return exception.ErrorCode;
+            return WellKnownSetupCodeErrorCodes.StateInvariantViolation;
         }
     }
 
@@ -382,8 +393,26 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
             query = query.AsNoTracking();
         }
 
-        return await query
-            .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            return await query
+                .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Caller cancellation keeps its own channel and is never reported as a storage failure.
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // Every operation loads the row through here, so this is where a connection, command, or
+            // provider failure is turned into the safe exception channel instead of escaping raw and
+            // exposing provider detail.
+            throw new ServiceInstallationStoreException(
+                "installation.storage_error",
+                "Failed to read the installation Setup Code state.",
+                exception);
+        }
     }
 }

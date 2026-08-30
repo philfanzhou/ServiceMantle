@@ -1,5 +1,7 @@
+using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using ServiceMantle.Installation;
 using Xunit;
 
@@ -824,6 +826,82 @@ public sealed class EfCoreServiceSetupCodeStoreTests
             TestContext.Current.CancellationToken)).IsValid);
     }
 
+    [Fact]
+    public async Task An_undefined_installation_status_stays_a_closed_rejection_for_every_operation()
+    {
+        // The base state mapper reports an undefined status as installation.entity_invalid, which is
+        // not a Setup Code classification. Every operation must still answer with the declared
+        // installation.state_invariant_violation instead of breaking the closed result contract.
+        await using var harness = await Harness.CreateAsync();
+        await harness.MutateAsync(row => row.Status = (InstallationStatus)99);
+        var store = harness.Store();
+        var candidate = new string('a', SetupCode.Length);
+
+        Assert.Equal(
+            WellKnownSetupCodeErrorCodes.StateInvariantViolation,
+            (await store.CreateAsync(Service, TestContext.Current.CancellationToken)).ErrorCode);
+        Assert.Equal(
+            WellKnownSetupCodeErrorCodes.StateInvariantViolation,
+            (await store.RotateAsync(Service, TestContext.Current.CancellationToken)).ErrorCode);
+        Assert.Equal(
+            WellKnownSetupCodeErrorCodes.StateInvariantViolation,
+            (await store.ValidateAsync(Service, candidate, TestContext.Current.CancellationToken)).ErrorCode);
+        Assert.Equal(
+            WellKnownSetupCodeErrorCodes.StateInvariantViolation,
+            (await store.StageConsumeAsync(Service, candidate, TestContext.Current.CancellationToken)).ErrorCode);
+
+        var row = await harness.ReadAsync();
+        Assert.Equal((InstallationStatus)99, row.Status);
+        Assert.Equal(1, row.Version);
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("rotate")]
+    [InlineData("validate")]
+    [InlineData("stage-consume")]
+    public async Task A_read_failure_uses_the_safe_storage_error_channel(string operation)
+    {
+        await using var harness = await Harness.CreateAsync();
+        await using var failing = harness.NewContext(new ThrowingCommandInterceptor(
+            () => new InvalidOperationException("Host=db;Password=hunter2 provider read failure")));
+        var store = new EfCoreServiceSetupCodeStore<SetupCodeDbContext>(failing, harness.Time);
+        var candidate = new string('a', SetupCode.Length);
+
+        var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() => operation switch
+        {
+            "create" => store.CreateAsync(Service, TestContext.Current.CancellationToken).AsTask(),
+            "rotate" => store.RotateAsync(Service, TestContext.Current.CancellationToken).AsTask(),
+            "validate" => store
+                .ValidateAsync(Service, candidate, TestContext.Current.CancellationToken)
+                .AsTask(),
+            _ => store
+                .StageConsumeAsync(Service, candidate, TestContext.Current.CancellationToken)
+                .AsTask(),
+        });
+
+        Assert.Equal("installation.storage_error", exception.ErrorCode);
+        Assert.DoesNotContain("provider read failure", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Host=db", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(candidate, exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Cancellation_at_the_read_boundary_is_not_reported_as_a_storage_failure()
+    {
+        await using var harness = await Harness.CreateAsync();
+        await using var failing = harness.NewContext(
+            new ThrowingCommandInterceptor(() => new OperationCanceledException()));
+        var store = new EfCoreServiceSetupCodeStore<SetupCodeDbContext>(failing, harness.Time);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            store.ValidateAsync(
+                Service,
+                new string('a', SetupCode.Length),
+                TestContext.Current.CancellationToken).AsTask());
+    }
+
     private sealed class Harness : IAsyncDisposable
     {
         private readonly SqliteConnection connection;
@@ -856,7 +934,8 @@ public sealed class EfCoreServiceSetupCodeStoreTests
             return harness;
         }
 
-        internal SetupCodeDbContext NewContext() => NewContext(connection);
+        internal SetupCodeDbContext NewContext(IInterceptor? interceptor = null) =>
+            NewContext(connection, interceptor);
 
         internal EfCoreServiceSetupCodeStore<SetupCodeDbContext> Store() => new(Context, Time);
 
@@ -914,8 +993,18 @@ public sealed class EfCoreServiceSetupCodeStoreTests
             await connection.DisposeAsync();
         }
 
-        private static SetupCodeDbContext NewContext(SqliteConnection connection) =>
-            new(new DbContextOptionsBuilder<SetupCodeDbContext>().UseSqlite(connection).Options);
+        private static SetupCodeDbContext NewContext(
+            SqliteConnection connection,
+            IInterceptor? interceptor = null)
+        {
+            var builder = new DbContextOptionsBuilder<SetupCodeDbContext>().UseSqlite(connection);
+            if (interceptor is not null)
+            {
+                builder.AddInterceptors(interceptor);
+            }
+
+            return new SetupCodeDbContext(builder.Options);
+        }
     }
 
     private sealed class SetupCodeDbContext(DbContextOptions<SetupCodeDbContext> options)
@@ -939,6 +1028,20 @@ public sealed class EfCoreServiceSetupCodeStoreTests
 
         protected override void OnModelCreating(ModelBuilder modelBuilder) =>
             modelBuilder.AddServiceMantleInstallation();
+    }
+
+    private sealed class ThrowingCommandInterceptor(Func<Exception> failure) : DbCommandInterceptor
+    {
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result) => throw failure();
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default) => throw failure();
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset utcNow) : TimeProvider
