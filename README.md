@@ -575,7 +575,8 @@ Current and planned provider packages are:
 
 - `ServiceMantle.Database.PostgreSql` validates PostgreSQL settings, performs a minimum read probe (`SELECT 1`) against the target database, and provides session-level advisory lock capability for multi-instance migration coordination (implementation complete, pending CI container verification).
 - `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
-- `ServiceMantle.Database.SQLite`
+- `ServiceMantle.Database.Sqlite` is a referenceable package skeleton; SQLite target preparation and
+  migration integration remain separate follow-up capabilities.
 - `ServiceMantle.Database.MySql`
 - `ServiceMantle.Database.MariaDb`
 - `ServiceMantle.Database.Oracle`
@@ -763,8 +764,10 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 
 - `src/ServiceMantle/ServiceMantle.csproj`
 - `src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj`
+- `src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj`
 - `src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj`
 - `tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj`
+- `tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj`
 - `tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj`
 - `tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj`
 - `src/ServiceMantle/ServiceId.cs`
@@ -792,6 +795,7 @@ dotnet pack src/ServiceMantle/ServiceMantle.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj -c Release --no-build
+dotnet pack src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj -c Release --no-build
 ```
 
