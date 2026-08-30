@@ -598,6 +598,71 @@ public sealed class EfCoreServiceSetupCodeStoreTests
         Assert.False(harness.Context.ChangeTracker.AutoDetectChangesEnabled);
     }
 
+    [Fact]
+    public async Task Create_and_rotate_persist_their_writes_with_change_detection_disabled()
+    {
+        // Writing to a tracked POCO is only picked up by change detection. With
+        // AutoDetectChangesEnabled off, an operation that mutates the entity and then saves would
+        // commit nothing while still returning the plaintext, so a caller would hold a code that
+        // does not exist in the database.
+        await using var harness = await Harness.CreateAsync();
+        harness.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+        var store = harness.Store();
+
+        var created = await store.CreateAsync(Service, TestContext.Current.CancellationToken);
+
+        Assert.True(created.IsIssued);
+        var afterCreate = await harness.ReadAsync();
+        Assert.Equal(1, afterCreate.SetupCodeGeneration);
+        Assert.Equal(
+            SetupCodeDigest.Compute(created.SetupCode!).Value,
+            afterCreate.SetupCodeDigest);
+        Assert.Equal(2, afterCreate.Version);
+
+        var rotated = await store.RotateAsync(Service, TestContext.Current.CancellationToken);
+
+        Assert.True(rotated.IsIssued);
+        var afterRotate = await harness.ReadAsync();
+        Assert.Equal(2, afterRotate.SetupCodeGeneration);
+        Assert.Equal(
+            SetupCodeDigest.Compute(rotated.SetupCode!).Value,
+            afterRotate.SetupCodeDigest);
+        Assert.Equal(3, afterRotate.Version);
+
+        // The caller's own setting is never changed on their behalf.
+        Assert.False(harness.Context.ChangeTracker.AutoDetectChangesEnabled);
+    }
+
+    [Fact]
+    public async Task StageConsume_stages_its_writes_with_change_detection_disabled()
+    {
+        // The staged completion must reach the caller's SaveChanges even when the caller turned
+        // automatic change detection off; otherwise StageConsume reports a consumed code while the
+        // row stays PendingSetup with its digest intact.
+        await using var harness = await Harness.CreateAsync();
+        var store = harness.Store();
+        var issued = await store.CreateAsync(Service, TestContext.Current.CancellationToken);
+        harness.Context.ChangeTracker.Clear();
+        harness.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        var staged = await store.StageConsumeAsync(
+            Service,
+            issued.SetupCode!.Reveal(),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(staged.IsStaged);
+        await harness.Context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var row = await harness.ReadAsync();
+        Assert.Equal(InstallationStatus.Completed, row.Status);
+        Assert.Null(row.SetupCodeDigest);
+        Assert.Null(row.SetupCodeIssuedAtUtc);
+        Assert.Null(row.SetupCodeExpiresAtUtc);
+        Assert.Equal(Now.UtcDateTime, row.CompletedAtUtc);
+        Assert.Equal(3, row.Version);
+        Assert.False(harness.Context.ChangeTracker.AutoDetectChangesEnabled);
+    }
+
     [Theory]
     [InlineData("create-vs-create")]
     [InlineData("rotate-vs-rotate")]

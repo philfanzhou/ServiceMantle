@@ -124,6 +124,13 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
         entity.CompletedAtUtc = nowUtc;
         entity.Version += 1;
 
+        // Staging only counts if the caller's own SaveChanges will actually write it. With
+        // AutoDetectChangesEnabled off these property writes would stay invisible, so the row would
+        // remain PendingSetup with its digest intact while the result claimed the code was consumed.
+        // Detection is scoped to the row this operation touched; the caller's other entries keep
+        // whatever detection state the caller chose for them.
+        DetectChanges(dbContext.Entry(entity));
+
         return SetupCodeConsumptionResult.Staged(
             ServiceInstallationEntityStateMapper.ConvertToState(entity));
     }
@@ -140,6 +147,19 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
     /// Detecting explicitly is a read of current state; it does not change the caller's setting.
     /// </remarks>
     private void DetectChanges() => dbContext.ChangeTracker.DetectChanges();
+
+    /// <summary>
+    /// Brings one entry's state up to date after this operation wrote to it.
+    /// </summary>
+    /// <remarks>
+    /// Change detection is what turns a write to a tracked POCO into a pending database change. A
+    /// caller that disabled <see cref="ChangeTracker.AutoDetectChangesEnabled"/> would otherwise
+    /// leave this operation's own writes untracked and therefore unsaved. Only the entry this
+    /// operation touched is detected, so a caller managing detection manually keeps that control
+    /// over their own entries, and their setting is left unchanged.
+    /// </remarks>
+    private static void DetectChanges(EntityEntry<ServiceInstallationEntity> entry) =>
+        entry.DetectChanges();
 
     private async ValueTask<SetupCodeIssueResult> IssueAsync(
         ServiceId serviceId,
@@ -227,6 +247,11 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
         entity.SetupCodeIssuedAtUtc = nowUtc;
         entity.SetupCodeExpiresAtUtc = expiresAtUtc;
         entity.Version += 1;
+
+        // The save below is what makes the generated code real. With AutoDetectChangesEnabled off
+        // these property writes would not be part of it, and the plaintext would be returned for a
+        // code the database never received.
+        DetectChanges(entry);
 
         try
         {
