@@ -98,7 +98,7 @@ public sealed class BootstrapFileStoreTests
     public void Default_path_uses_the_normalized_service_id()
     {
         var serviceId = ServiceId.Parse("  SignaCore-Prod  ");
-        var store = new BootstrapFileStore(serviceId, DatabaseProviderIdResolver.Empty);
+        var store = new BootstrapFileStore(serviceId, new BootstrapDatabaseProviderRegistry([]));
 
         Assert.True(Path.IsPathFullyQualified(store.FilePath));
         Assert.Equal("signacore-prod.bootstrap.json", Path.GetFileName(store.FilePath));
@@ -111,7 +111,7 @@ public sealed class BootstrapFileStoreTests
         var relativePath = Path.Combine(directory.Path, "custom", "bootstrap.json");
         var store = new BootstrapFileStore(
             ServiceId.Parse("signacore"),
-            DatabaseProviderIdResolver.Empty,
+            new BootstrapDatabaseProviderRegistry([]),
             relativePath);
 
         Assert.Equal(Path.GetFullPath(relativePath), store.FilePath);
@@ -414,7 +414,7 @@ public sealed class BootstrapFileStoreTests
         var configurationDirectory = Path.Combine(directory.Path, "new-config");
         var store = new BootstrapFileStore(
             ServiceId.Parse("signacore"),
-            DatabaseProviderIdResolver.Empty,
+            new BootstrapDatabaseProviderRegistry([]),
             Path.Combine(configurationDirectory, "signacore.bootstrap.json"));
 
         store.Create(CreateConfiguration());
@@ -441,14 +441,14 @@ public sealed class BootstrapFileStoreTests
     private static BootstrapFileStore CreateStore(
         TemporaryDirectory directory,
         ServiceId? serviceId = null,
-        DatabaseProviderIdResolver? providerIdResolver = null)
+        BootstrapDatabaseProviderRegistry? providerRegistry = null)
     {
         var actualServiceId = serviceId ?? ServiceId.Parse("signacore");
         var filePath = Path.Combine(directory.Path, "config", "signacore.bootstrap.json");
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         return new BootstrapFileStore(
             actualServiceId,
-            providerIdResolver ?? DatabaseProviderIdResolver.Empty,
+            providerRegistry ?? new BootstrapDatabaseProviderRegistry([]),
             filePath);
     }
 

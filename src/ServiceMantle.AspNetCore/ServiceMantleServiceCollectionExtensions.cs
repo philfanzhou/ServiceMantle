@@ -88,7 +88,7 @@ public static class ServiceMantleServiceCollectionExtensions
                 serviceProvider.GetServices<IBootstrapDatabaseProvider>()));
         services.AddSingleton(serviceProvider => new BootstrapFileStore(
             serviceId,
-            serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver,
+            serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>(),
             resolvedBootstrapFilePath));
         services.TryAddSingleton<IBootstrapCandidateValidator, BootstrapDatabaseCandidateValidator>();
         services.TryAddSingleton<BootstrapConfigurationManager>();

@@ -203,6 +203,9 @@ public sealed class ServiceMantleRegistrationTests
         using var provider = services.BuildServiceProvider();
 
         Assert.Same(
+            provider.GetRequiredService<BootstrapDatabaseProviderRegistry>(),
+            provider.GetRequiredService<BootstrapFileStore>().ProviderRegistry);
+        Assert.Same(
             provider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver,
             provider.GetRequiredService<BootstrapFileStore>().ProviderIdResolver);
 

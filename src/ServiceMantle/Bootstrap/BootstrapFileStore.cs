@@ -24,31 +24,34 @@ public sealed class BootstrapFileStore
     };
 
     private readonly ServiceId serviceId;
-    private readonly DatabaseProviderIdResolver providerIdResolver;
+    private readonly BootstrapDatabaseProviderRegistry providerRegistry;
 
     /// <summary>
     /// Initializes a store using the default path or an explicit path.
     /// </summary>
     /// <param name="serviceId">The expected service identifier.</param>
-    /// <param name="providerIdResolver">
-    /// The shared provider-id resolver snapshot. Every value written to and read from the file is
-    /// canonicalized through it, so a registered alias never reaches disk or a capability lookup.
+    /// <param name="providerRegistry">
+    /// The provider registry that owns this host's provider registrations. Every value written to
+    /// and read from the file is canonicalized through its
+    /// <see cref="BootstrapDatabaseProviderRegistry.ProviderIdResolver"/>, so a registered alias
+    /// never reaches disk or a capability lookup, and the store can only ever agree with the
+    /// registry that dispatches the candidate validation.
     /// </param>
     /// <param name="filePath">An optional bootstrap file path.</param>
     /// <exception cref="ArgumentNullException">
-    /// <paramref name="serviceId"/> or <paramref name="providerIdResolver"/> is null.
+    /// <paramref name="serviceId"/> or <paramref name="providerRegistry"/> is null.
     /// </exception>
     /// <exception cref="ArgumentException">The explicit path is empty.</exception>
     public BootstrapFileStore(
         ServiceId serviceId,
-        DatabaseProviderIdResolver providerIdResolver,
+        BootstrapDatabaseProviderRegistry providerRegistry,
         string? filePath = null)
     {
         ArgumentNullException.ThrowIfNull(serviceId);
-        ArgumentNullException.ThrowIfNull(providerIdResolver);
+        ArgumentNullException.ThrowIfNull(providerRegistry);
 
         this.serviceId = serviceId;
-        this.providerIdResolver = providerIdResolver;
+        this.providerRegistry = providerRegistry;
         FilePath = ResolveFilePath(serviceId, filePath);
     }
 
@@ -56,13 +59,13 @@ public sealed class BootstrapFileStore
     /// Initializes a store from a service identifier string.
     /// </summary>
     /// <param name="serviceId">The expected service identifier.</param>
-    /// <param name="providerIdResolver">The shared provider-id resolver snapshot.</param>
+    /// <param name="providerRegistry">The provider registry that owns this host's registrations.</param>
     /// <param name="filePath">An optional bootstrap file path.</param>
     public BootstrapFileStore(
         string serviceId,
-        DatabaseProviderIdResolver providerIdResolver,
+        BootstrapDatabaseProviderRegistry providerRegistry,
         string? filePath = null)
-        : this(ServiceId.Parse(serviceId), providerIdResolver, filePath)
+        : this(ServiceId.Parse(serviceId), providerRegistry, filePath)
     {
     }
 
@@ -100,9 +103,17 @@ public sealed class BootstrapFileStore
     public ServiceId ServiceId => serviceId;
 
     /// <summary>
+    /// Gets the provider registry this store shares its provider registrations with.
+    /// </summary>
+    public BootstrapDatabaseProviderRegistry ProviderRegistry => providerRegistry;
+
+    /// <summary>
     /// Gets the provider-id resolver snapshot this store canonicalizes through.
     /// </summary>
-    public DatabaseProviderIdResolver ProviderIdResolver => providerIdResolver;
+    /// <remarks>
+    /// This is the registry's own snapshot instance, never a separately constructed copy.
+    /// </remarks>
+    public DatabaseProviderIdResolver ProviderIdResolver => providerRegistry.ProviderIdResolver;
 
     /// <summary>
     /// Gets the absolute path of the bootstrap file.
@@ -239,7 +250,7 @@ public sealed class BootstrapFileStore
 
         // Reading canonicalizes in memory only. An existing file that still holds a registered
         // alias is never rewritten by a read; it becomes canonical on disk at the next Replace().
-        if (!providerIdResolver.TryCanonicalize(document.Database.Provider, out var canonicalProvider))
+        if (!ProviderIdResolver.TryCanonicalize(document.Database.Provider, out var canonicalProvider))
         {
             throw Failure("contains an unsupported or invalid database configuration.");
         }
@@ -302,7 +313,7 @@ public sealed class BootstrapFileStore
                 directoryPath,
                 $".{Path.GetFileName(FilePath)}.{Path.GetRandomFileName()}.tmp");
 
-            WriteTemporaryFile(temporaryPath, configuration, providerIdResolver);
+            WriteTemporaryFile(temporaryPath, configuration, ProviderIdResolver);
 
             if (replace)
             {

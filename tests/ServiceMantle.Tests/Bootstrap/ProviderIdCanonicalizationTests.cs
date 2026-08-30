@@ -19,7 +19,7 @@ public sealed class ProviderIdCanonicalizationTests
     public void Create_writes_the_canonical_id_for_a_registered_alias()
     {
         using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory, CreateResolver());
+        var store = CreateStore(directory, CreateProviderRegistry());
 
         store.Create(CreateConfiguration(AliasId));
 
@@ -30,7 +30,7 @@ public sealed class ProviderIdCanonicalizationTests
     public void Replace_writes_the_canonical_id_for_a_registered_alias()
     {
         using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory, CreateResolver());
+        var store = CreateStore(directory, CreateProviderRegistry());
 
         store.Create(CreateConfiguration(CanonicalId));
         store.Replace(CreateConfiguration(AliasId, "Host=replaced;Password=p"));
@@ -42,7 +42,7 @@ public sealed class ProviderIdCanonicalizationTests
     public void Alias_casing_variants_all_land_on_the_descriptor_casing()
     {
         using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory, CreateResolver());
+        var store = CreateStore(directory, CreateProviderRegistry());
 
         store.Create(CreateConfiguration("POSTGRES"));
 
@@ -54,7 +54,7 @@ public sealed class ProviderIdCanonicalizationTests
     public void Unregistered_but_valid_provider_round_trips_unchanged()
     {
         using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory, CreateResolver());
+        var store = CreateStore(directory, CreateProviderRegistry());
 
         store.Create(CreateConfiguration("Vendor.Custom-Db_1"));
 
@@ -66,7 +66,7 @@ public sealed class ProviderIdCanonicalizationTests
     public void Load_canonicalizes_an_existing_alias_without_rewriting_the_file()
     {
         using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory, CreateResolver());
+        var store = CreateStore(directory, CreateProviderRegistry());
         var contents = $$"""
             {
               "FormatVersion": 1,
@@ -126,7 +126,7 @@ public sealed class ProviderIdCanonicalizationTests
     public void Load_preserves_an_unregistered_provider_id_from_an_existing_file()
     {
         using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory, CreateResolver());
+        var store = CreateStore(directory, CreateProviderRegistry());
         File.WriteAllText(store.FilePath, """
             {
               "FormatVersion": 1,
@@ -146,7 +146,7 @@ public sealed class ProviderIdCanonicalizationTests
     public void Load_rejects_a_syntactically_invalid_provider_id()
     {
         using var directory = TemporaryDirectory.Create();
-        var store = CreateStore(directory, CreateResolver());
+        var store = CreateStore(directory, CreateProviderRegistry());
         File.WriteAllText(store.FilePath, """
             {
               "Database": {
@@ -161,7 +161,7 @@ public sealed class ProviderIdCanonicalizationTests
     }
 
     [Fact]
-    public void Store_requires_a_resolver()
+    public void Store_requires_a_provider_registry()
     {
         Assert.Throws<ArgumentNullException>(() =>
             new BootstrapFileStore(ServiceId.Parse("signacore"), null!));
@@ -169,17 +169,31 @@ public sealed class ProviderIdCanonicalizationTests
             new BootstrapFileStore("signacore", null!));
     }
 
+    [Fact]
+    public void Store_canonicalizes_through_the_registry_snapshot_instance()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var providerRegistry = CreateProviderRegistry();
+        var store = CreateStore(directory, providerRegistry);
+
+        // The store must not build a second snapshot from the same descriptors: the guarantee is
+        // that it resolves through the very table the candidate dispatch uses.
+        Assert.Same(providerRegistry, store.ProviderRegistry);
+        Assert.Same(providerRegistry.ProviderIdResolver, store.ProviderIdResolver);
+    }
+
     [Theory]
-    [InlineData(typeof(BootstrapFileStore))]
-    [InlineData(typeof(DatabaseTargetPreparationProviderRegistry))]
-    [InlineData(typeof(DatabaseMigrationLockProviderRegistry))]
-    public void Type_has_no_constructor_that_skips_the_resolver(Type type)
+    [InlineData(typeof(BootstrapFileStore), typeof(BootstrapDatabaseProviderRegistry))]
+    [InlineData(typeof(DatabaseTargetPreparationProviderRegistry), typeof(DatabaseProviderIdResolver))]
+    [InlineData(typeof(DatabaseMigrationLockProviderRegistry), typeof(DatabaseProviderIdResolver))]
+    public void Type_has_no_constructor_that_skips_the_shared_snapshot(Type type, Type snapshotType)
     {
         // Guards the invariant that no public construction path can accept an alias it cannot
         // resolve. Every public constructor must take the shared snapshot, and it must be required:
         // an optional parameter that defaults to an empty snapshot is the same bypass with a
         // different spelling, because the caller silently gets a snapshot other than the one that
-        // persisted the provider id.
+        // persisted the provider id. The store is bound to the registry itself, so it cannot be
+        // handed a snapshot that disagrees with the registry that dispatches candidate validation.
         var constructors = type.GetConstructors();
 
         Assert.NotEmpty(constructors);
@@ -187,8 +201,7 @@ public sealed class ProviderIdCanonicalizationTests
             constructors,
             constructor => Assert.Contains(
                 constructor.GetParameters(),
-                parameter => parameter.ParameterType == typeof(DatabaseProviderIdResolver) &&
-                    !parameter.IsOptional));
+                parameter => parameter.ParameterType == snapshotType && !parameter.IsOptional));
     }
 
     [Fact]
@@ -315,7 +328,7 @@ public sealed class ProviderIdCanonicalizationTests
         var providerRegistry = new BootstrapDatabaseProviderRegistry([bootstrapProvider]);
         var resolver = providerRegistry.ProviderIdResolver;
 
-        var store = CreateStore(directory, resolver);
+        var store = CreateStore(directory, providerRegistry);
         var manager = new BootstrapConfigurationManager(
             store,
             InstanceId.Parse("Node-A3"),
@@ -379,16 +392,19 @@ public sealed class ProviderIdCanonicalizationTests
         Assert.Equal(WellKnownMigrationErrorCodes.LockNotSupported, result.ErrorCode);
     }
 
+    private static BootstrapDatabaseProviderRegistry CreateProviderRegistry() =>
+        new([new FakeBootstrapProvider(DatabaseProviderIdResolverTests.Descriptor(CanonicalId, AliasId))]);
+
     private static DatabaseProviderIdResolver CreateResolver() =>
-        new([DatabaseProviderIdResolverTests.Descriptor(CanonicalId, AliasId)]);
+        CreateProviderRegistry().ProviderIdResolver;
 
     private static BootstrapFileStore CreateStore(
         TemporaryDirectory directory,
-        DatabaseProviderIdResolver resolver)
+        BootstrapDatabaseProviderRegistry providerRegistry)
     {
         var filePath = Path.Combine(directory.Path, "config", "signacore.bootstrap.json");
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
-        return new BootstrapFileStore(ServiceId.Parse("signacore"), resolver, filePath);
+        return new BootstrapFileStore(ServiceId.Parse("signacore"), providerRegistry, filePath);
     }
 
     private static BootstrapConfiguration CreateConfiguration(

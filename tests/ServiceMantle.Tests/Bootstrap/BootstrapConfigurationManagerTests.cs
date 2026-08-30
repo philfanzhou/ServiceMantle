@@ -380,14 +380,14 @@ public sealed class BootstrapConfigurationManagerTests
     private static BootstrapFileStore CreateStore(
         TemporaryDirectory directory,
         ServiceId? serviceId = null,
-        DatabaseProviderIdResolver? providerIdResolver = null)
+        BootstrapDatabaseProviderRegistry? providerRegistry = null)
     {
         var actualServiceId = serviceId ?? ServiceId.Parse("signacore");
         var filePath = Path.Combine(directory.Path, "config", "signacore.bootstrap.json");
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         return new BootstrapFileStore(
             actualServiceId,
-            providerIdResolver ?? DatabaseProviderIdResolver.Empty,
+            providerRegistry ?? new BootstrapDatabaseProviderRegistry([]),
             filePath);
     }
 

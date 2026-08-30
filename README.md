@@ -52,15 +52,16 @@ By default, the file is stored at:
 
 The store distinguishes a missing file from a damaged or invalid file. `TryLoad()` returns `null` only when the file is absent; invalid JSON, unknown fields, missing required values, unsupported versions, and service-id mismatches raise `BootstrapException`. `Create()` is for first creation and never overwrites an existing file. `Replace()` atomically replaces an existing file.
 
-The store requires the shared provider-id resolver snapshot (`DatabaseProviderIdResolver`), so
-construct the provider registry first and hand the store its snapshot. There is no constructor that
-skips the resolver: a write path that accepted a provider alias but could not resolve it would put
-an unresolvable id on disk.
+The store requires the same `BootstrapDatabaseProviderRegistry` the host validates candidates with,
+so construct the provider registry first and hand it to the store. There is no constructor that
+skips the registry: a write path that accepted a provider alias but could not resolve it — or that
+resolved it through a snapshot other than the one the host actually dispatches with — would put an
+unresolvable id on disk.
 
 ```csharp
 var serviceId = ServiceId.Parse("signacore");
 var providerRegistry = new BootstrapDatabaseProviderRegistry([new PostgreSqlBootstrapDatabaseProvider()]);
-var store = new BootstrapFileStore(serviceId, providerRegistry.ProviderIdResolver);
+var store = new BootstrapFileStore(serviceId, providerRegistry);
 
 var bootstrap = new BootstrapConfiguration(
     serviceId,
@@ -180,10 +181,10 @@ The core library now provides a provider SPI so validation can be extended witho
 `BootstrapDatabaseProviderDescriptor.Aliases` is public, so a provider id that reaches the bootstrap
 file may be an alias rather than the descriptor's canonical `Id`. One immutable snapshot,
 `DatabaseProviderIdResolver`, is the single place that alias rule lives:
-`BootstrapDatabaseProviderRegistry` builds it and exposes it as `ProviderIdResolver`, and
-`BootstrapFileStore`, `DatabaseTargetPreparationProviderRegistry`, and
-`DatabaseMigrationLockProviderRegistry` all take that same snapshot instead of copying descriptor
-alias enumeration. Without it, an alias could be persisted, read back verbatim, and then miss the
+`BootstrapDatabaseProviderRegistry` builds it and exposes it as `ProviderIdResolver`.
+`BootstrapFileStore` takes the registry itself and canonicalizes through that registry's snapshot;
+`DatabaseTargetPreparationProviderRegistry` and `DatabaseMigrationLockProviderRegistry` take that
+same snapshot. None of them copies descriptor alias enumeration. Without it, an alias could be persisted, read back verbatim, and then miss the
 migration lock registry — producing `migration.lock_not_supported` with no write-time warning.
 
 Guaranteed:
