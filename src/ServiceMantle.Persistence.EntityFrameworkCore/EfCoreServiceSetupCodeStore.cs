@@ -86,6 +86,7 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
 
         // Unrelated dirty entries are allowed so that consumption can join the caller's unit of work,
         // but the target row must not already carry uncommitted caller changes.
+        DetectChanges();
         if (dbContext.ChangeTracker
             .Entries<ServiceInstallationEntity>()
             .Any(entry => entry.State is EntityState.Added
@@ -127,6 +128,19 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
             ServiceInstallationEntityStateMapper.ConvertToState(entity));
     }
 
+    /// <summary>
+    /// Brings entry states up to date before a precondition reads them.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ChangeTracker.Entries()"/> reports the last detected state, not the current one. A
+    /// caller that sets <see cref="ChangeTracker.AutoDetectChangesEnabled"/> to false and then
+    /// modifies a tracked entity leaves it reported as <see cref="EntityState.Unchanged"/>, which
+    /// would let a pending change slip past the clean-context precondition and be committed by the
+    /// save this operation owns, or let consumption validate against uncommitted caller values.
+    /// Detecting explicitly is a read of current state; it does not change the caller's setting.
+    /// </remarks>
+    private void DetectChanges() => dbContext.ChangeTracker.DetectChanges();
+
     private async ValueTask<SetupCodeIssueResult> IssueAsync(
         ServiceId serviceId,
         bool rotate,
@@ -137,6 +151,7 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
 
         // Create and Rotate own their single SaveChanges, so any pre-existing pending change would be
         // committed with them. Refusing outright is what keeps that from happening.
+        DetectChanges();
         if (dbContext.ChangeTracker.Entries().Any(entry =>
                 entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
         {

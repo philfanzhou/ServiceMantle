@@ -63,9 +63,17 @@ public sealed class SetupCodeIssueResult
     /// <summary>
     /// Creates a rejected result.
     /// </summary>
+    /// <param name="errorCode">
+    /// A classification declared by <see cref="WellKnownSetupCodeErrorCodes"/>.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// The error code is not one of the declared classifications. A shape rule alone would accept a
+    /// candidate Setup Code verbatim and publish it through <see cref="ErrorCode"/> and
+    /// <see cref="ToString"/>, so the closed set is what keeps a rejection value-free.
+    /// </exception>
     public static SetupCodeIssueResult Rejected(string errorCode)
     {
-        ArgumentException.ThrowIfNullOrEmpty(errorCode);
+        WellKnownSetupCodeErrorCodes.EnsureDefined(errorCode, nameof(errorCode));
         return new SetupCodeIssueResult(
             setupCode: null,
             generation: 0,
@@ -110,9 +118,17 @@ public sealed class SetupCodeValidationResult
     /// <summary>
     /// Creates a rejected result.
     /// </summary>
+    /// <param name="errorCode">
+    /// A classification declared by <see cref="WellKnownSetupCodeErrorCodes"/>.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// The error code is not one of the declared classifications. A shape rule alone would accept a
+    /// candidate Setup Code verbatim and publish it through <see cref="ErrorCode"/> and
+    /// <see cref="ToString"/>, so the closed set is what keeps a rejection value-free.
+    /// </exception>
     public static SetupCodeValidationResult Rejected(string errorCode)
     {
-        ArgumentException.ThrowIfNullOrEmpty(errorCode);
+        WellKnownSetupCodeErrorCodes.EnsureDefined(errorCode, nameof(errorCode));
         return new SetupCodeValidationResult(errorCode);
     }
 
@@ -166,9 +182,17 @@ public sealed class SetupCodeConsumptionResult
     /// <summary>
     /// Creates a rejected result.
     /// </summary>
+    /// <param name="errorCode">
+    /// A classification declared by <see cref="WellKnownSetupCodeErrorCodes"/>.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// The error code is not one of the declared classifications. A shape rule alone would accept a
+    /// candidate Setup Code verbatim and publish it through <see cref="ErrorCode"/> and
+    /// <see cref="ToString"/>, so the closed set is what keeps a rejection value-free.
+    /// </exception>
     public static SetupCodeConsumptionResult Rejected(string errorCode)
     {
-        ArgumentException.ThrowIfNullOrEmpty(errorCode);
+        WellKnownSetupCodeErrorCodes.EnsureDefined(errorCode, nameof(errorCode));
         return new SetupCodeConsumptionResult(state: null, errorCode);
     }
 

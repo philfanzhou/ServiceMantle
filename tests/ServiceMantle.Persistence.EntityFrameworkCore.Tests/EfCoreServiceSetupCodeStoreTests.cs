@@ -516,6 +516,88 @@ public sealed class EfCoreServiceSetupCodeStoreTests
         Assert.Equal(WellKnownSetupCodeErrorCodes.DirtyContext, dirtyTarget.ErrorCode);
     }
 
+    [Fact]
+    public async Task Create_and_rotate_refuse_a_dirty_entry_with_change_detection_disabled()
+    {
+        // ChangeTracker.Entries() reports the last detected state. With AutoDetectChangesEnabled off
+        // a caller's modification stays reported as Unchanged, so without an explicit detection the
+        // clean-context precondition would pass and this operation's own SaveChanges would commit
+        // the caller's pending change along with a freshly generated code.
+        await using var harness = await Harness.CreateAsync();
+        await harness.SeedAsync("unrelated");
+        harness.Context.ChangeTracker.Clear();
+        harness.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        var unrelated = await harness.Context.ServiceInstallations.SingleAsync(
+            item => item.ServiceId == "unrelated",
+            TestContext.Current.CancellationToken);
+        unrelated.CreatedAtUtc = CreatedAtUtc.AddMinutes(1);
+
+        var store = harness.Store();
+        Assert.Equal(
+            WellKnownSetupCodeErrorCodes.DirtyContext,
+            (await store.CreateAsync(Service, TestContext.Current.CancellationToken)).ErrorCode);
+        Assert.Equal(
+            WellKnownSetupCodeErrorCodes.DirtyContext,
+            (await store.RotateAsync(Service, TestContext.Current.CancellationToken)).ErrorCode);
+
+        // Nothing was generated, nothing was saved, and the caller's setting is untouched.
+        Assert.False(harness.Context.ChangeTracker.AutoDetectChangesEnabled);
+        var row = await harness.ReadAsync();
+        Assert.Equal(0, row.SetupCodeGeneration);
+        Assert.Null(row.SetupCodeDigest);
+        Assert.Equal(CreatedAtUtc, (await harness.ReadAsync("unrelated")).CreatedAtUtc);
+    }
+
+    [Fact]
+    public async Task StageConsume_refuses_a_dirty_target_with_change_detection_disabled()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var store = harness.Store();
+        var issued = await store.CreateAsync(Service, TestContext.Current.CancellationToken);
+        harness.Context.ChangeTracker.Clear();
+        harness.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        var target = await harness.Context.ServiceInstallations.SingleAsync(
+            item => item.ServiceId == Service.Value,
+            TestContext.Current.CancellationToken);
+        target.CreatedAtUtc = CreatedAtUtc.AddMinutes(1);
+
+        var result = await store.StageConsumeAsync(
+            Service,
+            issued.SetupCode!.Reveal(),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WellKnownSetupCodeErrorCodes.DirtyContext, result.ErrorCode);
+        Assert.False(harness.Context.ChangeTracker.AutoDetectChangesEnabled);
+        Assert.Equal(InstallationStatus.PendingSetup, (await harness.ReadAsync()).Status);
+    }
+
+    [Fact]
+    public async Task StageConsume_still_allows_an_unrelated_dirty_entry_with_change_detection_disabled()
+    {
+        // Detecting changes must not turn the tolerated unrelated-dirty case into a refusal.
+        await using var harness = await Harness.CreateAsync();
+        await harness.SeedAsync("unrelated");
+        var store = harness.Store();
+        var issued = await store.CreateAsync(Service, TestContext.Current.CancellationToken);
+        harness.Context.ChangeTracker.Clear();
+        harness.Context.ChangeTracker.AutoDetectChangesEnabled = false;
+
+        var unrelated = await harness.Context.ServiceInstallations.SingleAsync(
+            item => item.ServiceId == "unrelated",
+            TestContext.Current.CancellationToken);
+        unrelated.CreatedAtUtc = CreatedAtUtc.AddMinutes(1);
+
+        var result = await store.StageConsumeAsync(
+            Service,
+            issued.SetupCode!.Reveal(),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(result.IsStaged);
+        Assert.False(harness.Context.ChangeTracker.AutoDetectChangesEnabled);
+    }
+
     [Theory]
     [InlineData("create-vs-create")]
     [InlineData("rotate-vs-rotate")]

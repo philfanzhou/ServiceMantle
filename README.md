@@ -156,6 +156,12 @@ before the digest comparison keeps expired material a stable `expired` answer ev
 does not match, and a completed installation is never mis-reported as an invalid code because the
 caller submitted a malformed one.
 
+Every rejection carries a classification from the closed `WellKnownSetupCodeErrorCodes` set, never
+free text: `SetupCodeIssueResult.Rejected`, `SetupCodeValidationResult.Rejected`, and
+`SetupCodeConsumptionResult.Rejected` reject any other value. A Setup Code is 32 unpadded Base64URL
+characters, so a character-shape rule alone would accept a candidate verbatim and publish it through
+`ErrorCode` and `ToString()`. Use `WellKnownSetupCodeErrorCodes.IsDefined` to test membership.
+
 ```csharp
 var setupCodeStore = new EfCoreServiceSetupCodeStore<MyDbContext>(dbContext);
 
@@ -170,7 +176,9 @@ if (issued.IsIssued)
 Create and Rotate are standalone writes: they call `SaveChangesAsync` once, never create, commit, or
 take over a database transaction, and refuse to run at all when the DbContext already carries any
 `Added`, `Modified`, or `Deleted` entry (`installation.dirty_context`). Unrelated `Unchanged` entries
-are fine. A short-lived dedicated DbContext is the recommended shape. The plaintext is only built into
+are fine. The precondition detects changes explicitly before reading entry states, so it still holds
+when the caller has set `ChangeTracker.AutoDetectChangesEnabled` to false; that setting is read, never
+changed. A short-lived dedicated DbContext is the recommended shape. The plaintext is only built into
 a result after that save has succeeded; when the caller wraps the call in a larger external
 transaction, success only means the save joined that transaction, and after an external rollback the
 plaintext simply no longer validates.

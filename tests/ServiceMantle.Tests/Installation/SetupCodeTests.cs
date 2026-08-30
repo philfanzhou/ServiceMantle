@@ -293,6 +293,67 @@ public sealed class SetupCodeTests
         Assert.Throws<ArgumentNullException>(() => SetupCodeConsumptionResult.Staged(null!));
     }
 
+    [Fact]
+    public void Rejections_RefuseACandidateSetupCodeAsTheErrorCode()
+    {
+        // A Setup Code is 32 unpadded Base64URL characters: a perfectly plausible free-text error
+        // code. A shape rule alone would publish it verbatim through ErrorCode and ToString(), so
+        // rejections accept only the declared classifications.
+        var candidate = SetupCode.Generate().Reveal();
+
+        Assert.False(WellKnownSetupCodeErrorCodes.IsDefined(candidate));
+        Assert.Throws<ArgumentException>(() => SetupCodeIssueResult.Rejected(candidate));
+        Assert.Throws<ArgumentException>(() => SetupCodeValidationResult.Rejected(candidate));
+        Assert.Throws<ArgumentException>(() => SetupCodeConsumptionResult.Rejected(candidate));
+    }
+
+    [Theory]
+    [InlineData("sha256-v1:0000000000000000000000000000000000000000000000000000000000000000")]
+    [InlineData("setup_code.unknown")]
+    [InlineData("installation.not_found ")]
+    [InlineData("Installation.Not_Found")]
+    [InlineData("audit.operator_id_invalid")]
+    public void Rejections_RefuseCodesOutsideTheClosedSet(string errorCode)
+    {
+        Assert.False(WellKnownSetupCodeErrorCodes.IsDefined(errorCode));
+        Assert.Throws<ArgumentException>(() => SetupCodeIssueResult.Rejected(errorCode));
+        Assert.Throws<ArgumentException>(() => SetupCodeValidationResult.Rejected(errorCode));
+        Assert.Throws<ArgumentException>(() => SetupCodeConsumptionResult.Rejected(errorCode));
+
+        Assert.False(WellKnownSetupCodeErrorCodes.IsDefined(null));
+        Assert.Throws<ArgumentNullException>(() => SetupCodeIssueResult.Rejected(null!));
+        Assert.Throws<ArgumentNullException>(() => SetupCodeValidationResult.Rejected(null!));
+        Assert.Throws<ArgumentNullException>(() => SetupCodeConsumptionResult.Rejected(null!));
+    }
+
+    [Fact]
+    public void Rejections_AcceptEveryDeclaredClassification()
+    {
+        foreach (var errorCode in DeclaredErrorCodes())
+        {
+            Assert.True(WellKnownSetupCodeErrorCodes.IsDefined(errorCode));
+            Assert.Equal(errorCode, SetupCodeIssueResult.Rejected(errorCode).ErrorCode);
+            Assert.Equal(errorCode, SetupCodeValidationResult.Rejected(errorCode).ErrorCode);
+            Assert.Equal(errorCode, SetupCodeConsumptionResult.Rejected(errorCode).ErrorCode);
+        }
+    }
+
+    private static string[] DeclaredErrorCodes() =>
+    [
+        WellKnownSetupCodeErrorCodes.InstallationNotFound,
+        WellKnownSetupCodeErrorCodes.StateInvariantViolation,
+        WellKnownSetupCodeErrorCodes.InstallationCompleted,
+        WellKnownSetupCodeErrorCodes.DirtyContext,
+        WellKnownSetupCodeErrorCodes.ConcurrencyConflict,
+        WellKnownSetupCodeErrorCodes.SetupCodeRequired,
+        WellKnownSetupCodeErrorCodes.AlreadyExists,
+        WellKnownSetupCodeErrorCodes.NotCreated,
+        WellKnownSetupCodeErrorCodes.StorageCorrupt,
+        WellKnownSetupCodeErrorCodes.GenerationExhausted,
+        WellKnownSetupCodeErrorCodes.Invalid,
+        WellKnownSetupCodeErrorCodes.Expired,
+    ];
+
     private static DateTime? Offset(int? minutes) =>
         minutes.HasValue ? CreatedAtUtc.AddMinutes(minutes.Value) : null;
 }

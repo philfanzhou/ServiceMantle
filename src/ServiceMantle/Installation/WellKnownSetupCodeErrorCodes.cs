@@ -68,4 +68,48 @@ public static class WellKnownSetupCodeErrorCodes
     /// The stored material has expired.
     /// </summary>
     public const string Expired = "setup_code.expired";
+
+    private static readonly HashSet<string> DefinedCodes = new(StringComparer.Ordinal)
+    {
+        InstallationNotFound,
+        StateInvariantViolation,
+        InstallationCompleted,
+        DirtyContext,
+        ConcurrencyConflict,
+        SetupCodeRequired,
+        AlreadyExists,
+        NotCreated,
+        StorageCorrupt,
+        GenerationExhausted,
+        Invalid,
+        Expired,
+    };
+
+    /// <summary>
+    /// Determines whether a value is one of the codes declared by this type.
+    /// </summary>
+    /// <remarks>
+    /// The comparison is exact and ordinal. Every Setup Code rejection result accepts only these
+    /// codes, so no caller-supplied string - a candidate Setup Code included - can reach a public
+    /// <c>ErrorCode</c> or <c>ToString()</c>.
+    /// </remarks>
+    public static bool IsDefined(string? errorCode) =>
+        errorCode is not null && DefinedCodes.Contains(errorCode);
+
+    internal static string EnsureDefined(string errorCode, string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(errorCode, parameterName);
+
+        if (!IsDefined(errorCode))
+        {
+            throw new ArgumentException(
+                $"A Setup Code rejection must use a code declared by {nameof(WellKnownSetupCodeErrorCodes)}. " +
+                "Rejection classifications are a closed set so that no caller-supplied value - a " +
+                "candidate Setup Code has exactly the shape of a plausible free-text code - can reach " +
+                "a public error code.",
+                parameterName);
+        }
+
+        return errorCode;
+    }
 }
