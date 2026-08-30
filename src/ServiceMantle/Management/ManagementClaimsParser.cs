@@ -24,7 +24,9 @@ public interface IManagementClaimsParser
 /// are ignored and never contribute to the identity. The principal must carry exactly one
 /// authenticated identity and all ServiceMantle operator and permission claims must live on that
 /// identity, so a synthetic operator can never be assembled from several identities. An additional
-/// unauthenticated identity that carries no ServiceMantle claim takes no part in parsing.
+/// unauthenticated identity that carries no ServiceMantle claim takes no part in parsing; one that
+/// does carry a ServiceMantle claim is rejected rather than ignored, whether or not an authenticated
+/// identity is present.
 /// </remarks>
 public sealed class ManagementClaimsParser : IManagementClaimsParser
 {
@@ -54,7 +56,15 @@ public sealed class ManagementClaimsParser : IManagementClaimsParser
             .ToArray();
         if (authenticatedIdentities.Length == 0)
         {
-            return ManagementClaimsParseResult.Unauthenticated();
+            // A principal that presents ServiceMantle operator or permission claims on an
+            // unauthenticated identity is not merely "not logged in": it asserts an operator it has
+            // no authenticated identity to back. Classifying it as claims-invalid keeps that
+            // distinguishable for auditing, and matches the rejection an otherwise identical
+            // principal already gets once one authenticated identity is present.
+            return principal.Identities.Any(CarriesManagementClaim)
+                ? ManagementClaimsParseResult.Invalid(
+                    WellKnownManagementIdentityErrorCodes.ClaimsUnauthenticated)
+                : ManagementClaimsParseResult.Unauthenticated();
         }
 
         if (authenticatedIdentities.Length > 1)
@@ -149,9 +159,8 @@ public sealed class ManagementClaimsParser : IManagementClaimsParser
                 WellKnownManagementIdentityErrorCodes.DisplayNameInvalid);
         }
 
-        return ManagementClaimsParseResult.Parsed(ManagementIdentity.FromValidated(
-            auditOperator,
-            ManagementPermissions.All.Where(granted.Contains).ToArray()));
+        return ManagementClaimsParseResult.Parsed(
+            ManagementIdentity.FromValidated(auditOperator, granted));
     }
 
     private static bool CarriesManagementClaim(ClaimsIdentity identity) =>

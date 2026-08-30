@@ -180,4 +180,54 @@ public sealed class ManagementIdentityContractTests
         Assert.Equal(identity.Source.Value, result.Identity.Source.Value);
         Assert.Equal(identity.Permissions, result.Identity.Permissions);
     }
+
+    [Fact]
+    public void Permissions_CannotBeMutatedThroughTheDeclaredInterface()
+    {
+        // IReadOnlyList<T> is only nominally read-only: an array behind it can be cast back and
+        // written through, which would silently change what an already validated identity grants.
+        var identity = ManagementIdentity.Create(
+            WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+            "admin-1",
+            [ManagementPermission.Read]);
+
+        Assert.Throws<InvalidCastException>(() => (ManagementPermission[])identity.Permissions);
+        Assert.IsNotType<ManagementPermission[]>(identity.Permissions);
+        Assert.Throws<NotSupportedException>(() =>
+            ((IList<ManagementPermission>)identity.Permissions)[0] = ManagementPermission.Admin);
+
+        Assert.Equal([ManagementPermission.Read], identity.Permissions);
+        Assert.False(identity.HasPermission(ManagementPermission.Admin));
+        Assert.DoesNotContain(
+            identity.ToClaimsIdentity().FindAll(ManagementClaimTypes.Permission),
+            claim => claim.Value == ManagementPermissions.AdminValue);
+    }
+
+    [Fact]
+    public void Permissions_AreMaterializedIndependentlyOfTheCallerSequence()
+    {
+        var supplied = new List<ManagementPermission> { ManagementPermission.Read };
+        var identity = ManagementIdentity.Create(
+            WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+            "admin-1",
+            supplied);
+
+        supplied.Add(ManagementPermission.Admin);
+
+        Assert.Equal([ManagementPermission.Read], identity.Permissions);
+        Assert.False(identity.HasPermission(ManagementPermission.Admin));
+    }
+
+    [Fact]
+    public void ManagementPermissionsAll_CannotBeMutatedThroughTheDeclaredInterface()
+    {
+        Assert.Throws<InvalidCastException>(() =>
+            (ManagementPermission[])ManagementPermissions.All);
+        Assert.Throws<NotSupportedException>(() =>
+            ((IList<ManagementPermission>)ManagementPermissions.All)[0] = ManagementPermission.Admin);
+
+        Assert.Equal(
+            [ManagementPermission.Read, ManagementPermission.Write, ManagementPermission.Admin],
+            ManagementPermissions.All);
+    }
 }

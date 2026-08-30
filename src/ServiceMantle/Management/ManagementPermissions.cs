@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 namespace ServiceMantle.Management;
 
 /// <summary>
@@ -23,12 +25,17 @@ public static class ManagementPermissions
     /// <summary>
     /// Gets every defined permission in the fixed emission order.
     /// </summary>
-    public static IReadOnlyList<ManagementPermission> All { get; } =
-    [
+    /// <remarks>
+    /// The backing store is wrapped in a <see cref="ReadOnlyCollection{T}"/> rather than exposed as
+    /// an array behind an interface, so a caller cannot cast the fixed permission set back to
+    /// <see cref="ManagementPermission"/><c>[]</c> and reorder or replace its entries.
+    /// </remarks>
+    public static IReadOnlyList<ManagementPermission> All { get; } = new[]
+    {
         ManagementPermission.Read,
         ManagementPermission.Write,
         ManagementPermission.Admin,
-    ];
+    }.AsReadOnly();
 
     /// <summary>
     /// Gets the stable wire value of a defined permission.

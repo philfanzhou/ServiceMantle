@@ -76,10 +76,19 @@ public sealed class ManagementClaimsParseResult
     /// <summary>
     /// Creates an invalid-claims result carrying a safe error code.
     /// </summary>
+    /// <param name="errorCode">
+    /// A classification declared by <see cref="WellKnownManagementIdentityErrorCodes"/>.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// The error code is not one of the declared classifications. Rejecting a claims principal is a
+    /// ServiceMantle-owned decision, so the code is restricted to the closed set rather than to a
+    /// character shape: a shape rule alone would let a caller place a credential fragment or a claim
+    /// value into the public <see cref="ErrorCode"/> and <see cref="ToString"/>.
+    /// </exception>
     public static ManagementClaimsParseResult Invalid(string errorCode) => new(
         ManagementClaimsParseStatus.Invalid,
         identity: null,
-        ManagementIdentityErrorCode.EnsureValid(errorCode, nameof(errorCode)));
+        ManagementIdentityErrorCode.EnsureWellKnown(errorCode, nameof(errorCode)));
 
     /// <summary>
     /// Returns a safe projection that never includes claim values.

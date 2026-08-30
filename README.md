@@ -94,11 +94,30 @@ operator source is validated by parsing it with `ManagementAuditOperatorSource.T
 comparing the raw claim value to the parsed value ordinally, which accepts only an already normalized
 wire value without changing that parser's general normalization contract for other callers.
 
+A principal that carries a ServiceMantle operator or permission claim on an identity that is not
+authenticated is rejected rather than ignored, so asserting an operator without an authenticated
+identity behind it stays distinguishable from simply not being signed in. An unauthenticated identity
+that carries no ServiceMantle claim still takes no part in parsing.
+
+`ManagementIdentity.Permissions` and `ManagementPermissions.All` are exposed as `IReadOnlyList<T>` but
+backed by a `ReadOnlyCollection<T>`, so neither the permissions of a validated identity nor the fixed
+permission set can be changed by casting the declared interface back to an array.
+
+Rejections produced by ServiceMantle itself carry a classification from the closed
+`WellKnownManagementIdentityErrorCodes` set, never free text:
+`ManagementClaimsParseResult.Invalid` and `ManagementCurrentOperatorResult.ClaimsInvalid` reject any
+other value, so no claim value or credential fragment can reach a public `ErrorCode` or `ToString()`.
+Use `WellKnownManagementIdentityErrorCodes.IsDefined` to test membership.
+
 `ManagementIdentityResult` is a closed three-state result: `Authenticated`, `Unauthenticated`, and
-`Failed(errorCode)`. `ManagementIdentityProviderInvoker` propagates `OperationCanceledException` only
+`Failed(errorCode)`. `Failed` is the one result whose code originates in the consuming service's own
+provider, so it enforces the safe 1-64 character ASCII shape rather than the closed set; the provider
+is responsible for supplying a classification and never exception text, credentials, or an upstream
+response. `ManagementIdentityProviderInvoker` propagates `OperationCanceledException` only
 when the caller token has itself requested cancellation; a provider that cancels on its own or throws
-anything else yields the stable `management_identity.provider_failed` code. The current-operator
-resolver keeps `Unauthenticated` and `ClaimsInvalid` distinguishable for authorization and auditing.
+anything else yields the stable `management_identity.provider_failed` code, which is the only code
+ServiceMantle itself ever puts into a `Failed` result. The current-operator resolver keeps
+`Unauthenticated` and `ClaimsInvalid` distinguishable for authorization and auditing.
 
 ### Explicit non-guarantees
 

@@ -7,6 +7,22 @@ internal static class ManagementIdentityErrorCode
 {
     internal const int MaximumLength = 64;
 
+    internal static string EnsureWellKnown(string errorCode, string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(errorCode, parameterName);
+
+        if (!WellKnownManagementIdentityErrorCodes.IsDefined(errorCode))
+        {
+            throw new ArgumentException(
+                "A ServiceMantle management rejection must use a code declared by " +
+                $"{nameof(WellKnownManagementIdentityErrorCodes)}. Rejection classifications are a " +
+                "closed set so that no caller-supplied text can reach a public error code.",
+                parameterName);
+        }
+
+        return errorCode;
+    }
+
     internal static string EnsureValid(string errorCode, string parameterName)
     {
         ArgumentNullException.ThrowIfNull(errorCode, parameterName);

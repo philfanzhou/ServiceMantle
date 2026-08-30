@@ -81,6 +81,16 @@ public sealed class ManagementIdentityResult
     /// <summary>
     /// Creates a failed result carrying a safe error code.
     /// </summary>
+    /// <remarks>
+    /// Unlike the ServiceMantle-owned rejection results, this code originates in the consuming
+    /// service's own provider, which classifies its own upstream failures. It is therefore held to
+    /// the safe character shape rather than to
+    /// <see cref="WellKnownManagementIdentityErrorCodes"/>, and supplying a classification instead
+    /// of exception text, a credential, or an upstream response is the provider's obligation.
+    /// ServiceMantle itself only ever produces
+    /// <see cref="WellKnownManagementIdentityErrorCodes.ProviderFailed"/> here, through
+    /// <see cref="ManagementIdentityProviderInvoker"/>.
+    /// </remarks>
     /// <exception cref="ArgumentException">
     /// The error code is not 1-64 ASCII letters, digits, <c>.</c>, <c>_</c>, or <c>-</c>.
     /// </exception>

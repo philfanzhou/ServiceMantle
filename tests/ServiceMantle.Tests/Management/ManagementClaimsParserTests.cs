@@ -8,7 +8,7 @@ namespace ServiceMantle.Tests.Management;
 public sealed class ManagementClaimsParserTests
 {
     [Fact]
-    public void NullPrincipalAndUnauthenticatedIdentity_AreUnauthenticatedRatherThanInvalid()
+    public void PrincipalWithoutManagementClaims_IsUnauthenticatedRatherThanInvalid()
     {
         Assert.Equal(
             ManagementClaimsParseStatus.Unauthenticated,
@@ -17,13 +17,62 @@ public sealed class ManagementClaimsParserTests
             ManagementClaimsParseStatus.Unauthenticated,
             ManagementClaimsParser.Instance.Parse(new ClaimsPrincipal()).Status);
 
-        // Claims without an authentication type are not authenticated, even when they are complete.
-        var unauthenticated = new ClaimsPrincipal(new ClaimsIdentity(ValidClaims()));
-        var result = ManagementClaimsParser.Instance.Parse(unauthenticated);
+        // An unauthenticated identity that carries no ServiceMantle claim takes no part in parsing.
+        var unrelated = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim("unrelated.claim", "ignored"), new Claim(ClaimTypes.Role, "administrator")]));
+        var result = ManagementClaimsParser.Instance.Parse(unrelated);
 
         Assert.Equal(ManagementClaimsParseStatus.Unauthenticated, result.Status);
         Assert.Null(result.ErrorCode);
         Assert.Null(result.Identity);
+    }
+
+    [Fact]
+    public void UnauthenticatedIdentityCarryingManagementClaims_IsClaimsInvalid()
+    {
+        // Claims without an authentication type are not authenticated even when they are complete.
+        // Such a principal asserts an operator that no authenticated identity backs, so it must stay
+        // distinguishable from "nobody is signed in" for auditing - and it is exactly the principal
+        // that already gets rejected as claims-split once one authenticated identity is present.
+        var unauthenticated = new ClaimsPrincipal(new ClaimsIdentity(ValidClaims()));
+
+        var result = ManagementClaimsParser.Instance.Parse(unauthenticated);
+
+        Assert.Equal(ManagementClaimsParseStatus.Invalid, result.Status);
+        Assert.Equal(
+            WellKnownManagementIdentityErrorCodes.ClaimsUnauthenticated,
+            result.ErrorCode);
+        Assert.Null(result.Identity);
+    }
+
+    [Theory]
+    [InlineData(ManagementClaimTypes.OperatorId)]
+    [InlineData(ManagementClaimTypes.OperatorSource)]
+    [InlineData(ManagementClaimTypes.OperatorDisplayName)]
+    [InlineData(ManagementClaimTypes.Permission)]
+    public void UnauthenticatedIdentityCarryingASingleManagementClaim_IsClaimsInvalid(string claimType)
+    {
+        var principal = new ClaimsPrincipal(new ClaimsIdentity([new Claim(claimType, "anything")]));
+
+        var result = ManagementClaimsParser.Instance.Parse(principal);
+
+        Assert.Equal(ManagementClaimsParseStatus.Invalid, result.Status);
+        Assert.Equal(
+            WellKnownManagementIdentityErrorCodes.ClaimsUnauthenticated,
+            result.ErrorCode);
+    }
+
+    [Fact]
+    public void CurrentOperatorResolver_KeepsUnauthenticatedClaimsDistinguishable()
+    {
+        var resolver = new ManagementCurrentOperatorResolver(ManagementClaimsParser.Instance);
+
+        var result = resolver.Resolve(new ClaimsPrincipal(new ClaimsIdentity(ValidClaims())));
+
+        Assert.Equal(ManagementCurrentOperatorStatus.ClaimsInvalid, result.Status);
+        Assert.Equal(
+            WellKnownManagementIdentityErrorCodes.ClaimsUnauthenticated,
+            result.ErrorCode);
     }
 
     [Fact]
@@ -333,11 +382,12 @@ public sealed class ManagementClaimsParserTests
     internal static ClaimsPrincipal Authenticated(IEnumerable<Claim> claims) =>
         new(new ClaimsIdentity(claims, ManagementIdentityDefaults.AuthenticationType));
 
-    private static string[] StableErrorCodes() =>
+    internal static string[] StableErrorCodes() =>
     [
         WellKnownManagementIdentityErrorCodes.ProviderFailed,
         WellKnownManagementIdentityErrorCodes.IdentityAmbiguous,
         WellKnownManagementIdentityErrorCodes.ClaimsSplit,
+        WellKnownManagementIdentityErrorCodes.ClaimsUnauthenticated,
         WellKnownManagementIdentityErrorCodes.OperatorIdInvalid,
         WellKnownManagementIdentityErrorCodes.OperatorSourceInvalid,
         WellKnownManagementIdentityErrorCodes.DisplayNameInvalid,

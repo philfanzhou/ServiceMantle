@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Security.Claims;
 using ServiceMantle.Audit;
 
@@ -13,7 +14,7 @@ public sealed class ManagementIdentity
 
     private ManagementIdentity(
         ManagementAuditOperator auditOperator,
-        IReadOnlyList<ManagementPermission> permissions)
+        ReadOnlyCollection<ManagementPermission> permissions)
     {
         this.auditOperator = auditOperator;
         Permissions = permissions;
@@ -37,6 +38,12 @@ public sealed class ManagementIdentity
     /// <summary>
     /// Gets the de-duplicated permissions in the fixed <see cref="ManagementPermission"/> order.
     /// </summary>
+    /// <remarks>
+    /// The set is wrapped in a <see cref="ReadOnlyCollection{T}"/>, so a caller cannot cast it back
+    /// to <see cref="ManagementPermission"/><c>[]</c> and change what this identity grants after it
+    /// was validated. Mutating the sequence passed to <see cref="Create"/> afterwards has no effect
+    /// either, because the ordered set is materialized during construction.
+    /// </remarks>
     public IReadOnlyList<ManagementPermission> Permissions { get; }
 
     /// <summary>
@@ -88,8 +95,8 @@ public sealed class ManagementIdentity
     /// </summary>
     internal static ManagementIdentity FromValidated(
         ManagementAuditOperator auditOperator,
-        IReadOnlyList<ManagementPermission> permissions) =>
-        new(auditOperator, permissions);
+        HashSet<ManagementPermission> grantedPermissions) =>
+        new(auditOperator, OrderGranted(grantedPermissions));
 
     /// <summary>
     /// Determines whether this identity carries a permission.
@@ -151,7 +158,7 @@ public sealed class ManagementIdentity
         ClaimsIdentity.DefaultIssuer,
         ClaimsIdentity.DefaultIssuer);
 
-    private static IReadOnlyList<ManagementPermission> OrderPermissions(
+    private static ReadOnlyCollection<ManagementPermission> OrderPermissions(
         IEnumerable<ManagementPermission> permissions,
         string parameterName)
     {
@@ -175,6 +182,10 @@ public sealed class ManagementIdentity
                 parameterName);
         }
 
-        return ManagementPermissions.All.Where(granted.Contains).ToArray();
+        return OrderGranted(granted);
     }
+
+    private static ReadOnlyCollection<ManagementPermission> OrderGranted(
+        HashSet<ManagementPermission> granted) =>
+        ManagementPermissions.All.Where(granted.Contains).ToArray().AsReadOnly();
 }

@@ -88,10 +88,18 @@ public sealed class ManagementCurrentOperatorResult
     /// <summary>
     /// Creates a claims-invalid result carrying a safe error code.
     /// </summary>
+    /// <param name="errorCode">
+    /// A classification declared by <see cref="WellKnownManagementIdentityErrorCodes"/>.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// The error code is not one of the declared classifications. Rejecting a claims principal is a
+    /// ServiceMantle-owned decision, so the code is restricted to the closed set rather than to a
+    /// character shape.
+    /// </exception>
     public static ManagementCurrentOperatorResult ClaimsInvalid(string errorCode) => new(
         ManagementCurrentOperatorStatus.ClaimsInvalid,
         identity: null,
-        ManagementIdentityErrorCode.EnsureValid(errorCode, nameof(errorCode)));
+        ManagementIdentityErrorCode.EnsureWellKnown(errorCode, nameof(errorCode)));
 
     /// <summary>
     /// Returns a safe projection that never includes operator or claim content.

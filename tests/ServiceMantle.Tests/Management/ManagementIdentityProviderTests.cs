@@ -147,6 +147,39 @@ public sealed class ManagementIdentityProviderTests
         Assert.Throws<ArgumentNullException>(() => new ManagementCurrentOperatorResolver(null!));
     }
 
+    [Theory]
+    [InlineData("token123")]
+    [InlineData("eyJhbGciOiJIUzI1NiJ9")]
+    [InlineData("Ada.Lovelace")]
+    [InlineData("management.read")]
+    [InlineData("audit.operator_id_invalid")]
+    public void ServiceMantleOwnedRejections_RefuseCodesOutsideTheClosedSet(string errorCode)
+    {
+        // A character-shape rule alone accepts credential fragments, claim values, and foreign
+        // error codes. Rejecting a claims principal is a ServiceMantle-owned decision, so both
+        // rejection results accept only the declared classifications.
+        Assert.False(WellKnownManagementIdentityErrorCodes.IsDefined(errorCode));
+        Assert.Throws<ArgumentException>(() => ManagementClaimsParseResult.Invalid(errorCode));
+        Assert.Throws<ArgumentException>(() => ManagementCurrentOperatorResult.ClaimsInvalid(errorCode));
+    }
+
+    [Fact]
+    public void ServiceMantleOwnedRejections_AcceptEveryDeclaredClassification()
+    {
+        foreach (var errorCode in ManagementClaimsParserTests.StableErrorCodes())
+        {
+            Assert.True(WellKnownManagementIdentityErrorCodes.IsDefined(errorCode));
+            Assert.Equal(errorCode, ManagementClaimsParseResult.Invalid(errorCode).ErrorCode);
+            Assert.Equal(
+                errorCode,
+                ManagementCurrentOperatorResult.ClaimsInvalid(errorCode).ErrorCode);
+        }
+
+        Assert.Throws<ArgumentNullException>(() => ManagementClaimsParseResult.Invalid(null!));
+        Assert.Throws<ArgumentNullException>(() => ManagementCurrentOperatorResult.ClaimsInvalid(null!));
+    }
+
+
     private sealed class DelegateProvider(
         Func<CancellationToken, ValueTask<ManagementIdentityResult>> callback)
         : IManagementIdentityProvider

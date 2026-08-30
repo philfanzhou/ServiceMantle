@@ -25,6 +25,12 @@ public static class WellKnownManagementIdentityErrorCodes
     public const string ClaimsSplit = "management_identity.claims_split";
 
     /// <summary>
+    /// The principal carries ServiceMantle operator or permission claims, but no identity holding
+    /// them is authenticated.
+    /// </summary>
+    public const string ClaimsUnauthenticated = "management_identity.claims_unauthenticated";
+
+    /// <summary>
     /// The operator identifier claim is missing, duplicated, or not acceptable.
     /// </summary>
     public const string OperatorIdInvalid = "management_identity.operator_id_invalid";
@@ -43,4 +49,27 @@ public static class WellKnownManagementIdentityErrorCodes
     /// The permission claims are missing, duplicated, or contain an unknown value.
     /// </summary>
     public const string PermissionInvalid = "management_identity.permission_invalid";
+
+    private static readonly HashSet<string> DefinedCodes = new(StringComparer.Ordinal)
+    {
+        ProviderFailed,
+        IdentityAmbiguous,
+        ClaimsSplit,
+        ClaimsUnauthenticated,
+        OperatorIdInvalid,
+        OperatorSourceInvalid,
+        DisplayNameInvalid,
+        PermissionInvalid,
+    };
+
+    /// <summary>
+    /// Determines whether a value is one of the codes declared by this type.
+    /// </summary>
+    /// <remarks>
+    /// The comparison is exact and ordinal. The ServiceMantle-owned rejection results - the claims
+    /// parser result and the current-operator result - accept only these codes, so no caller-shaped
+    /// string can reach a public <c>ErrorCode</c> or <c>ToString()</c>.
+    /// </remarks>
+    public static bool IsDefined(string? errorCode) =>
+        errorCode is not null && DefinedCodes.Contains(errorCode);
 }
