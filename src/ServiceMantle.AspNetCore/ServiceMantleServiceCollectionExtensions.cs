@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using ServiceMantle;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.Bootstrap;
+using ServiceMantle.Http;
 using ServiceMantle.Logging;
 using ServiceMantle.Migration;
 
@@ -101,6 +103,10 @@ public static class ServiceMantleServiceCollectionExtensions
                 serviceProvider.GetServices<IDatabaseMigrationLockProvider>(),
                 serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver));
         services.TryAddSingleton<IServiceStartupPhaseResolver, DefaultServiceStartupPhaseResolver>();
+        services.TryAddSingleton<ServiceMantleExceptionMappingRegistry>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IHostedService,
+            ServiceMantleProblemDetailsStartupValidator>());
 
         return new ServiceMantleBuilder(services);
     }
@@ -167,6 +173,44 @@ public static class ServiceMantleServiceCollectionExtensions
 
         builder.Services.TryAddScoped<IDatabaseMigrationExecutor, TExecutor>();
         builder.Services.TryAddScoped<DatabaseMigrationOrchestrator>();
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds an exact exception-type mapping to the ServiceMantle Problem Details table.
+    /// </summary>
+    /// <typeparam name="TException">The exact exception type handled by the mapping.</typeparam>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="statusCode">The fixed HTTP error status returned by this mapping.</param>
+    /// <param name="errorCode">The stable error code used in the response and type URI.</param>
+    /// <param name="title">The fixed, public-safe Problem Details title.</param>
+    /// <param name="extensionFields">
+    /// Optional explicitly named extension value factories. The names form the mapping's whitelist;
+    /// values are supplied by the consuming service and are not sanitized by ServiceMantle.
+    /// </param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// Registrations are validated when the host starts. Repeating an identical registration is
+    /// idempotent. A second registration for the same exception type with a different status, code,
+    /// title, extension whitelist, or value factory is a startup error. Mappings are exact-type:
+    /// derived exception types must be registered separately or they use the fail-closed fallback.
+    /// </remarks>
+    public static ServiceMantleBuilder AddExceptionMapping<TException>(
+        this ServiceMantleBuilder builder,
+        int statusCode,
+        string errorCode,
+        string title,
+        IReadOnlyDictionary<string, Func<TException, object?>>? extensionFields = null)
+        where TException : Exception
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        builder.Services.AddSingleton<IServiceMantleExceptionMappingRegistration>(
+            new ServiceMantleExceptionMappingRegistration<TException>(
+                statusCode,
+                errorCode,
+                title,
+                extensionFields));
         return builder;
     }
 }
