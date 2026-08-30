@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the explicit forwarded-header trust boundary, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -39,6 +39,40 @@ using (context.BeginScope(logger, new Dictionary<string, object?>
 ```
 
 Extension fields are limited to 32, require non-null values and identifier-style names, and cannot duplicate or override the four protected identity fields `ServiceName`, `ServiceVersion`, `InstanceId`, and `CorrelationId` (matching is case-insensitive). Disposing the returned handle ends the scope; standard `ILogger` async scope semantics keep concurrent execution contexts isolated. This context does not sanitize extension values or configure a logging sink, so callers remain responsible for passing only values safe for their providers.
+
+## Explicit forwarded-header trust
+
+Forwarded headers are disabled unless both registration and middleware insertion are explicit. The
+configuration requires at least one trusted proxy address or CIDR and a non-null `ForwardLimit` from
+1 through 10:
+
+```csharp
+builder.Services
+    .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+    .AddForwardedHeaders(options =>
+    {
+        options.KnownProxies = ["10.0.0.10"];
+        options.KnownIPNetworks = ["2001:db8:1234::/64"];
+        options.AllowedHosts = ["admin.example.com", "*.internal.example.com"];
+        options.ForwardLimit = 2;
+    });
+
+var app = builder.Build();
+app.UseServiceMantleForwardedHeaders();
+```
+
+ServiceMantle creates a private immutable startup snapshot and a dedicated framework
+`ForwardedHeadersOptions` instance. It always enables `X-Forwarded-For` and `X-Forwarded-Proto`,
+requires header-count symmetry, and enables `X-Forwarded-Host` only when `AllowedHosts` is non-empty.
+The framework's implicit loopback trust is removed. Top-level allow-all hosts, ports, invalid or
+duplicate normalized values, enumeration failures, and conflicting repeated registrations fail at
+application composition or startup without echoing the submitted lists.
+
+Right-to-left chain processing, the first-unknown-hop stop, IPv4-mapped IPv6 handling, host wildcard
+and IDN matching, original headers, and truncation use the .NET 10 Forwarded Headers Middleware
+semantics. This capability does not configure a proxy, firewall, Host Filtering Middleware, HSTS, or
+HTTPS redirection, and it cannot prevent consumers or environment variables from separately enabling
+the framework middleware.
 
 ## Request Correlation ID
 
