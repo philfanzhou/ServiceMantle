@@ -1,11 +1,9 @@
-using System.Collections;
 using System.Collections.Frozen;
 using System.Collections.ObjectModel;
 using System.Data.Common;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Reflection;
 using System.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -106,6 +104,7 @@ public sealed class StructuredLogSanitizer
     private readonly int maximumDepth;
     private readonly int maximumCollectionCount;
     private readonly int maximumStringLength;
+    private readonly StructuredLogObjectDeconstructor objectDeconstructor = new();
 
     /// <summary>
     /// Initializes a sanitizer and snapshots all mutable option collections.
@@ -327,11 +326,6 @@ public sealed class StructuredLogSanitizer
 
         try
         {
-            if (value is Exception exception)
-            {
-                return SanitizeException(exception, depth, activeReferences);
-            }
-
             if (value is JsonDocument jsonDocument)
             {
                 return SanitizeJson(jsonDocument.RootElement, depth, activeReferences);
@@ -347,31 +341,17 @@ public sealed class StructuredLogSanitizer
                 return SanitizeJsonNode(jsonNode, depth, activeReferences);
             }
 
-            if (value is IDictionary dictionary)
-            {
-                return SanitizeDictionary(dictionary, depth, activeReferences);
-            }
-
-            if (TrySanitizeGenericDictionary(
+            if (objectDeconstructor.TryDeconstruct(
                     value,
                     depth,
                     activeReferences,
-                    out var genericDictionary))
+                    this,
+                    out var deconstructed))
             {
-                return genericDictionary;
+                return deconstructed;
             }
 
-            if (value is IEnumerable enumerable)
-            {
-                return SanitizeEnumerable(enumerable, depth, activeReferences);
-            }
-
-            if (value is Delegate or Stream or Task)
-            {
-                return $"[OBJECT:{type.FullName ?? type.Name}]";
-            }
-
-            return SanitizeObject(value, depth, activeReferences);
+            return $"[OBJECT:{type.FullName ?? type.Name}]";
         }
         catch
         {
@@ -384,27 +364,6 @@ public sealed class StructuredLogSanitizer
                 activeReferences.Remove(value);
             }
         }
-    }
-
-    private IReadOnlyDictionary<string, object?> SanitizeException(
-        Exception exception,
-        int depth,
-        HashSet<object> activeReferences)
-    {
-        var output = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["ExceptionType"] = exception.GetType().FullName ?? exception.GetType().Name
-        };
-
-        if (exception.InnerException is not null)
-        {
-            output["InnerException"] = SanitizeValue(
-                exception.InnerException,
-                depth + 1,
-                activeReferences);
-        }
-
-        return new ReadOnlyDictionary<string, object?>(output);
     }
 
     private object? SanitizeJson(
@@ -561,203 +520,15 @@ public sealed class StructuredLogSanitizer
         }
     }
 
-    private IReadOnlyDictionary<string, object?> SanitizeDictionary(
-        IDictionary dictionary,
+    internal int MaximumCollectionCount => maximumCollectionCount;
+
+    internal object? SanitizeNestedValue(
+        object? value,
         int depth,
-        HashSet<object> activeReferences)
-    {
-        var output = new Dictionary<string, object?>(StringComparer.Ordinal);
-        var count = 0;
-        foreach (DictionaryEntry entry in dictionary)
-        {
-            if (count++ >= maximumCollectionCount)
-            {
-                output["CollectionTruncated"] = CollectionTruncated;
-                break;
-            }
+        HashSet<object> activeReferences) =>
+        SanitizeValue(value, depth, activeReferences);
 
-            if (!TryGetFieldName(entry.Key, out var fieldName))
-            {
-                continue;
-            }
-
-            AddField(output, fieldName, entry.Value, depth + 1, activeReferences);
-        }
-
-        return new ReadOnlyDictionary<string, object?>(output);
-    }
-
-    private bool TrySanitizeGenericDictionary(
-        object value,
-        int depth,
-        HashSet<object> activeReferences,
-        out object? sanitized)
-    {
-        var type = value.GetType();
-        var isDictionary = type.GetInterfaces().Any(candidate =>
-        {
-            if (!candidate.IsGenericType)
-            {
-                return false;
-            }
-
-            var definition = candidate.GetGenericTypeDefinition();
-            if (definition == typeof(IDictionary<,>) || definition == typeof(IReadOnlyDictionary<,>))
-            {
-                return true;
-            }
-
-            if (definition != typeof(IEnumerable<>))
-            {
-                return false;
-            }
-
-            var elementType = candidate.GetGenericArguments()[0];
-            return elementType.IsGenericType &&
-                elementType.GetGenericTypeDefinition() == typeof(KeyValuePair<,>);
-        });
-
-        if (!isDictionary)
-        {
-            sanitized = null;
-            return false;
-        }
-
-        var output = new Dictionary<string, object?>(StringComparer.Ordinal);
-        var count = 0;
-        foreach (var item in (IEnumerable)value)
-        {
-            if (count++ >= maximumCollectionCount)
-            {
-                output["CollectionTruncated"] = CollectionTruncated;
-                break;
-            }
-
-            if (item is null)
-            {
-                continue;
-            }
-
-            var itemType = item.GetType();
-            var keyProperty = itemType.GetProperty("Key", BindingFlags.Instance | BindingFlags.Public);
-            var valueProperty = itemType.GetProperty("Value", BindingFlags.Instance | BindingFlags.Public);
-            if (keyProperty is null || valueProperty is null)
-            {
-                throw new InvalidOperationException();
-            }
-
-            var key = keyProperty.GetValue(item);
-            if (!TryGetFieldName(key, out var fieldName))
-            {
-                continue;
-            }
-
-            if (IsDeniedField(fieldName))
-            {
-                AddField(output, fieldName, value: null, depth + 1, activeReferences);
-                continue;
-            }
-
-            AddField(
-                output,
-                fieldName,
-                valueProperty.GetValue(item),
-                depth + 1,
-                activeReferences);
-        }
-
-        sanitized = new ReadOnlyDictionary<string, object?>(output);
-        return true;
-    }
-
-    private IReadOnlyList<object?> SanitizeEnumerable(
-        IEnumerable enumerable,
-        int depth,
-        HashSet<object> activeReferences)
-    {
-        var output = new List<object?>();
-        var count = 0;
-        foreach (var item in enumerable)
-        {
-            if (count++ >= maximumCollectionCount)
-            {
-                output.Add(CollectionTruncated);
-                break;
-            }
-
-            output.Add(SanitizeValue(item, depth + 1, activeReferences));
-        }
-
-        return output.AsReadOnly();
-    }
-
-    private object SanitizeObject(
-        object value,
-        int depth,
-        HashSet<object> activeReferences)
-    {
-        var type = value.GetType();
-        var members = type
-            .GetMembers(BindingFlags.Instance | BindingFlags.Public)
-            .Where(member => member is PropertyInfo or FieldInfo)
-            .OrderBy(member => member.Name, StringComparer.Ordinal)
-            .ToArray();
-
-        if (members.Length == 0)
-        {
-            return $"[OBJECT:{type.FullName ?? type.Name}]";
-        }
-
-        var output = new Dictionary<string, object?>(StringComparer.Ordinal);
-        var count = 0;
-        foreach (var member in members)
-        {
-            if (count++ >= maximumCollectionCount)
-            {
-                output["CollectionTruncated"] = CollectionTruncated;
-                break;
-            }
-
-            if (!TryClassifyField(member.Name, out var outputName, out var denied, out var allowed) ||
-                !allowed)
-            {
-                continue;
-            }
-
-            if (denied)
-            {
-                AddOutput(output, outputName, RedactedValue);
-                continue;
-            }
-
-            object? memberValue;
-            try
-            {
-                memberValue = member switch
-                {
-                    PropertyInfo property when
-                        property.GetMethod is not null &&
-                        !property.GetMethod.IsStatic &&
-                        property.GetIndexParameters().Length == 0 => property.GetValue(value),
-                    FieldInfo field when !field.IsStatic => field.GetValue(value),
-                    _ => SanitizationFailed
-                };
-            }
-            catch
-            {
-                memberValue = SanitizationFailed;
-            }
-
-            AddOutput(
-                output,
-                outputName,
-                SanitizeValue(memberValue, depth + 1, activeReferences));
-        }
-
-        return new ReadOnlyDictionary<string, object?>(output);
-    }
-
-    private void AddField(
+    internal void AddField(
         IDictionary<string, object?> output,
         string name,
         object? value,
@@ -775,7 +546,7 @@ public sealed class StructuredLogSanitizer
         AddOutput(output, outputName, sanitizedValue);
     }
 
-    private static void AddOutput(
+    internal static void AddOutput(
         IDictionary<string, object?> output,
         string name,
         object? value)
@@ -786,7 +557,7 @@ public sealed class StructuredLogSanitizer
         }
     }
 
-    private bool TryClassifyField(
+    internal bool TryClassifyField(
         string name,
         out string outputName,
         out bool denied,
@@ -805,7 +576,7 @@ public sealed class StructuredLogSanitizer
         return true;
     }
 
-    private bool IsDeniedField(string name) =>
+    internal bool IsDeniedField(string name) =>
         TryClassifyField(name, out _, out var denied, out _) && denied;
 
     private bool IsSensitiveType(Type actualType) =>
@@ -861,7 +632,7 @@ public sealed class StructuredLogSanitizer
             IEnumerable<byte> ||
         value.GetType() is { IsArray: true } type && type.GetElementType() == typeof(byte);
 
-    private static bool TryGetFieldName(object? key, out string fieldName)
+    internal static bool TryGetFieldName(object? key, out string fieldName)
     {
         switch (key)
         {

@@ -252,6 +252,24 @@ public sealed class StructuredLogSanitizerTests
         Assert.Equal(StructuredLogSanitizer.RedactedValue, headers["X-Request-Id"]);
     }
 
+    [Fact]
+    public void Generic_read_only_dictionary_keeps_dictionary_field_semantics()
+    {
+        var input = new GenericReadOnlyDictionary(
+        [
+            new("Name", "catalog"),
+            new("AccessToken", "sensitive-token"),
+        ]);
+        var sanitizer = new StructuredLogSanitizer();
+
+        Assert.False((object)input is System.Collections.IDictionary);
+        var output = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(
+            sanitizer.Sanitize(input));
+
+        Assert.Equal("catalog", output["Name"]);
+        Assert.Equal(StructuredLogSanitizer.RedactedValue, output["AccessToken"]);
+    }
+
     private sealed class MarkedSecret(string value) : ISensitiveLogValue
     {
         public string Value { get; } = value;
@@ -269,5 +287,28 @@ public sealed class StructuredLogSanitizerTests
                 return value;
             }
         }
+    }
+
+    private sealed class GenericReadOnlyDictionary(
+        IEnumerable<KeyValuePair<string, object?>> entries)
+        : IReadOnlyDictionary<string, object?>
+    {
+        private readonly Dictionary<string, object?> values = new(entries);
+
+        public object? this[string key] => values[key];
+
+        public IEnumerable<string> Keys => values.Keys;
+
+        public IEnumerable<object?> Values => values.Values;
+
+        public int Count => values.Count;
+
+        public bool ContainsKey(string key) => values.ContainsKey(key);
+
+        public bool TryGetValue(string key, out object? value) => values.TryGetValue(key, out value);
+
+        public IEnumerator<KeyValuePair<string, object?>> GetEnumerator() => values.GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }
