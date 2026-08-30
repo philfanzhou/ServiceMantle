@@ -373,11 +373,30 @@ Bootstrap changes affect only the current instance's local Bootstrap file and re
 - `EfCoreServiceSetupCodeStore<TDbContext>` implementing `IServiceSetupCodeStore`.
 - `AddServiceMantleDataProtectionKeys()` and `EfCoreDataProtectionKeyRepository<TDbContext>` for
   encrypted, service-isolated ASP.NET Core Data Protection key rings.
+- `EfCoreServiceSettingStore<TDbContext>` implementing `IServiceSettingStore` with one dedicated
+  DbContext and explicit transaction per update.
 
-This layer standardizes installation state and encrypted Data Protection key persistence; it does not
-generate migrations, execute `Database.MigrateAsync`, or assume ownership of Bootstrap secrets.
-`service_installations` and `service_data_protection_keys` rows are owned by the consuming service
-database.
+Installation-state reads propagate caller cancellation as `OperationCanceledException`. Connection,
+command, and provider failures are normalized to `ServiceInstallationStoreException` with
+`installation.storage_error`; its public message and `ToString()` contain only the stable
+classification and safe text. `InnerException` may retain provider diagnostics and must only be
+inspected at a controlled diagnostic boundary, never written directly to untrusted output.
+
+This layer standardizes installation state, shared configuration, and encrypted Data Protection key
+persistence; it does not generate migrations, execute `Database.MigrateAsync`, or assume ownership
+of Bootstrap secrets. `service_installations`, `service_settings`, and
+`service_data_protection_keys` rows are owned by the consuming service database.
+
+`AddServiceMantleSettings()` maps one `service_settings` aggregate row per `service_id`. The row stores
+the complete raw value set, one monotonic service-level concurrency version, the UTC update time,
+caller-supplied operator identifier, and restart marker. `EfCoreServiceSettingStore<TDbContext>` uses
+an `IDbContextFactory<TDbContext>` so its explicit transaction and single `SaveChangesAsync` call
+cannot commit a consumer shared work unit. A batch with a stale expected version fails as
+`service_settings.version_conflict` without merging, retrying, or partially writing values. Product
+types, defaults, required values, sensitivity, and composite constraints remain the responsibility
+of `ServiceSettingDefinitionRegistry`; this persistence layer stores the caller-supplied raw form.
+Read failures expose only a stable `ServiceSettingStoreException` classification and safe message;
+the exception never retains provider diagnostics, connection strings, credentials, or setting values.
 
 Management consumers should implement a minimal integration model, for example:
 
@@ -420,10 +439,9 @@ ServiceMantle does not generate migrations or manage, distribute, or rotate the 
 Those remain consumer and deployment responsibilities. ASP.NET Core Data Protection continues to own
 its key lifecycle, including individual and mass revocation records.
 
-`service_installations`, `service_data_protection_keys`, and `service_audit_logs` (see below) are
-defined. Planned future tables (not in this release):
+`service_installations`, `service_settings`, `service_data_protection_keys`, and
+`service_audit_logs` (see below) are defined. Planned future tables (not in this release):
 
-- `service_settings`
 - administrator identity/state tables
 
 Shared migration ownership is intentionally moved to the consuming service. In deployments against existing business databases, services must create migration entries and keep installation table ownership in their own startup/deployment process.

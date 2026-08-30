@@ -3,6 +3,14 @@ namespace ServiceMantle.Installation;
 /// <summary>
 /// Provides durable installation state operations for a service.
 /// </summary>
+/// <remarks>
+/// Caller cancellation propagates as <see cref="OperationCanceledException"/>. Database, command,
+/// and provider failures while reading installation state use
+/// <see cref="ServiceInstallationStoreException"/> with the stable
+/// <c>installation.storage_error</c> code. Its public message and <c>ToString()</c> are safe for
+/// untrusted output, but its <see cref="Exception.InnerException"/> may retain provider diagnostics
+/// and must only be inspected at a controlled diagnostic boundary.
+/// </remarks>
 public interface IServiceInstallationStore
 {
     /// <summary>
@@ -10,6 +18,9 @@ public interface IServiceInstallationStore
     /// </summary>
     /// <param name="serviceId">The service identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ServiceInstallationStoreException">
+    /// The installation state could not be read.
+    /// </exception>
     ValueTask<ServiceInstallationState?> FindAsync(
         ServiceId serviceId,
         CancellationToken cancellationToken = default);
@@ -36,7 +47,7 @@ public interface IServiceInstallationStore
     /// <param name="serviceId">The service identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <exception cref="ServiceInstallationStoreException">
-    /// The DbContext carries pending changes, or the installation row could not be stored.
+    /// The DbContext carries pending changes, or the installation row could not be read or stored.
     /// </exception>
     ValueTask<ServiceInstallationState> CreatePendingAsync(
         ServiceId serviceId,
@@ -63,8 +74,8 @@ public interface IServiceInstallationStore
     /// <param name="serviceId">The service identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <exception cref="ServiceInstallationStoreException">
-    /// The installation does not exist, its stored state is invalid, or it is still pending and
-    /// therefore requires Setup Code consumption.
+    /// The installation could not be read, does not exist, has invalid stored state, or is still
+    /// pending and therefore requires Setup Code consumption.
     /// </exception>
     ValueTask<ServiceInstallationState> MarkCompletedAsync(
         ServiceId serviceId,
