@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the request Correlation ID middleware, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -92,6 +92,69 @@ middleware logs nothing itself and never swallows a downstream exception or canc
   nothing beyond that.
 - No other headers or log fields are cleaned; structured value cleaning stays with the existing
   sanitizer.
+
+## Safe Problem Details and exception mapping
+
+`UseServiceMantleProblemDetails()` maps downstream exceptions to deterministic RFC 7807 JSON while
+the response has not started. Register exact exception types on the `ServiceMantleBuilder`; the
+status, title, and stable error code are fixed at registration, and the `type` URI is derived as
+`urn:servicemantle:error:{errorCode}`.
+
+```csharp
+builder.Services
+    .AddServiceMantle(
+        ServiceId.Parse("catalog"),
+        InstanceId.Parse("catalog-01"))
+    .AddExceptionMapping<CatalogRequestException>(
+        StatusCodes.Status422UnprocessableEntity,
+        "catalog.request_invalid",
+        "The catalog request is invalid.",
+        new Dictionary<string, Func<CatalogRequestException, object?>>
+        {
+            ["attempt"] = exception => exception.Attempt,
+        });
+
+var app = builder.Build();
+app.UseServiceMantleCorrelationId();
+app.UseServiceMantleProblemDetails();
+```
+
+Every mapped body has `type`, `title`, `status`, `correlationId`, and `errorCode`. The response uses
+`application/problem+json`, and its Correlation ID also appears in the `x-correlation-id` response
+header and the middleware's safe error log. Place the Correlation ID middleware outside the Problem
+Details middleware, as shown, to carry that value through the complete downstream logging scope. If
+the Correlation ID middleware is absent, Problem Details generates a safe ID for its response and log.
+
+An exception without an exact mapping - including a subclass of a registered type - always produces
+the same environment-independent 500 body with error code `http.internal_server_error`, type
+`urn:servicemantle:error:http.internal_server_error`, and title `An unexpected error occurred.`. The
+exception message, stack, inner exceptions, and `Data` are never inspected or written by the fallback.
+Caller-requested cancellation is propagated while the response has not started; an independently
+thrown `OperationCanceledException` is handled like any other unmapped exception.
+
+Custom extension names are the mapping's explicit whitelist. `type`, `title`, `status`, `detail`,
+`instance`, `correlationId`, and `errorCode` are protected case-insensitively, so a mapping cannot
+replace the fixed status or type or remove the fallback fields. Mapping configuration is validated
+when the Host starts. Repeating the same exception mapping is idempotent; conflicting mappings for one
+exception type fail startup. If an extension factory or its value cannot be serialized, the complete
+response falls back to the generic 500 before any bytes are written.
+
+### Explicit non-guarantees
+
+- The guarantee covers exceptions that pass through this middleware while response headers have not
+  been sent. Kestrel/transport errors, connection aborts, process failures, consuming-service
+  endpoints outside this pipeline, and separate exception handlers are outside the boundary.
+- There is no development-details switch. Development and Production use the same fallback body;
+  diagnostics belong in logs linked by the Correlation ID.
+- No stable or localized `detail` text is provided. Consumers may depend on `type` and `errorCode`,
+  not free text.
+- ServiceMantle validates custom extension names but does not sanitize values returned by a consuming
+  service's extension factory. The consuming service is responsible for their content and serializer
+  behavior.
+- When the response has already started, the middleware swallows the downstream exception and leaves
+  the already-sent status, headers, and body unchanged.
+- The middleware does not implement endpoints, authentication, authorization results, rate limiting,
+  or logging sinks. Existing 401, 403, 429, and stage-gate results are unchanged.
 
 ## Management identity and authorization
 
