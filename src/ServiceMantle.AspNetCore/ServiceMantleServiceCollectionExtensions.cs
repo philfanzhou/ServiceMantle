@@ -214,6 +214,31 @@ public static class ServiceMantleServiceCollectionExtensions
         return builder;
     }
 
+    /// <summary>Adds an explicit, startup-validated forwarded-header trust boundary.</summary>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="configure">Configures trusted proxies, networks, hosts, and chain limit.</param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// This capability is opt-in and is not added by <c>AddServiceMantle</c>. Repeated normalized
+    /// configurations are idempotent; conflicting registrations fail when the host starts.
+    /// </remarks>
+    public static ServiceMantleBuilder AddForwardedHeaders(
+        this ServiceMantleBuilder builder,
+        Action<ServiceMantleForwardedHeadersOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var options = new ServiceMantleForwardedHeadersOptions();
+        configure(options);
+        builder.Services.AddSingleton(new ServiceMantleForwardedHeadersRegistration(options));
+        builder.Services.TryAddSingleton<ServiceMantleForwardedHeadersSnapshotProvider>();
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IHostedService,
+            ServiceMantleForwardedHeadersStartupValidator>());
+        return builder;
+    }
+
     /// <summary>Adds the mandatory security response-header capability.</summary>
     /// <remarks>This opt-in registration is idempotent and exposes no weakening options.</remarks>
     public static ServiceMantleBuilder AddSecurityResponseHeaders(this ServiceMantleBuilder builder)
