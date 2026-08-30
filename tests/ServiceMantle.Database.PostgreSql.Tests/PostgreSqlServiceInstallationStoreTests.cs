@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ServiceMantle.Installation;
 using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Testing;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -10,6 +11,7 @@ namespace ServiceMantle.Database.PostgreSql.Tests;
 /// Real PostgreSQL concurrency coverage for the installation store. These tests are enabled by
 /// RUN_SERVICEMANTLE_POSTGRES_TESTS=true, matching the existing container-test convention.
 /// </summary>
+[RealDatabaseTest(RealDatabaseProvider.PostgreSql)]
 public sealed class PostgreSqlServiceInstallationStoreTests : IAsyncLifetime
 {
     private PostgreSqlContainer? container;
