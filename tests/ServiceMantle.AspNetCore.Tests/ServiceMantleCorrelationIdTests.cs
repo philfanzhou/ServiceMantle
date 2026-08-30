@@ -292,6 +292,45 @@ public sealed class ServiceMantleCorrelationIdTests
     }
 
     [Fact]
+    public void UseServiceMantleCorrelationId_RejectsManuallyRegisteredServiceMantleServices()
+    {
+        // Every service AddServiceMantle registers is public, so a consumer can register any of
+        // them directly. Doing so must not satisfy the guard: only AddServiceMantle establishes the
+        // host identity the middleware documents as its precondition.
+        using var factory = new TestLoggerFactory();
+        var serviceId = ServiceId.Parse("signacore");
+        var instanceId = InstanceId.Parse("catalog-01");
+        using var provider = new ServiceCollection()
+            .AddSingleton<ILoggerFactory>(factory)
+            .AddSingleton(serviceId)
+            .AddSingleton(instanceId)
+            .AddSingleton(new ServiceLogContext(serviceId, instanceId, "1.2.3"))
+            .BuildServiceProvider();
+
+        Assert.NotNull(provider.GetService<ServiceLogContext>());
+        Assert.Throws<InvalidOperationException>(() =>
+            new ApplicationBuilder(provider).UseServiceMantleCorrelationId());
+    }
+
+    [Fact]
+    public void UseServiceMantleCorrelationId_AcceptsAServiceCollectionConfiguredByAddServiceMantle()
+    {
+        using var factory = new TestLoggerFactory();
+        var services = new ServiceCollection().AddSingleton<ILoggerFactory>(factory);
+        services.AddServiceMantle(
+            ServiceId.Parse("signacore"),
+            InstanceId.Parse("catalog-01"),
+            Path.Combine(Path.GetTempPath(), $"servicemantle-{Guid.NewGuid():N}.json"),
+            "1.2.3");
+
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Same(
+            provider,
+            new ApplicationBuilder(provider).UseServiceMantleCorrelationId().ApplicationServices);
+    }
+
+    [Fact]
     public async Task MinimalHost_RoundTripsTheCorrelationIdOnlyWhenTheMiddlewareIsUsed()
     {
         await using var enabled = await StartHostAsync(useMiddleware: true);

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using ServiceMantle.AspNetCore;
 using ServiceMantle.Http;
-using ServiceMantle.Logging;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -27,7 +27,11 @@ public static class ServiceMantleCorrelationIdApplicationBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        if (app.ApplicationServices.GetService<ServiceLogContext>() is null)
+        // The guard resolves the assembly-internal AddServiceMantle marker rather than any of the
+        // public services that call registers. A consumer can register ServiceLogContext (or
+        // ServiceId, InstanceId, BootstrapFileStore) directly, so those types prove nothing about
+        // whether the host identity AddServiceMantle owns was ever established.
+        if (app.ApplicationServices.GetService<ServiceMantleRegistration>() is null)
         {
             throw new InvalidOperationException(
                 "The ServiceMantle Correlation ID middleware requires AddServiceMantle to be called first.");
