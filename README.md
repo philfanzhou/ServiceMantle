@@ -371,6 +371,8 @@ Bootstrap changes affect only the current instance's local Bootstrap file and re
 - `ModelBuilder` extension `AddServiceMantleInstallation()` for model registration.
 - `EfCoreServiceInstallationStore<TDbContext>` implementing `IServiceInstallationStore`.
 - `EfCoreServiceSetupCodeStore<TDbContext>` implementing `IServiceSetupCodeStore`.
+- `EfCoreServiceSettingStore<TDbContext>` implementing `IServiceSettingStore` with one dedicated
+  DbContext and explicit transaction per update.
 
 Installation-state reads propagate caller cancellation as `OperationCanceledException`. Connection,
 command, and provider failures are normalized to `ServiceInstallationStoreException` with
@@ -379,6 +381,17 @@ classification and safe text. `InnerException` may retain provider diagnostics a
 inspected at a controlled diagnostic boundary, never written directly to untrusted output.
 
 This layer only standardizes installation state access; it does not generate migrations, execute `Database.MigrateAsync`, or assume ownership of bootstrap secrets. `service_installations` rows are owned by the consuming service database.
+
+`AddServiceMantleSettings()` maps one `service_settings` aggregate row per `service_id`. The row stores
+the complete raw value set, one monotonic service-level concurrency version, the UTC update time,
+caller-supplied operator identifier, and restart marker. `EfCoreServiceSettingStore<TDbContext>` uses
+an `IDbContextFactory<TDbContext>` so its explicit transaction and single `SaveChangesAsync` call
+cannot commit a consumer shared work unit. A batch with a stale expected version fails as
+`service_settings.version_conflict` without merging, retrying, or partially writing values. Product
+types, defaults, required values, sensitivity, and composite constraints remain the responsibility
+of `ServiceSettingDefinitionRegistry`; this persistence layer stores the caller-supplied raw form.
+Read failures expose only a stable `ServiceSettingStoreException` classification and safe message;
+the exception never retains provider diagnostics, connection strings, credentials, or setting values.
 
 Management consumers should implement a minimal integration model, for example:
 
@@ -394,9 +407,9 @@ public sealed class MyDbContext : DbContext, IServiceMantleDbContext
 }
 ```
 
-`service_installations` and `service_audit_logs` (see below) are defined. Planned future tables (not in this release):
+`service_installations`, `service_settings`, and `service_audit_logs` (see below) are defined. Planned
+future tables (not in this release):
 
-- `service_settings`
 - `service_data_protection_keys`
 - administrator identity/state tables
 
