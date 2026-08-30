@@ -309,8 +309,19 @@ Bootstrap changes affect only the current instance's local Bootstrap file and re
 - `ModelBuilder` extension `AddServiceMantleInstallation()` for model registration.
 - `EfCoreServiceInstallationStore<TDbContext>` implementing `IServiceInstallationStore`.
 - `EfCoreServiceSetupCodeStore<TDbContext>` implementing `IServiceSetupCodeStore`.
+- `EfCoreServiceSettingStore<TDbContext>` implementing `IServiceSettingStore` with one dedicated
+  DbContext and explicit transaction per update.
 
 This layer only standardizes installation state access; it does not generate migrations, execute `Database.MigrateAsync`, or assume ownership of bootstrap secrets. `service_installations` rows are owned by the consuming service database.
+
+`AddServiceMantleSettings()` maps one `service_settings` aggregate row per `service_id`. The row stores
+the complete raw value set, one monotonic service-level concurrency version, the UTC update time,
+caller-supplied operator identifier, and restart marker. `EfCoreServiceSettingStore<TDbContext>` uses
+an `IDbContextFactory<TDbContext>` so its explicit transaction and single `SaveChangesAsync` call
+cannot commit a consumer shared work unit. A batch with a stale expected version fails as
+`service_settings.version_conflict` without merging, retrying, or partially writing values. Product
+types, defaults, required values, sensitivity, and composite constraints remain the responsibility
+of `ServiceSettingDefinitionRegistry`; this persistence layer stores the caller-supplied raw form.
 
 Management consumers should implement a minimal integration model, for example:
 
