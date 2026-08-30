@@ -165,7 +165,7 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
                 .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }

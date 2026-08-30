@@ -179,6 +179,38 @@ public sealed class EfCoreServiceInstallationStoreTests
         Assert.Equal(cancellation.Token, exception.CancellationToken);
     }
 
+    [Theory]
+    [InlineData("find")]
+    [InlineData("create-pending")]
+    [InlineData("mark-completed")]
+    public async Task Provider_cancellation_without_caller_cancellation_uses_the_safe_storage_error_channel(
+        string operation)
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using (var setupContext = CreateContext(connection))
+        {
+            await setupContext.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        }
+
+        const string providerDetail = "Password=hunter2 provider timeout";
+        await using var context = CreateContext(
+            connection,
+            interceptor: new ThrowingCommandInterceptor(
+                () => new OperationCanceledException(providerDetail)));
+        var store = CreateStore(context);
+        var serviceId = ServiceId.Parse("signacore");
+
+        var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
+            InvokeReadAsync(store, serviceId, operation, CancellationToken.None));
+
+        Assert.Equal("installation.storage_error", exception.ErrorCode);
+        Assert.Equal("Failed to read the service installation state.", exception.Message);
+        Assert.DoesNotContain("provider timeout", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2", exception.ToString(), StringComparison.Ordinal);
+        Assert.Contains(providerDetail, exception.InnerException!.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task CreatePendingAsync_creates_initial_state_with_expected_defaults()
     {
