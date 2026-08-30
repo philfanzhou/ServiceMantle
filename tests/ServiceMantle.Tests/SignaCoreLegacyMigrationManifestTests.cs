@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Xunit;
+using Xunit.Sdk;
 
 namespace ServiceMantle.Tests;
 
@@ -27,6 +28,22 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         "restart",
         "security",
         "upgrade",
+    ];
+
+    private const string SnapshotBoundaryId = "product-schema-migrations";
+
+    private const int EntitiesPerSnapshot = 18;
+
+    private static readonly string[] RequiredSnapshotEntitySets =
+    [
+        "postgresql-model-snapshot",
+        "sqlite-model-snapshot",
+    ];
+
+    private static readonly string[] BoundaryCoverageModes =
+    [
+        "path-and-symbol",
+        "path-only",
     ];
 
     private static readonly string[] RequiredPreservedBoundaries =
@@ -232,7 +249,7 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         {
             Assert.Matches(IdentifierPattern(), boundary.Id);
             Assert.NotEmpty(boundary.Paths);
-            Assert.NotEmpty(boundary.PreservedSymbols);
+            AssertBoundaryCoverage(boundary);
             Assert.NotEmpty(boundary.Tests);
             Assert.False(string.IsNullOrWhiteSpace(boundary.Rationale));
             Assert.All(boundary.PreservedSymbols, symbol =>
@@ -300,6 +317,262 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         Assert.Equal("blocked", consul.Disposition);
         Assert.Equal("blocked", adminSession.Disposition);
         Assert.Equal("blocked", legacyUpgrade.Disposition);
+    }
+
+    [Fact]
+    public void SnapshotEntitySetsPartitionEveryProviderSymbolExactlyOnce()
+    {
+        AssertSnapshotInventoryIsPartitioned(LoadManifest());
+    }
+
+    [Theory]
+    [InlineData("missing-inventory-symbol")]
+    [InlineData("duplicate-inventory-entry")]
+    [InlineData("unassigned-symbol")]
+    [InlineData("preserved-and-deleted")]
+    [InlineData("divergent-snapshot-sets")]
+    public void SnapshotPartitionGuardFailsOnEveryInventoryMutation(string mutation)
+    {
+        var manifest = LoadManifest();
+        var boundary = SnapshotBoundary(manifest);
+
+        switch (mutation)
+        {
+            case "missing-inventory-symbol":
+                // A preserved symbol silently dropped leaves an inventory symbol unclaimed.
+                boundary.PreservedSymbols.RemoveAt(0);
+                break;
+            case "duplicate-inventory-entry":
+                manifest.SnapshotEntitySets[0].Entities[1] = manifest.SnapshotEntitySets[0].Entities[0];
+                break;
+            case "unassigned-symbol":
+                // Renaming the same entity in both snapshots keeps the sets equal and the counts
+                // right, but nothing in the manifest classifies the renamed symbol.
+                foreach (var snapshot in manifest.SnapshotEntitySets)
+                {
+                    snapshot.Entities[0] = "GhostEntity";
+                }
+
+                break;
+            case "preserved-and-deleted":
+                boundary.PreservedSymbols.Add(DeletionSnapshotSymbols(manifest).First());
+                break;
+            case "divergent-snapshot-sets":
+                manifest.SnapshotEntitySets[1].Entities[0] = "GhostEntity";
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mutation), mutation, "Unknown mutation.");
+        }
+
+        Assert.ThrowsAny<XunitException>(() => AssertSnapshotInventoryIsPartitioned(manifest));
+    }
+
+    [Theory]
+    [InlineData("duplicate-snapshot-path")]
+    [InlineData("duplicate-symbol-prefix")]
+    [InlineData("snapshot-outside-preserved-paths")]
+    public void SnapshotPartitionGuardFailsOnEveryInventoryShapeMutation(string mutation)
+    {
+        var manifest = LoadManifest();
+
+        switch (mutation)
+        {
+            case "duplicate-snapshot-path":
+                manifest.SnapshotEntitySets[1].Path = manifest.SnapshotEntitySets[0].Path;
+                break;
+            case "duplicate-symbol-prefix":
+                manifest.SnapshotEntitySets[1].SymbolPrefix = manifest.SnapshotEntitySets[0].SymbolPrefix;
+                break;
+            case "snapshot-outside-preserved-paths":
+                manifest.SnapshotEntitySets[0].Path = "src/SignaCore.Host/Program.cs";
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mutation), mutation, "Unknown mutation.");
+        }
+
+        Assert.ThrowsAny<XunitException>(() => AssertSnapshotInventoryIsPartitioned(manifest));
+    }
+
+    [Fact]
+    public void PathOnlyCoverageCannotHideSymbolSensitiveBoundaries()
+    {
+        var manifest = LoadManifest();
+
+        var adminConsole = Assert.Single(
+            manifest.PreservedBoundaries,
+            boundary => boundary.Id == "admin-console-product-ux");
+        Assert.Equal("path-only", adminConsole.Coverage);
+        Assert.Empty(adminConsole.PreservedSymbols);
+
+        // Every other boundary is still required to carry explicit symbols.
+        foreach (var boundary in manifest.PreservedBoundaries.Where(item => item.Id != adminConsole.Id))
+        {
+            Assert.Equal("path-and-symbol", boundary.Coverage);
+            Assert.NotEmpty(boundary.PreservedSymbols);
+        }
+    }
+
+    [Theory]
+    [InlineData("unknown-coverage-mode")]
+    [InlineData("path-only-with-symbols")]
+    [InlineData("path-and-symbol-without-symbols")]
+    public void BoundaryCoverageGuardFailsOnEveryCoverageMutation(string mutation)
+    {
+        var manifest = LoadManifest();
+        var adminConsole = Assert.Single(
+            manifest.PreservedBoundaries,
+            boundary => boundary.Id == "admin-console-product-ux");
+        var symbolBoundary = SnapshotBoundary(manifest);
+
+        PreservedBoundary mutated;
+        switch (mutation)
+        {
+            case "unknown-coverage-mode":
+                mutated = symbolBoundary;
+                mutated.Coverage = "symbol-only";
+                break;
+            case "path-only-with-symbols":
+                mutated = adminConsole;
+                mutated.PreservedSymbols.Add("SignaCore.Admin");
+                break;
+            case "path-and-symbol-without-symbols":
+                mutated = symbolBoundary;
+                mutated.PreservedSymbols.Clear();
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mutation), mutation, "Unknown mutation.");
+        }
+
+        Assert.ThrowsAny<XunitException>(() => AssertBoundaryCoverage(mutated));
+    }
+
+    [Fact]
+    public void ManifestSchemaRejectsMissingOrMisspelledSnapshotInventoryFields()
+    {
+        // A snapshot set that omits any of its four fields cannot be deserialized at all.
+        Assert.Throws<JsonException>(() => DeserializeManifest("""
+            { "snapshotEntitySets": [{ "id": "postgresql-model-snapshot" }] }
+            """));
+        Assert.Throws<JsonException>(() => DeserializeManifest("""
+            {
+              "snapshotEntitySets": [{
+                "id": "postgresql-model-snapshot",
+                "provider": "PostgreSQL",
+                "path": "src/a.cs",
+                "symbolPrefix_TYPO": "A.B",
+                "entities": []
+              }]
+            }
+            """));
+
+        // The inventory itself and the boundary coverage mode are required members.
+        Assert.Throws<JsonException>(() => DeserializeManifest("""
+            { "candidates": [], "preservedBoundaries": [] }
+            """));
+        Assert.Throws<JsonException>(() => DeserializeManifest("""
+            { "preservedBoundaries": [{ "id": "x", "preservedSymbols": [] }] }
+            """));
+    }
+
+    private static void AssertSnapshotInventoryIsPartitioned(MigrationManifest manifest)
+    {
+        var snapshots = manifest.SnapshotEntitySets;
+        Assert.Equal(RequiredSnapshotEntitySets.Length, snapshots.Count);
+        Assert.Equal(RequiredSnapshotEntitySets, snapshots.Select(snapshot => snapshot.Id).Order());
+        AssertDistinct(snapshots.Select(snapshot => snapshot.Path));
+        AssertDistinct(snapshots.Select(snapshot => snapshot.SymbolPrefix));
+        AssertDistinct(snapshots.Select(snapshot => snapshot.Provider));
+
+        var boundary = SnapshotBoundary(manifest);
+        var retainedRoots = boundary.Paths.Select(NormalizePathRoot).ToArray();
+
+        foreach (var snapshot in snapshots)
+        {
+            Assert.Matches(IdentifierPattern(), snapshot.Id);
+            AssertRepositoryRelativePath(snapshot.Path);
+            Assert.Matches(DottedIdentifierPattern(), snapshot.SymbolPrefix);
+            Assert.False(string.IsNullOrWhiteSpace(snapshot.Provider));
+
+            // The audited file must itself sit inside the retained migration paths; otherwise the
+            // path gate, not the symbol gate, would already govern it.
+            Assert.Contains(
+                retainedRoots,
+                retainedRoot => RootsOverlap(NormalizePathRoot(snapshot.Path), retainedRoot, '/'));
+
+            Assert.Equal(EntitiesPerSnapshot, snapshot.Entities.Count);
+            AssertDistinct(snapshot.Entities);
+            Assert.All(snapshot.Entities, entity => Assert.Matches(EntityNamePattern(), entity));
+
+            // Both snapshots must describe the same logical entity set.
+            Assert.Equal(
+                snapshots[0].Entities.Order(StringComparer.Ordinal),
+                snapshot.Entities.Order(StringComparer.Ordinal));
+        }
+
+        var inventory = snapshots
+            .SelectMany(snapshot => snapshot.Entities.Select(entity => $"{snapshot.SymbolPrefix}.{entity}"))
+            .ToArray();
+        Assert.Equal(RequiredSnapshotEntitySets.Length * EntitiesPerSnapshot, inventory.Length);
+        AssertDistinct(inventory);
+
+        var preserved = boundary.PreservedSymbols;
+        AssertDistinct(preserved);
+        Assert.All(preserved, symbol => Assert.True(IsSnapshotSymbol(manifest, symbol)));
+
+        var deletion = DeletionSnapshotSymbols(manifest).ToArray();
+        AssertDistinct(deletion);
+
+        // Complete and mutually exclusive: every provider-specific symbol is claimed by exactly
+        // one side, and no symbol is claimed by both.
+        Assert.Empty(preserved.Intersect(deletion, StringComparer.Ordinal));
+        Assert.Equal(
+            inventory.Order(StringComparer.Ordinal),
+            preserved.Union(deletion, StringComparer.Ordinal).Order(StringComparer.Ordinal));
+
+        // Snapshot convention symbols may only be claimed by the migration boundary or by a
+        // deletion candidate; no unrelated product boundary may claim one by coincidence.
+        foreach (var other in manifest.PreservedBoundaries.Where(item => item.Id != SnapshotBoundaryId))
+        {
+            foreach (var symbol in other.PreservedSymbols)
+            {
+                Assert.DoesNotContain(inventory, entry => RootsOverlap(entry, symbol, '.'));
+            }
+        }
+    }
+
+    private static void AssertBoundaryCoverage(PreservedBoundary boundary)
+    {
+        Assert.Contains(boundary.Coverage, BoundaryCoverageModes);
+        Assert.NotEmpty(boundary.Paths);
+
+        // path-only exists for non-C# boundaries. It must never be used to drop the symbol
+        // requirement from a boundary that needs symbol-scoped deletion protection.
+        if (boundary.Coverage == "path-only")
+        {
+            Assert.Empty(boundary.PreservedSymbols);
+        }
+        else
+        {
+            Assert.NotEmpty(boundary.PreservedSymbols);
+        }
+    }
+
+    private static PreservedBoundary SnapshotBoundary(MigrationManifest manifest) =>
+        Assert.Single(manifest.PreservedBoundaries, boundary => boundary.Id == SnapshotBoundaryId);
+
+    private static bool IsSnapshotSymbol(MigrationManifest manifest, string symbol) =>
+        manifest.SnapshotEntitySets.Any(snapshot =>
+            symbol.StartsWith(snapshot.SymbolPrefix + ".", StringComparison.Ordinal));
+
+    private static IEnumerable<string> DeletionSnapshotSymbols(MigrationManifest manifest) =>
+        manifest.Candidates
+            .SelectMany(candidate => candidate.LegacySymbols)
+            .Where(symbol => IsSnapshotSymbol(manifest, symbol));
+
+    private static void AssertDistinct(IEnumerable<string> values)
+    {
+        var materialized = values.ToArray();
+        Assert.Equal(materialized.Length, materialized.Distinct(StringComparer.Ordinal).Count());
     }
 
     private static void AssertRepositoryRelativePath(string path)
@@ -406,6 +679,9 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_.]*(?:: [A-Za-z0-9_./, -]+)?$", RegexOptions.CultureInvariant)]
     private static partial Regex LegacySymbolPattern();
 
+    [GeneratedRegex("^[A-Z][A-Za-z0-9]*$", RegexOptions.CultureInvariant)]
+    private static partial Regex EntityNamePattern();
+
     private sealed class MigrationManifest
     {
         public int SchemaVersion { get; init; }
@@ -413,6 +689,9 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         public SourceBaseline Source { get; init; } = new();
 
         public Dictionary<string, string> Commands { get; init; } = [];
+
+        [JsonRequired]
+        public List<SnapshotEntitySet> SnapshotEntitySets { get; init; } = [];
 
         public List<DeletionCandidate> Candidates { get; init; } = [];
 
@@ -432,6 +711,24 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         public string VerifiedCiRun { get; init; } = string.Empty;
 
         public string VerifiedCiConclusion { get; init; } = string.Empty;
+    }
+
+    private sealed class SnapshotEntitySet
+    {
+        [JsonRequired]
+        public string Id { get; init; } = string.Empty;
+
+        [JsonRequired]
+        public string Provider { get; init; } = string.Empty;
+
+        [JsonRequired]
+        public string Path { get; set; } = string.Empty;
+
+        [JsonRequired]
+        public string SymbolPrefix { get; set; } = string.Empty;
+
+        [JsonRequired]
+        public List<string> Entities { get; init; } = [];
     }
 
     private sealed class DeletionCandidate
@@ -481,6 +778,9 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         public string Id { get; init; } = string.Empty;
 
         public List<string> Paths { get; init; } = [];
+
+        [JsonRequired]
+        public string Coverage { get; set; } = string.Empty;
 
         [JsonRequired]
         public List<string> PreservedSymbols { get; init; } = [];
