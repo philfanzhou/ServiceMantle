@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>ServiceMantle.Serilog</RootNamespace>
+    <AssemblyName>ServiceMantle.Serilog</AssemblyName>
+    <PackageId>ServiceMantle.Serilog</PackageId>
+    <PackageDescription>Serilog hosting and console integration for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;serilog;hosting;logging;console</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Extensions.Hosting" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <ProjectReference Include="..\ServiceMantle\ServiceMantle.csproj" />
+  </ItemGroup>
+
+</Project>

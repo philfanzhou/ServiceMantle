@@ -50,6 +50,24 @@
       ]
     },
     {
+      "id": "ServiceMantle.Serilog",
+      "project": "src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
+      "optional": true,
+      "dependencies": [
+        "Serilog",
+        "Serilog.Extensions.Hosting",
+        "Serilog.Sinks.Console",
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.Persistence.EntityFrameworkCore",
       "project": "src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj",
       "optional": true,

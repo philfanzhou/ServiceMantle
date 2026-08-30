@@ -4,11 +4,13 @@
     <Project Path="src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" />
     <Project Path="src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj" />
     <Project Path="src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
+    <Project Path="src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj" />
     <Project Path="tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj" />
+    <Project Path="tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj" />
   </Folder>
 </Solution>
