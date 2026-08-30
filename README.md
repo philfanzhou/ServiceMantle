@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the explicit forwarded-header trust boundary, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the explicit forwarded-header trust boundary, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -73,6 +73,34 @@ and IDN matching, original headers, and truncation use the .NET 10 Forwarded Hea
 semantics. This capability does not configure a proxy, firewall, Host Filtering Middleware, HSTS, or
 HTTPS redirection, and it cannot prevent consumers or environment variables from separately enabling
 the framework middleware.
+
+## Mandatory security response headers
+
+Setup and management API endpoints can opt into an immutable six-header baseline. Registration,
+middleware insertion, and endpoint metadata are all explicit:
+
+```csharp
+builder.Services
+    .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+    .AddSecurityResponseHeaders();
+
+var app = builder.Build();
+app.UseServiceMantleSecurityResponseHeaders(); // after routing has selected an endpoint
+
+app.MapPost("/setup/complete", CompleteSetup)
+    .RequireServiceMantleSecurityResponseHeaders();
+```
+
+While response headers remain unsent, marked endpoints receive exact single values for
+`Cache-Control: no-store`, `Pragma: no-cache`, `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and
+`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action
+'none'`. The middleware registers one `OnStarting` callback before invoking downstream code, so
+later downstream callbacks run first and ServiceMantle finally collapses each mandatory header.
+
+There are no ServiceMantle options for changing or removing this baseline. Unmarked endpoints and
+responses whose headers were already sent are unchanged. The capability does not add HSTS, HTTPS
+redirection, CORS, cross-origin isolation headers, TLS configuration, or a policy for HTML UI.
 
 ## Request Correlation ID
 

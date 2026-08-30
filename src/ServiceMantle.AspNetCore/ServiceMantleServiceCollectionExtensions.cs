@@ -238,4 +238,13 @@ public static class ServiceMantleServiceCollectionExtensions
             ServiceMantleForwardedHeadersStartupValidator>());
         return builder;
     }
+
+    /// <summary>Adds the mandatory security response-header capability.</summary>
+    /// <remarks>This opt-in registration is idempotent and exposes no weakening options.</remarks>
+    public static ServiceMantleBuilder AddSecurityResponseHeaders(this ServiceMantleBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Services.TryAddSingleton<ServiceMantleSecurityResponseHeadersRegistration>();
+        return builder;
+    }
 }
