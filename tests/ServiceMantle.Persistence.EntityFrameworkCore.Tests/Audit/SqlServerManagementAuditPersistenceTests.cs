@@ -2,6 +2,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using ServiceMantle.Audit;
 using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Testing;
 using Testcontainers.MsSql;
 using Xunit;
 
@@ -11,6 +12,7 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests.Audit;
 /// Real SQL Server coverage for the management audit schema, write transaction boundary, encoded
 /// byte constraints, and keyset query path. Enable with RUN_SERVICEMANTLE_SQLSERVER_TESTS=true.
 /// </summary>
+[RealDatabaseTest(RealDatabaseProvider.SqlServer)]
 public sealed class SqlServerManagementAuditPersistenceTests : IAsyncLifetime
 {
     private const string DatabaseName = "servicemantle_audit";

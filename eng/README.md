@@ -9,6 +9,15 @@
 
 CI and Release call `ServiceMantle.ReleaseTool`; they do not contain per-package build, test, or pack steps. To add an optional package, create its package and test projects, then add one entry to `packages.json`. No workflow structure change is required. The registry validator fails when paths, IDs, dependencies, framework references, test ownership, or environment declarations disagree with the projects.
 
+For a test project that requires a real database, set `realDatabase` to `true`, register its
+`RUN_SERVICEMANTLE_*_TESTS=true` environment variable, and classify every real-database fixture
+with `RealDatabaseTestAttribute` from `tests/ServiceMantle.Testing`. The release tool first proves
+that at least one `Category=RealDatabase` test is discoverable, then runs the project with skipped
+tests treated as failures. Local runs may leave the requirement variable unset and skip the fixture;
+once the registry marks the environment as required, an unavailable service cannot silently pass CI.
+The same test-support project provides the fixed credential-injection contract and the bounded,
+in-process `TwoActorBarrier` used by provider concurrency fixtures.
+
 The local equivalents of the workflow stages are:
 
 ```bash

@@ -7,6 +7,7 @@
     <Project Path="src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ServiceMantle.Testing/ServiceMantle.Testing.csproj" />
     <Project Path="tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj" />
     <Project Path="tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj" />

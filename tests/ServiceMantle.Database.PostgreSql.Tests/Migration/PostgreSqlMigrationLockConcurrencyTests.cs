@@ -2,6 +2,7 @@ using ServiceMantle;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Database.PostgreSql.Migration;
 using ServiceMantle.Migration;
+using ServiceMantle.Testing;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -12,6 +13,7 @@ namespace ServiceMantle.Database.PostgreSql.Tests.Migration;
 /// These tests verify multi-instance locking behavior.
 /// Enabled via RUN_SERVICEMANTLE_POSTGRES_TESTS=true and docker availability.
 /// </summary>
+[RealDatabaseTest(RealDatabaseProvider.PostgreSql)]
 public class PostgreSqlMigrationLockConcurrencyTests : IAsyncLifetime
 {
     private PostgreSqlContainer? container;

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Transactions;
 using Npgsql;
 using ServiceMantle.Bootstrap;
+using ServiceMantle.Testing;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -12,6 +13,7 @@ namespace ServiceMantle.Database.PostgreSql.Tests;
 /// Real PostgreSQL database target preparation tests using Testcontainers.
 /// Enabled via RUN_SERVICEMANTLE_POSTGRES_TESTS=true and docker availability.
 /// </summary>
+[RealDatabaseTest(RealDatabaseProvider.PostgreSql)]
 public sealed class PostgreSqlDatabaseTargetPreparationConcurrencyTests : IAsyncLifetime
 {
     private PostgreSqlContainer? container;

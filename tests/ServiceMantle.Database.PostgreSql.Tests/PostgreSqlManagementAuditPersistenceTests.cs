@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using ServiceMantle.Audit;
 using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Testing;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -11,6 +12,7 @@ namespace ServiceMantle.Database.PostgreSql.Tests;
 /// Real PostgreSQL persistence coverage for the management audit model. These tests are enabled by
 /// RUN_SERVICEMANTLE_POSTGRES_TESTS=true, matching the existing container-test convention.
 /// </summary>
+[RealDatabaseTest(RealDatabaseProvider.PostgreSql)]
 public sealed class PostgreSqlManagementAuditPersistenceTests : IAsyncLifetime
 {
     private PostgreSqlContainer? container;
