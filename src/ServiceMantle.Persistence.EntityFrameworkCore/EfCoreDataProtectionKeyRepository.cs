@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Xml.Linq;
 using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.EntityFrameworkCore;
@@ -17,7 +18,11 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlRepository
     where TDbContext : DbContext
 {
-    private const string ProtectionPurposePrefix = "data_protection.key_xml.";
+    private const int MaximumElementIdLength = 64;
+    private const string KeyElementName = "key";
+    private const string RevocationElementName = "revocation";
+    private const string RevocationDateElementName = "revocationDate";
+    private const string ProtectionPurposePrefix = "data_protection.repository_xml.";
 
     private readonly IDbContextFactory<TDbContext> dbContextFactory;
     private readonly ServiceId serviceId;
@@ -82,12 +87,12 @@ public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlReposito
         ArgumentNullException.ThrowIfNull(element);
         ArgumentNullException.ThrowIfNull(friendlyName);
 
-        var keyId = ReadKeyId(element);
+        var elementId = ReadElementId(element, friendlyName);
         string encryptedXml;
         try
         {
             var rootKey = rootKeyResolver();
-            encryptedXml = CreateProtector(keyId).Protect(
+            encryptedXml = CreateProtector(elementId).Protect(
                 element.ToString(SaveOptions.DisableFormatting),
                 rootKey);
         }
@@ -105,7 +110,7 @@ public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlReposito
             dbContext.Set<DataProtectionKeyEntity>().Add(new DataProtectionKeyEntity
             {
                 ServiceId = serviceId.Value,
-                KeyId = keyId,
+                KeyId = elementId,
                 EncryptedXml = encryptedXml,
             });
             dbContext.SaveChanges();
@@ -114,7 +119,7 @@ public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlReposito
         catch (DbUpdateException)
         {
             SafeRollback(transaction);
-            if (RowExists(keyId))
+            if (RowExists(elementId))
             {
                 throw DuplicateKey();
             }
@@ -148,10 +153,7 @@ public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlReposito
         {
             var plaintext = CreateProtector(entity.KeyId).Unprotect(entity.EncryptedXml, rootKey);
             var element = XElement.Parse(plaintext, LoadOptions.PreserveWhitespace);
-            if (!string.Equals(ReadKeyId(element), entity.KeyId, StringComparison.Ordinal))
-            {
-                throw DecryptionFailed();
-            }
+            ReadElementId(element, entity.KeyId);
 
             return element;
         }
@@ -198,21 +200,65 @@ public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlReposito
         }
     }
 
-    private SensitiveValueProtector CreateProtector(string keyId) =>
-        new(serviceId, ProtectionPurposePrefix + keyId);
+    private SensitiveValueProtector CreateProtector(string elementId) =>
+        new(serviceId, ProtectionPurposePrefix + elementId);
 
-    private static string ReadKeyId(XElement element)
+    private static string ReadElementId(XElement element, string friendlyName)
     {
-        var id = element.Name == "key" ? element.Attribute("id")?.Value : null;
-        if (id is null || !Guid.TryParseExact(id, "D", out var keyId))
+        try
         {
-            throw new DataProtectionKeyRepositoryException(
-                WellKnownDataProtectionKeyRepositoryErrorCodes.InvalidElement,
-                "The Data Protection key element is invalid.");
-        }
+            if (!IsSafeElementId(friendlyName) || element.Attribute("version")?.Value != "1")
+            {
+                throw InvalidElement();
+            }
 
-        return keyId.ToString("D");
+            string expectedFriendlyName;
+            if (element.Name == KeyElementName)
+            {
+                var keyId = Guid.ParseExact(element.Attribute("id")!.Value, "D");
+                expectedFriendlyName = $"key-{keyId:D}";
+            }
+            else if (element.Name == RevocationElementName)
+            {
+                var revocationDate = (DateTimeOffset)element.Element(RevocationDateElementName)!;
+                var revokedKeyId = element.Element(KeyElementName)!.Attribute("id")!.Value;
+                expectedFriendlyName = revokedKeyId == "*"
+                    ? "revocation-" + revocationDate.UtcDateTime.ToString(
+                        "yyyyMMddTHHmmssFFFFFFFZ",
+                        CultureInfo.InvariantCulture)
+                    : $"revocation-{Guid.ParseExact(revokedKeyId, "D"):D}";
+            }
+            else
+            {
+                throw InvalidElement();
+            }
+
+            if (!string.Equals(friendlyName, expectedFriendlyName, StringComparison.Ordinal))
+            {
+                throw InvalidElement();
+            }
+
+            return expectedFriendlyName;
+        }
+        catch (DataProtectionKeyRepositoryException)
+        {
+            throw;
+        }
+        catch
+        {
+            throw InvalidElement();
+        }
     }
+
+    private static bool IsSafeElementId(string elementId) =>
+        elementId.Length is > 0 and <= MaximumElementIdLength &&
+        elementId.All(character =>
+            character is '-' or '_' or >= '0' and <= '9' or >= 'A' and <= 'Z' or >= 'a' and <= 'z');
+
+    private static DataProtectionKeyRepositoryException InvalidElement() =>
+        new(
+            WellKnownDataProtectionKeyRepositoryErrorCodes.InvalidElement,
+            "The Data Protection repository element is invalid.");
 
     private static void SafeRollback(IDbContextTransaction? transaction)
     {
@@ -241,17 +287,17 @@ public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlReposito
     private static DataProtectionKeyRepositoryException DuplicateKey() =>
         new(
             WellKnownDataProtectionKeyRepositoryErrorCodes.DuplicateKey,
-            "The Data Protection key identifier already exists for this service.");
+            "The Data Protection repository element identifier already exists for this service.");
 
     private static DataProtectionKeyRepositoryException RootKeyUnavailable() =>
         new(
             WellKnownDataProtectionKeyRepositoryErrorCodes.RootKeyUnavailable,
-            "The external root key could not protect the Data Protection key.");
+            "The external root key could not protect the Data Protection repository element.");
 
     private static DataProtectionKeyRepositoryException DecryptionFailed() =>
         new(
             WellKnownDataProtectionKeyRepositoryErrorCodes.DecryptionFailed,
-            "A stored Data Protection key could not be authenticated or decoded.");
+            "A stored Data Protection repository element could not be authenticated or decoded.");
 
     private static DataProtectionKeyRepositoryException StorageFailure() =>
         new(

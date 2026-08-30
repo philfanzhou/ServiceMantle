@@ -393,13 +393,15 @@ public sealed class MyDbContext : DbContext, IServiceMantleDbContext
 }
 ```
 
-`service_data_protection_keys` uses `(service_id, key_id)` as its identity and stores only an
-authenticated `sm:v1:` envelope in `encrypted_xml`. The repository derives a distinct encryption
-context for each service and key through `SensitiveValueProtector`; a wrong Bootstrap root key,
-damaged ciphertext, or ciphertext copied to another service fails closed. Each call creates its own
-DbContext, and each insert owns an explicit transaction, so it cannot commit a consumer's shared work
-unit. Register the consuming context as an `IDbContextFactory<TDbContext>`, add the mapping, and connect
-Data Protection through the package extension:
+`service_data_protection_keys` uses `(service_id, key_id)` as its identity, where `key_id` is the
+standard Data Protection repository name (`key-*` or `revocation-*`). Key and revocation XML are both
+stored only as authenticated `sm:v1:` envelopes in `encrypted_xml`. The repository derives a distinct
+encryption context for each service and repository element through `SensitiveValueProtector`; a wrong
+Bootstrap root key, damaged ciphertext, or ciphertext copied to another service fails closed. Each
+call creates its own DbContext, and each insert owns an explicit transaction, so it cannot commit a
+consumer's shared work unit. Register the consuming context as an
+`IDbContextFactory<TDbContext>`, add the mapping, and connect Data Protection through the package
+extension:
 
 ```csharp
 services.AddDbContextFactory<MyDbContext>(options => /* provider configuration */);
@@ -416,7 +418,7 @@ modelBuilder.AddServiceMantleDataProtectionKeys();
 
 ServiceMantle does not generate migrations or manage, distribute, or rotate the external root key.
 Those remain consumer and deployment responsibilities. ASP.NET Core Data Protection continues to own
-its key lifecycle.
+its key lifecycle, including individual and mass revocation records.
 
 `service_installations`, `service_data_protection_keys`, and `service_audit_logs` (see below) are
 defined. Planned future tables (not in this release):

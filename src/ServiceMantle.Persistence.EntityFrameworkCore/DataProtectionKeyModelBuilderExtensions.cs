@@ -20,8 +20,7 @@ public static class DataProtectionKeyModelBuilderExtensions
                 .IsRequired();
             entity.Property(item => item.KeyId)
                 .HasColumnName("key_id")
-                .HasMaxLength(36)
-                .IsFixedLength()
+                .HasMaxLength(64)
                 .IsRequired();
             entity.Property(item => item.EncryptedXml)
                 .HasColumnName("encrypted_xml")

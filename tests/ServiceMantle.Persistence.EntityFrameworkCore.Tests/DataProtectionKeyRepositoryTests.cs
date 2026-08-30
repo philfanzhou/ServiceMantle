@@ -34,6 +34,7 @@ public sealed class DataProtectionKeyRepositoryTests
         Assert.DoesNotContain(
             entity.GetProperties(),
             property => property.Name.Contains("Instance", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(64, entity.FindProperty(nameof(DataProtectionKeyEntity.KeyId))!.GetMaxLength());
         Assert.Equal("encrypted_xml", entity.FindProperty(nameof(DataProtectionKeyEntity.EncryptedXml))!.GetColumnName());
     }
 
@@ -52,7 +53,7 @@ public sealed class DataProtectionKeyRepositoryTests
         var row = await context.Set<DataProtectionKeyEntity>().SingleAsync(TestContext.Current.CancellationToken);
         var loaded = Assert.Single(repository.GetAllElements());
         Assert.Equal(Service.Value, row.ServiceId);
-        Assert.Equal(keyId.ToString("D"), row.KeyId);
+        Assert.Equal($"key-{keyId:D}", row.KeyId);
         Assert.StartsWith("sm:v1:", row.EncryptedXml, StringComparison.Ordinal);
         Assert.DoesNotContain("<key", row.EncryptedXml, StringComparison.Ordinal);
         Assert.DoesNotContain(keyMaterial, row.EncryptedXml, StringComparison.Ordinal);
@@ -202,10 +203,11 @@ public sealed class DataProtectionKeyRepositoryTests
             Service,
             RootKey,
             beforeSave: () => throw new DbUpdateException(secret));
+        var storageKeyId = Guid.NewGuid();
         var storageException = Assert.Throws<DataProtectionKeyRepositoryException>(() =>
             storageRepository.StoreElement(
-                CreateKey(Guid.NewGuid(), secret),
-                "key-storage-failure"));
+                CreateKey(storageKeyId, secret),
+                $"key-{storageKeyId:D}"));
 
         Assert.Equal(WellKnownDataProtectionKeyRepositoryErrorCodes.StorageError, commitException.ErrorCode);
         Assert.Equal(WellKnownDataProtectionKeyRepositoryErrorCodes.StorageError, storageException.ErrorCode);
@@ -223,9 +225,12 @@ public sealed class DataProtectionKeyRepositoryTests
 
         var invalid = Assert.Throws<DataProtectionKeyRepositoryException>(() =>
             repository.StoreElement(new XElement("key"), "invalid"));
+        var unavailableKeyId = Guid.NewGuid();
         var unavailable = Assert.Throws<DataProtectionKeyRepositoryException>(() =>
             harness.Repository(Service, () => throw new InvalidOperationException("root-key-secret"))
-                .StoreElement(CreateKey(Guid.NewGuid(), "xml-secret"), "root-failure"));
+                .StoreElement(
+                    CreateKey(unavailableKeyId, "xml-secret"),
+                    $"key-{unavailableKeyId:D}"));
 
         Assert.Equal(WellKnownDataProtectionKeyRepositoryErrorCodes.InvalidElement, invalid.ErrorCode);
         Assert.Equal(WellKnownDataProtectionKeyRepositoryErrorCodes.RootKeyUnavailable, unavailable.ErrorCode);
@@ -261,6 +266,87 @@ public sealed class DataProtectionKeyRepositoryTests
             .SingleAsync(TestContext.Current.CancellationToken);
         Assert.StartsWith("sm:v1:", row.EncryptedXml, StringComparison.Ordinal);
         Assert.DoesNotContain("<key", row.EncryptedXml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RevokeKey_persists_encrypted_revocation_and_reloads_revoked_state()
+    {
+        await using var harness = await Harness.CreateAsync();
+        using (var serviceProvider = BuildServiceProvider(harness))
+        {
+            var keyManager = serviceProvider.GetRequiredService<IKeyManager>();
+            var now = DateTimeOffset.UtcNow;
+            var key = keyManager.CreateNewKey(now, now.AddDays(90));
+
+            keyManager.RevokeKey(key.KeyId, "compromised-key-secret-reason");
+        }
+
+        await using (var context = harness.Factory().CreateDbContext())
+        {
+            var rows = await context.Set<DataProtectionKeyEntity>()
+                .AsNoTracking()
+                .OrderBy(row => row.KeyId)
+                .ToListAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(2, rows.Count);
+            Assert.Contains(rows, row => row.KeyId.StartsWith("key-", StringComparison.Ordinal));
+            Assert.Contains(rows, row => row.KeyId.StartsWith("revocation-", StringComparison.Ordinal));
+            Assert.All(rows, row =>
+            {
+                Assert.StartsWith("sm:v1:", row.EncryptedXml, StringComparison.Ordinal);
+                Assert.DoesNotContain("<key", row.EncryptedXml, StringComparison.Ordinal);
+                Assert.DoesNotContain("<revocation", row.EncryptedXml, StringComparison.Ordinal);
+                Assert.DoesNotContain("compromised-key-secret-reason", row.EncryptedXml, StringComparison.Ordinal);
+            });
+        }
+
+        using var reloadedProvider = BuildServiceProvider(harness);
+        var reloadedKey = Assert.Single(
+            reloadedProvider.GetRequiredService<IKeyManager>().GetAllKeys());
+        Assert.True(reloadedKey.IsRevoked);
+    }
+
+    [Fact]
+    public async Task RevokeAllKeys_persists_encrypted_revocation_and_reloads_all_keys_as_revoked()
+    {
+        await using var harness = await Harness.CreateAsync();
+        using (var serviceProvider = BuildServiceProvider(harness))
+        {
+            var keyManager = serviceProvider.GetRequiredService<IKeyManager>();
+            var now = DateTimeOffset.UtcNow;
+            keyManager.CreateNewKey(now, now.AddDays(90));
+            keyManager.CreateNewKey(now.AddSeconds(1), now.AddDays(91));
+
+            keyManager.RevokeAllKeys(now.AddMinutes(1), "mass-revocation-secret-reason");
+        }
+
+        await using (var context = harness.Factory().CreateDbContext())
+        {
+            var rows = await context.Set<DataProtectionKeyEntity>()
+                .AsNoTracking()
+                .ToListAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(3, rows.Count);
+            Assert.Equal(2, rows.Count(row => row.KeyId.StartsWith("key-", StringComparison.Ordinal)));
+            Assert.Single(rows, row => row.KeyId.StartsWith("revocation-", StringComparison.Ordinal));
+            Assert.All(rows, row =>
+            {
+                Assert.DoesNotContain("<revocation", row.EncryptedXml, StringComparison.Ordinal);
+                Assert.DoesNotContain("mass-revocation-secret-reason", row.EncryptedXml, StringComparison.Ordinal);
+            });
+        }
+
+        using var reloadedProvider = BuildServiceProvider(harness);
+        var reloadedKeys = reloadedProvider.GetRequiredService<IKeyManager>().GetAllKeys();
+        Assert.Equal(2, reloadedKeys.Count);
+        Assert.All(reloadedKeys, key => Assert.True(key.IsRevoked));
+    }
+
+    private static ServiceProvider BuildServiceProvider(Harness harness)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IDbContextFactory<KeyDbContext>>(harness.Factory());
+        services.AddDataProtection()
+            .PersistKeysToServiceMantleEfCore<KeyDbContext>(Service, _ => RootKey);
+        return services.BuildServiceProvider();
     }
 
     private static XElement CreateKey(Guid keyId, string keyMaterial) =>
