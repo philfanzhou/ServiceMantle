@@ -1,5 +1,7 @@
+using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using ServiceMantle.Installation;
 using ServiceMantle.Persistence.EntityFrameworkCore;
@@ -113,6 +115,68 @@ public sealed class EfCoreServiceInstallationStoreTests
         Assert.NotNull(result);
         Assert.Equal(otherService, result!.ServiceId);
         Assert.Equal(InstallationStatus.PendingSetup, result.Status);
+    }
+
+    [Theory]
+    [InlineData("find")]
+    [InlineData("create-pending")]
+    [InlineData("mark-completed")]
+    public async Task Read_failure_uses_the_safe_storage_error_channel(string operation)
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using (var setupContext = CreateContext(connection))
+        {
+            await setupContext.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        }
+
+        const string providerDetail = "Host=db;Username=admin;Password=hunter2 provider read failure";
+        await using var context = CreateContext(
+            connection,
+            interceptor: new ThrowingCommandInterceptor(
+                () => new InvalidOperationException(providerDetail)));
+        var store = CreateStore(context);
+        var serviceId = ServiceId.Parse("signacore");
+
+        var exception = await Assert.ThrowsAsync<ServiceInstallationStoreException>(() =>
+            InvokeReadAsync(store, serviceId, operation, TestContext.Current.CancellationToken));
+
+        Assert.Equal("installation.storage_error", exception.ErrorCode);
+        Assert.Equal("Failed to read the service installation state.", exception.Message);
+        Assert.DoesNotContain("provider read failure", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Host=db", exception.ToString(), StringComparison.Ordinal);
+        Assert.Contains(providerDetail, exception.InnerException!.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("find")]
+    [InlineData("create-pending")]
+    [InlineData("mark-completed")]
+    public async Task Caller_cancellation_at_the_read_boundary_is_not_a_storage_failure(string operation)
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using (var setupContext = CreateContext(connection))
+        {
+            await setupContext.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        await using var context = CreateContext(
+            connection,
+            interceptor: new ThrowingCommandInterceptor(() =>
+            {
+                cancellation.Cancel();
+                return new OperationCanceledException(cancellation.Token);
+            }));
+        var store = CreateStore(context);
+        var serviceId = ServiceId.Parse("signacore");
+
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            InvokeReadAsync(store, serviceId, operation, cancellation.Token));
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
     }
 
     [Fact]
@@ -937,18 +1001,45 @@ public sealed class EfCoreServiceInstallationStoreTests
     private static EfCoreServiceInstallationStore<TestDbContext> CreateStore(TestDbContext context) =>
         new(context, TimeProvider.System);
 
+    private static async Task InvokeReadAsync(
+        EfCoreServiceInstallationStore<TestDbContext> store,
+        ServiceId serviceId,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        switch (operation)
+        {
+            case "find":
+                await store.FindAsync(serviceId, cancellationToken);
+                break;
+            case "create-pending":
+                await store.CreatePendingAsync(serviceId, cancellationToken);
+                break;
+            default:
+                await store.MarkCompletedAsync(serviceId, cancellationToken);
+                break;
+        }
+    }
+
     private static TestDbContext CreateContext(
         SqliteConnection connection,
         bool invokeExtensionTwice = false,
         bool configurePrimaryKeyFirst = false,
-        Func<CancellationToken, Task>? beforeSaveChangesAsync = null) =>
-        new TestDbContext(
-            new DbContextOptionsBuilder<TestDbContext>()
-                .UseSqlite(connection)
-                .Options,
+        Func<CancellationToken, Task>? beforeSaveChangesAsync = null,
+        IInterceptor? interceptor = null)
+    {
+        var builder = new DbContextOptionsBuilder<TestDbContext>().UseSqlite(connection);
+        if (interceptor is not null)
+        {
+            builder.AddInterceptors(interceptor);
+        }
+
+        return new TestDbContext(
+            builder.Options,
             invokeExtensionTwice,
             configurePrimaryKeyFirst,
             beforeSaveChangesAsync);
+    }
 
     private sealed class TestDbContext : DbContext, IServiceMantleDbContext
     {
@@ -1007,6 +1098,20 @@ public sealed class EfCoreServiceInstallationStoreTests
         public int Id { get; set; }
 
         public string Value { get; set; } = string.Empty;
+    }
+
+    private sealed class ThrowingCommandInterceptor(Func<Exception> failure) : DbCommandInterceptor
+    {
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result) => throw failure();
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default) => throw failure();
     }
 
     private sealed class FixedTimeProvider : TimeProvider
