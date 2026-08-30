@@ -23,6 +23,7 @@ public sealed class ServiceLogContext
         ServiceLogFieldNames.ServiceName,
         ServiceLogFieldNames.ServiceVersion,
         ServiceLogFieldNames.InstanceId,
+        ServiceLogFieldNames.CorrelationId,
     };
 
     private readonly KeyValuePair<string, object?>[] identityFields;
@@ -139,6 +140,27 @@ public sealed class ServiceLogContext
         }
 
         return logger.BeginScope(new StructuredScopeState(fields.ToArray())) ?? NullScope.Instance;
+    }
+
+    /// <summary>
+    /// Begins the trusted per-request scope containing the identity fields and the already validated
+    /// Correlation ID.
+    /// </summary>
+    /// <remarks>
+    /// This entry point is assembly-internal and exists only for the ServiceMantle Correlation ID
+    /// middleware. It is not a general field-override bypass: it accepts nothing but a Correlation ID
+    /// that the middleware has already resolved, and it neither parses nor normalizes that value.
+    /// </remarks>
+    internal IDisposable BeginRequestScope(ILogger logger, string correlationId)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentException.ThrowIfNullOrEmpty(correlationId);
+
+        var fields = new KeyValuePair<string, object?>[identityFields.Length + 1];
+        identityFields.CopyTo(fields, 0);
+        fields[^1] = new(ServiceLogFieldNames.CorrelationId, correlationId);
+
+        return logger.BeginScope(new StructuredScopeState(fields)) ?? NullScope.Instance;
     }
 
     internal static string ResolveServiceVersion(string? configuredVersion)
