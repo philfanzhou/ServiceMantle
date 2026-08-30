@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using ServiceMantle.Installation;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore;
@@ -43,15 +44,24 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
         return entity is null ? null : ServiceInstallationEntityStateMapper.ConvertToState(entity);
     }
 
-    /// <summary>
-    /// Creates a pending installation record if absent and returns current state.
-    /// </summary>
+    /// <inheritdoc />
     public async ValueTask<ServiceInstallationState> CreatePendingAsync(
         ServiceId serviceId,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(serviceId);
         cancellationToken.ThrowIfCancellationRequested();
+
+        // This operation owns one SaveChanges when the row is absent. Detect explicitly so a caller
+        // cannot hide a pending change by disabling automatic change detection.
+        dbContext.ChangeTracker.DetectChanges();
+        if (dbContext.ChangeTracker.Entries().Any(entry =>
+                entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            throw new ServiceInstallationStoreException(
+                WellKnownSetupCodeErrorCodes.DirtyContext,
+                "A clean DbContext is required to create a pending installation state.");
+        }
 
         var existing = await dbContext.ServiceInstallations
             .AsNoTracking()
@@ -86,33 +96,69 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
             pendingEntry.State = EntityState.Detached;
             throw;
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException exception)
         {
+            var failedInstallationInsert = IsFailedInstallationInsert(exception, pendingEntry);
             pendingEntry.State = EntityState.Detached;
 
-            var current = await dbContext.ServiceInstallations
-                .AsNoTracking()
-                .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
-                .ConfigureAwait(false);
+            if (!failedInstallationInsert)
+            {
+                throw StorageFailure(exception);
+            }
+
+            ServiceInstallationEntity? current;
+            try
+            {
+                current = await dbContext.ServiceInstallations
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(item => item.ServiceId == serviceId.Value, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception recoveryException)
+            {
+                throw StorageFailure(recoveryException);
+            }
 
             if (current is not null)
             {
                 return ServiceInstallationEntityStateMapper.ConvertToState(current);
             }
 
-            throw;
+            throw StorageFailure(exception);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             pendingEntry.State = EntityState.Detached;
-            throw new ServiceInstallationStoreException(
-                "installation.storage_error",
-                "Failed to create a pending installation state.",
-                exception);
+            throw StorageFailure(exception);
         }
 
         return ServiceInstallationEntityStateMapper.ConvertToState(pending);
     }
+
+    private static bool IsFailedInstallationInsert(
+        DbUpdateException exception,
+        EntityEntry<ServiceInstallationEntity> pendingEntry)
+    {
+        if (exception.Entries.Count != 1)
+        {
+            return false;
+        }
+
+        var failedEntry = exception.Entries[0];
+        return failedEntry.State == EntityState.Added
+            && failedEntry.Metadata.ClrType == typeof(ServiceInstallationEntity)
+            && ReferenceEquals(failedEntry.Entity, pendingEntry.Entity);
+    }
+
+    private static ServiceInstallationStoreException StorageFailure(Exception exception) =>
+        new(
+            "installation.storage_error",
+            "Failed to create a pending installation state.",
+            exception);
 
     /// <summary>
     /// Returns completed installation state, or refuses to complete a pending installation.

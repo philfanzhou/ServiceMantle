@@ -15,10 +15,29 @@ public interface IServiceInstallationStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Ensures a pending setup record exists and returns the current installation state.
+    /// Ensures a pending setup record exists, saves it when absent, and returns the current
+    /// installation state.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a standalone write that calls <c>SaveChangesAsync</c> once when the row is absent. It
+    /// never creates, commits, or takes over a database transaction. It requires a clean DbContext:
+    /// any pre-existing <c>Added</c>, <c>Modified</c>, or <c>Deleted</c> entry makes it throw
+    /// <see cref="ServiceInstallationStoreException"/> with
+    /// <see cref="WellKnownSetupCodeErrorCodes.DirtyContext"/> without saving. Unrelated
+    /// <c>Unchanged</c> entries are allowed. A short-lived dedicated DbContext is the recommended
+    /// shape.
+    /// </para>
+    /// <para>
+    /// When the caller runs this inside a larger external transaction, success only means the save
+    /// joined that transaction; ServiceMantle does not own or guarantee the caller's commit.
+    /// </para>
+    /// </remarks>
     /// <param name="serviceId">The service identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ServiceInstallationStoreException">
+    /// The DbContext carries pending changes, or the installation row could not be stored.
+    /// </exception>
     ValueTask<ServiceInstallationState> CreatePendingAsync(
         ServiceId serviceId,
         CancellationToken cancellationToken = default);
@@ -51,4 +70,3 @@ public interface IServiceInstallationStore
         ServiceId serviceId,
         CancellationToken cancellationToken = default);
 }
-
