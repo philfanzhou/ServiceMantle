@@ -59,7 +59,7 @@ The core package defines the contract and orchestration logic without any databa
 
 1. **Lock Key Derivation** (`ServiceIdToLockKeyDeriver`)
    - Uses SHA-256 hash of `"ServiceMantle.Migration." + serviceId.Value`
-   - Reads first 8 bytes as signed 64-bit integer (little-endian)
+   - Reads first 8 bytes as signed 64-bit integer (big-endian)
    - Deterministic and stable across processes, machines, and restarts
    - Not dependent on `.GetHashCode()`
 
