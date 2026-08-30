@@ -527,6 +527,20 @@ Oracle is planned as a `ServerSchema`-style target provider; SQL Server and SQLi
 
 Database target preparation is a separate, optional capability from bootstrap validation. A provider that implements `IBootstrapDatabaseProvider` does not automatically support preparing (creating) a missing target; a provider opts in only by also registering an `IDatabaseTargetPreparationProvider` implementation. Callers resolve this capability through `DatabaseTargetPreparationProviderRegistry` and must fail closed with `database_target_preparation.capability_not_supported` when no preparation provider is registered for a database provider id, rather than treating an unsupported provider as already prepared.
 
+ASP.NET Core hosts register the optional capability explicitly on the builder returned by
+`AddServiceMantle`; the container-provided registry shares the Bootstrap store's provider-id resolver
+snapshot. Registering only the Bootstrap provider does not add target preparation support.
+
+```csharp
+services
+    .AddServiceMantle(serviceId, instanceId)
+    .AddBootstrapDatabaseProvider<PostgreSqlBootstrapDatabaseProvider>()
+    .AddDatabaseTargetPreparationProvider<PostgreSqlDatabaseTargetPreparationProvider>();
+
+var preparationProviders = serviceProvider
+    .GetRequiredService<DatabaseTargetPreparationProviderRegistry>();
+```
+
 The capability models three target kinds via the existing `BootstrapDatabaseTargetKind` enum (`ServerDatabase`, `File`, `ServerSchema`), and exposes three independent observation signals:
 
 - **Server reachable** (`DatabaseTargetObservation.IsServerReachable`) — the database server responded to the connection attempt.
