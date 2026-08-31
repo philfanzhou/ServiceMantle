@@ -243,12 +243,6 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
                     DatabaseTargetPreparationOutcome.AlreadyExists);
             }
 
-            if (existing == ExistingDatabaseMatch.Conflicting)
-            {
-                return DatabaseTargetPreparationResult.Failure(
-                    WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict);
-            }
-
             if (afterMissingTargetObserved is not null)
             {
                 await afterMissingTargetObserved(cancellationToken).ConfigureAwait(false);
@@ -401,7 +395,10 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
         var exact = await exactCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         if (exact is not null)
         {
-            return ExistingDatabaseMatch.Exact;
+            return ResolveExistingDatabaseMatch(
+                exactMatch: true,
+                caseFoldedMatch: false,
+                lowerCaseTableNames);
         }
 
         if (lowerCaseTableNames == 0)
@@ -414,15 +411,27 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
             "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA " +
             "WHERE LOWER(SCHEMA_NAME) = LOWER(@name) LIMIT 1";
         foldedCommand.Parameters.AddWithValue("@name", databaseName);
-        return await foldedCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is null
-            ? ExistingDatabaseMatch.Missing
-            : ExistingDatabaseMatch.Conflicting;
+        var folded = await foldedCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return ResolveExistingDatabaseMatch(
+            exactMatch: false,
+            caseFoldedMatch: folded is not null,
+            lowerCaseTableNames);
     }
 
-    private enum ExistingDatabaseMatch
+    internal static ExistingDatabaseMatch ResolveExistingDatabaseMatch(
+        bool exactMatch,
+        bool caseFoldedMatch,
+        int lowerCaseTableNames) =>
+        MySqlDatabaseTarget.MatchesDatabaseIdentifierRules(
+            exactMatch,
+            caseFoldedMatch,
+            lowerCaseTableNames)
+            ? ExistingDatabaseMatch.Exact
+            : ExistingDatabaseMatch.Missing;
+
+    internal enum ExistingDatabaseMatch
     {
         Missing,
-        Exact,
-        Conflicting
+        Exact
     }
 }

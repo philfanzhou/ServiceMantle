@@ -292,6 +292,86 @@ public sealed class MySqlDatabaseTargetPreparationProviderTests
         }
     }
 
+    [Theory]
+    [InlineData(true, false, 0, (int)MySqlDatabaseCreationProbe.ExistingDatabaseMatch.Exact)]
+    [InlineData(false, true, 0, (int)MySqlDatabaseCreationProbe.ExistingDatabaseMatch.Missing)]
+    [InlineData(false, true, 1, (int)MySqlDatabaseCreationProbe.ExistingDatabaseMatch.Exact)]
+    [InlineData(false, true, 2, (int)MySqlDatabaseCreationProbe.ExistingDatabaseMatch.Exact)]
+    [InlineData(false, false, 1, (int)MySqlDatabaseCreationProbe.ExistingDatabaseMatch.Missing)]
+    public void Initial_and_race_rechecks_share_server_database_case_rules(
+        bool exactMatch,
+        bool caseFoldedMatch,
+        int lowerCaseTableNames,
+        int expectedValue)
+    {
+        Assert.Equal(
+            (MySqlDatabaseCreationProbe.ExistingDatabaseMatch)expectedValue,
+            MySqlDatabaseCreationProbe.ResolveExistingDatabaseMatch(
+                exactMatch,
+                caseFoldedMatch,
+                lowerCaseTableNames));
+    }
+
+    [Theory]
+    [InlineData(0, "App")]
+    [InlineData(1, "app")]
+    [InlineData(2, "App")]
+    public async Task Prepare_then_observe_then_repeat_is_idempotent_for_each_server_mode(
+        int lowerCaseTableNames,
+        string storedDatabaseName)
+    {
+        var server = new StatefulMySqlServer(lowerCaseTableNames);
+        var provider = new MySqlDatabaseTargetPreparationProvider(server, server);
+        var request = CreateRequest("App");
+
+        var created = await provider.PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+        var observed = await provider.ObserveAsync(
+            request.Target,
+            TestContext.Current.CancellationToken);
+        var repeated = await provider.PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(DatabaseTargetPreparationOutcome.Created, created.Outcome);
+        Assert.Equal(DatabaseTargetObservationStatus.TargetConnectable, observed.Status);
+        Assert.Equal(DatabaseTargetPreparationOutcome.AlreadyExists, repeated.Outcome);
+        Assert.Equal([storedDatabaseName], server.DatabaseNames);
+    }
+
+    [Fact]
+    public async Task Mode_two_adopts_a_differently_cased_existing_database_without_modifying_it()
+    {
+        var server = new StatefulMySqlServer(2, "app");
+        var provider = new MySqlDatabaseTargetPreparationProvider(server, server);
+
+        var result = await provider.PrepareAsync(
+            CreateRequest("App"),
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(DatabaseTargetPreparationOutcome.AlreadyExists, result.Outcome);
+        Assert.Equal(["app"], server.DatabaseNames);
+    }
+
+    [Fact]
+    public async Task Mode_zero_keeps_differently_cased_database_names_distinct()
+    {
+        var server = new StatefulMySqlServer(0, "app");
+        var provider = new MySqlDatabaseTargetPreparationProvider(server, server);
+
+        var result = await provider.PrepareAsync(
+            CreateRequest("App"),
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(DatabaseTargetPreparationOutcome.Created, result.Outcome);
+        Assert.Equal(["app", "App"], server.DatabaseNames);
+    }
+
     private static MySqlDatabaseTargetPreparationProvider CreateProvider(
         FakeObservationProbe? observationProbe = null,
         FakeCreationProbe? creationProbe = null) =>
@@ -344,5 +424,56 @@ public sealed class MySqlDatabaseTargetPreparationProviderTests
                 ValueTask.FromResult(DatabaseTargetPreparationResult.Success(
                     DatabaseTargetPreparationOutcome.AlreadyExists));
         }
+    }
+
+    private sealed class StatefulMySqlServer : IMySqlBootstrapProbe, IMySqlDatabaseCreationProbe
+    {
+        private readonly int lowerCaseTableNames;
+        private readonly List<string> databaseNames;
+
+        internal StatefulMySqlServer(int lowerCaseTableNames, params string[] databaseNames)
+        {
+            this.lowerCaseTableNames = lowerCaseTableNames;
+            this.databaseNames = [.. databaseNames];
+        }
+
+        internal IReadOnlyList<string> DatabaseNames => databaseNames;
+
+        public ValueTask<MySqlProbeOutcome> ProbeAsync(
+            MySqlConnectionStringBuilder connectionString,
+            int commandTimeoutSeconds,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var match = Resolve(connectionString.Database);
+            return ValueTask.FromResult(match == MySqlDatabaseCreationProbe.ExistingDatabaseMatch.Exact
+                ? MySqlProbeOutcome.Success
+                : MySqlProbeOutcome.DatabaseNotFound);
+        }
+
+        public ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
+            string databaseName,
+            MySqlConnectionStringBuilder administrativeConnectionString,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Resolve(databaseName) == MySqlDatabaseCreationProbe.ExistingDatabaseMatch.Exact)
+            {
+                return ValueTask.FromResult(DatabaseTargetPreparationResult.Success(
+                    DatabaseTargetPreparationOutcome.AlreadyExists));
+            }
+
+            databaseNames.Add(lowerCaseTableNames == 1
+                ? databaseName.ToLowerInvariant()
+                : databaseName);
+            return ValueTask.FromResult(DatabaseTargetPreparationResult.Success(
+                DatabaseTargetPreparationOutcome.Created));
+        }
+
+        private MySqlDatabaseCreationProbe.ExistingDatabaseMatch Resolve(string databaseName) =>
+            MySqlDatabaseCreationProbe.ResolveExistingDatabaseMatch(
+                databaseNames.Contains(databaseName, StringComparer.Ordinal),
+                databaseNames.Contains(databaseName, StringComparer.OrdinalIgnoreCase),
+                lowerCaseTableNames);
     }
 }
