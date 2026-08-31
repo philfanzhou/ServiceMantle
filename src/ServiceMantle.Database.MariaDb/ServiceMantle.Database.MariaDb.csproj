@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>ServiceMantle.Database.MariaDb</RootNamespace>
+    <AssemblyName>ServiceMantle.Database.MariaDb</AssemblyName>
+    <PackageId>ServiceMantle.Database.MariaDb</PackageId>
+    <PackageDescription>MariaDB database capabilities for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;database;mariadb;bootstrap;target-preparation</PackageTags>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ServiceMantle\ServiceMantle.csproj" />
+    <PackageReference Include="MySqlConnector" />
+  </ItemGroup>
+
+</Project>

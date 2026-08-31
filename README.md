@@ -733,7 +733,8 @@ Current and planned provider packages are:
   migration integration remain separate follow-up capabilities.
 - `ServiceMantle.Database.MySql` validates MySQL 8+ settings, observes server-database targets,
   and explicitly creates a missing target without changing an existing database.
-- `ServiceMantle.Database.MariaDb`
+- `ServiceMantle.Database.MariaDb` validates MariaDB 10.11+ settings and server identity, observes
+  server-database targets, and explicitly creates a missing target without changing an existing database.
 - `ServiceMantle.Database.Oracle`
 - `ServiceMantle.Database.SqlServer`
 
@@ -844,6 +845,39 @@ cannot see either target, so that observation reports `PermissionDenied` with
 This capability does not provide a migration lock, run EF Core migrations, claim MariaDB
 compatibility, create database users, grant database permissions, or equate behavior across managed
 MySQL services. Those remain independently registered capabilities and deployment concerns.
+
+### MariaDB target preparation
+
+`ServiceMantle.Database.MariaDb` keeps the canonical `MariaDB` provider identity, registration,
+version policy, diagnostics, and implementation path independent from `MySQL`. Hosts opt in
+explicitly:
+
+```csharp
+services
+    .AddServiceMantle(serviceId, instanceId)
+    .AddBootstrapDatabaseProvider<MariaDbBootstrapDatabaseProvider>()
+    .AddDatabaseTargetPreparationProvider<MariaDbDatabaseTargetPreparationProvider>();
+```
+
+The provider accepts numeric MariaDB 10.11+ server versions and verifies the server's MariaDB
+product identity on Bootstrap validation, observation, and preparation. Missing-target and
+target-permission observations use a second server-level read probe only to establish product
+identity; neither observation path creates or changes an object. Preparation checks product
+identity before any creation statement, so a MySQL server configured as `MariaDB` fails closed.
+
+Database identifiers must fit MariaDB's 64-character limit without control characters, NUL,
+surrogate code units, or a trailing ASCII space. A missing database is created with `utf8mb4` and
+`utf8mb4_uca1400_ai_ci`. An exact existing database is returned as `AlreadyExists` without altering
+its character set, collation, grants, or contents. On servers that fold database-name case, a
+differently-cased collision fails closed with `database_target_preparation.target_conflict`.
+MariaDB returns `DatabaseAccessDenied` for both existing and missing database names when the account
+cannot see either target, so that observation reports `PermissionDenied` with
+`TargetExists == null` instead of guessing that the target exists.
+
+This capability does not provide a migration lock, run EF Core migrations, claim MySQL
+compatibility, create database users, grant database permissions, or equate behavior across managed
+MariaDB services. It does not attempt to defeat a proxy that deliberately forges the server product
+version. Those remain independently registered capabilities and deployment concerns.
 
 ### Error codes
 
