@@ -41,7 +41,10 @@ public interface IDatabaseMigrationExecutor
     /// <summary>
     /// Inspects the current database state without making any changes.
     /// </summary>
-    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="cancellationToken">
+    /// Cancellation token. The orchestrator cancels it for caller cancellation or detected lease
+    /// loss; implementations must observe it promptly.
+    /// </param>
     /// <returns>The observed state of the database.</returns>
     ValueTask<MigrationObservationState> InspectAsync(CancellationToken cancellationToken = default);
 
@@ -51,7 +54,11 @@ public interface IDatabaseMigrationExecutor
     /// The executor is responsible for the full migration flow, including schema changes,
     /// data backfill, validation, and state updates.
     /// </summary>
-    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="cancellationToken">
+    /// Cancellation token. The orchestrator cancels it for caller cancellation or detected lease
+    /// loss; implementations must observe it promptly. Cancellation cannot roll back side effects
+    /// the implementation has already committed.
+    /// </param>
     /// <exception cref="OperationCanceledException">Migration was cancelled.</exception>
     /// <exception cref="Exception">Migration failed with a service-specific error.</exception>
     ValueTask ExecuteAsync(CancellationToken cancellationToken = default);

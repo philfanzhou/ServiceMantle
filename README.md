@@ -953,11 +953,11 @@ ServiceMantle provides provider-agnostic migration orchestration that ensures sa
 
 The orchestration flow:
 1. Acquire a provider-specific migration lock (e.g., PostgreSQL advisory lock).
-2. Inspect the current database state.
+2. Inspect the current database state while monitoring the acquired lease.
 3. Skip migration if the database is already at the current compatible version (allowing waiting instances to pass without re-executing).
 4. Fail closed if the database version is newer than the application supports.
-5. Execute the consuming service's complete migration workflow exactly once.
-6. Re-inspect the database state to ensure migration succeeded.
+5. Execute the consuming service's complete migration workflow exactly once while monitoring the lease.
+6. Re-inspect the database state under the same monitored lease to ensure migration succeeded.
 7. Always release the lock, even on failure or cancellation.
 
 The consuming service implements `IDatabaseMigrationExecutor` to define its migration logic:
@@ -972,6 +972,12 @@ public interface IDatabaseMigrationExecutor
     ValueTask ExecuteAsync(CancellationToken cancellationToken = default);
 }
 ```
+
+The orchestrator passes a token linked to caller cancellation and the acquired lease's
+`IDatabaseMigrationLock.LeaseLost` signal into every inspection and execution. Executors must observe
+that token promptly. Caller cancellation retains `OperationCanceledException` semantics even when it
+races with lease loss; lease loss instead returns `migration.lock_failed` and prevents any later stage
+from starting. This cannot roll back database or external side effects committed before the signal.
 
 The `DatabaseMigrationOrchestrator` is instantiated with the executor and a lock provider registry:
 
@@ -998,7 +1004,13 @@ if (!result.Succeeded)
 
 `ServiceMantle.Database.PostgreSql.Migration.PostgreSqlMigrationLockProvider` provides session-level advisory locks using `pg_try_advisory_lock` with bounded polling. The lock key is derived from the service identifier using SHA-256, ensuring stability across processes, machines, and restarts.
 
-Lock acquisition respects both the caller-provided timeout and cancellation token. The lock is held for the lifetime of the returned lease object, and is released either explicitly (DisposeAsync) or implicitly when the connection closes.
+Lock acquisition respects both the caller-provided timeout and cancellation token. The lock is held
+for the lifetime of the returned lease object, and is released either explicitly (`DisposeAsync`) or
+implicitly when the connection closes. The acquired lease probes its dedicated connection every 250
+milliseconds with a one-second command timeout and exposes detected session loss through
+`LeaseLost`. The running-process detection bound is five seconds, including scheduling margin.
+Process suspension, severe thread-pool starvation, or an environment that prevents command timeout
+delivery is outside that bound; detection is not zero-latency.
 
 No other lock providers (SQLite, MySQL, etc.) are implemented in this release. Multi-instance migrations without registered lock support fail closed with `migration.lock_not_supported`.
 
@@ -1007,7 +1019,7 @@ No other lock providers (SQLite, MySQL, etc.) are implemented in this release. M
 Safe error codes for migration failures:
 - `migration.lock_not_supported` - No lock provider registered for the database.
 - `migration.lock_timeout` - Lock acquisition exceeded the timeout.
-- `migration.lock_failed` - Lock acquisition failed (provider-specific).
+- `migration.lock_failed` - Lock acquisition failed or an acquired lease was lost before completion.
 - `migration.inspection_failed` - Database state could not be determined.
 - `migration.version_too_new` - Database schema is newer than the application.
 - `migration.execution_failed` - The consuming service's migration executor failed.

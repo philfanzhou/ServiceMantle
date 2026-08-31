@@ -15,6 +15,7 @@ internal sealed class FakeMigrationExecutor : IDatabaseMigrationExecutor
     private readonly Exception? inspectExceptionAtCall;
     private readonly int inspectExceptionCallNumber;
     private readonly Func<CancellationToken, Task>? executeDelay;
+    private readonly Func<int, CancellationToken, Task>? inspectDelay;
     private int inspectCallIndex;
 
     public int InspectCallCount { get; private set; }
@@ -27,12 +28,14 @@ internal sealed class FakeMigrationExecutor : IDatabaseMigrationExecutor
         MigrationObservationState singleState = MigrationObservationState.Empty,
         Exception? inspectException = null,
         Exception? executeException = null,
-        Func<CancellationToken, Task>? executeDelay = null)
+        Func<CancellationToken, Task>? executeDelay = null,
+        Func<int, CancellationToken, Task>? inspectDelay = null)
     {
         this.singleState = singleState;
         this.inspectException = inspectException;
         this.executeException = executeException;
         this.executeDelay = executeDelay;
+        this.inspectDelay = inspectDelay;
     }
 
     /// <summary>
@@ -51,7 +54,8 @@ internal sealed class FakeMigrationExecutor : IDatabaseMigrationExecutor
         Exception? executeException = null,
         Func<CancellationToken, Task>? executeDelay = null,
         Exception? inspectExceptionAtCall = null,
-        int inspectExceptionCallNumber = 0)
+        int inspectExceptionCallNumber = 0,
+        Func<int, CancellationToken, Task>? inspectDelay = null)
     {
         ArgumentNullException.ThrowIfNull(sequentialStates);
         if (sequentialStates.Length == 0)
@@ -65,12 +69,18 @@ internal sealed class FakeMigrationExecutor : IDatabaseMigrationExecutor
         this.executeDelay = executeDelay;
         this.inspectExceptionAtCall = inspectExceptionAtCall;
         this.inspectExceptionCallNumber = inspectExceptionCallNumber;
+        this.inspectDelay = inspectDelay;
     }
 
     public async ValueTask<MigrationObservationState> InspectAsync(CancellationToken cancellationToken = default)
     {
         InspectCallCount++;
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (inspectDelay is not null)
+        {
+            await inspectDelay(InspectCallCount, cancellationToken).ConfigureAwait(false);
+        }
 
         if (inspectException is not null)
         {

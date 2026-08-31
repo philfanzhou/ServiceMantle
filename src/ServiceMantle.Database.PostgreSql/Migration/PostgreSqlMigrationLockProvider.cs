@@ -7,7 +7,9 @@ namespace ServiceMantle.Database.PostgreSql.Migration;
 /// <summary>
 /// Provides session-level PostgreSQL advisory lock capability for multi-instance migration safety.
 /// Uses pg_try_advisory_lock with bounded polling under a single overall timeout that covers
-/// connection, command execution, and waiting.
+/// connection, command execution, and waiting. An acquired lease probes its dedicated connection
+/// every 250 milliseconds with a one-second command timeout and signals detected lease loss within
+/// a conservative five-second running-process bound.
 /// </summary>
 public sealed class PostgreSqlMigrationLockProvider : IDatabaseMigrationLockProvider
 {
@@ -18,6 +20,7 @@ public sealed class PostgreSqlMigrationLockProvider : IDatabaseMigrationLockProv
     /// <summary>
     /// Acquires a session-level PostgreSQL advisory lock using try_lock with bounded polling.
     /// The acquireTimeout covers the entire operation: connection, SQL execution, and polling.
+    /// The returned lease also monitors its dedicated session until disposal.
     /// </summary>
     public async ValueTask<IDatabaseMigrationLock> AcquireAsync(
         ServiceId serviceId,
