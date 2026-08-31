@@ -230,6 +230,42 @@ public sealed class StructuredLogSanitizerFailureTests
     }
 
     [Fact]
+    public void All_JSON_representations_share_object_array_and_depth_budgets()
+    {
+        var collectionOptions = new StructuredLogSanitizerOptions
+        {
+            MaximumCollectionCount = 2,
+            MaximumStringLength = 5
+        };
+
+        AssertAllJsonRepresentations(
+            """{"Password":"hidden","Message":"123456","Ignored":3}""",
+            collectionOptions,
+            """{"Password":"[REDACTED]","Message":"[OVERSIZED_VALUE_REDACTED]","CollectionTruncated":"[COLLECTION_TRUNCATED]"}""");
+        AssertAllJsonRepresentations(
+            """[1,2,3]""",
+            collectionOptions,
+            """[1,2,"[COLLECTION_TRUNCATED]"]""");
+
+        AssertAllJsonRepresentations(
+            """{"Child":{"Grandchild":"value"}}""",
+            new StructuredLogSanitizerOptions { MaximumDepth = 1 },
+            """{"Child":{"Grandchild":"[MAXIMUM_DEPTH_EXCEEDED]"}}""");
+    }
+
+    [Theory]
+    [InlineData("\"password=secret\"", "\"[REDACTED]\"")]
+    [InlineData("1e1000", "\"1e1000\"")]
+    [InlineData("true", "true")]
+    [InlineData("null", "null")]
+    public void All_JSON_representations_share_the_primitive_exit(
+        string json,
+        string expected)
+    {
+        AssertAllJsonRepresentations(json, new StructuredLogSanitizerOptions(), expected);
+    }
+
+    [Fact]
     public void Custom_JsonValue_fails_closed_without_reading_object_properties()
     {
         var payload = new GetterTrackingJsonPayload();
@@ -436,6 +472,24 @@ public sealed class StructuredLogSanitizerFailureTests
         }
 
         return count;
+    }
+
+    private static void AssertAllJsonRepresentations(
+        string json,
+        StructuredLogSanitizerOptions options,
+        string expected)
+    {
+        using var document = JsonDocument.Parse(json);
+        var node = JsonNode.Parse(json);
+        var sanitizer = new StructuredLogSanitizer(options);
+
+        var documentOutput = JsonSerializer.Serialize(sanitizer.Sanitize(document));
+        var elementOutput = JsonSerializer.Serialize(sanitizer.Sanitize(document.RootElement));
+        var nodeOutput = JsonSerializer.Serialize(sanitizer.Sanitize(node));
+
+        Assert.Equal(expected, documentOutput);
+        Assert.Equal(expected, elementOutput);
+        Assert.Equal(expected, nodeOutput);
     }
 
     private sealed class Node
