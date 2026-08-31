@@ -421,6 +421,29 @@ public sealed class OracleDatabaseTargetPreparationProviderTests
     public void Stable_transport_error_numbers_are_classified_as_connection_failures(int number) =>
         Assert.True(OracleFailureClassifier.IsConnectionFailure(number));
 
+    [Fact]
+    public void Direct_privilege_denial_is_a_topology_permission_failure() =>
+        Assert.True(OracleFailureClassifier.IsTopologyPermissionDenied([(1031, null)]));
+
+    [Fact]
+    public void Wrapped_PLS_00201_in_the_complete_Oracle_error_stack_is_permission_denial() =>
+        Assert.True(OracleFailureClassifier.IsTopologyPermissionDenied(
+        [
+            (6550, "ORA-06550: PL/SQL compilation failed"),
+            (201, "PLS-00201: identifier must be declared"),
+            (6550, "ORA-06550: statement ignored")
+        ]));
+
+    [Fact]
+    public void Wrapped_PLS_00201_in_the_outer_error_message_is_permission_denial() =>
+        Assert.True(OracleFailureClassifier.IsTopologyPermissionDenied(
+            [(6550, "ORA-06550: PLS-00201: identifier must be declared")]));
+
+    [Fact]
+    public void Other_PL_SQL_errors_remain_topology_validation_failures() =>
+        Assert.False(OracleFailureClassifier.IsTopologyPermissionDenied(
+            [(6550, "ORA-06550: PLS-00103: unexpected symbol")]));
+
     private static BootstrapDatabaseConfiguration CreateTarget(
         string connectionString = TargetConnectionString) =>
         new(WellKnownDatabaseProviderIds.Oracle, "23.26.1.0", connectionString);

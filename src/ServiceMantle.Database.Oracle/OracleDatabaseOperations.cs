@@ -334,7 +334,8 @@ internal static class OracleRuntimeTopology
                 ? OracleTargetProbeOutcome.Success
                 : OracleTargetProbeOutcome.UnsupportedTopology;
         }
-        catch (OracleException exception) when (exception.Number == 1031)
+        catch (OracleException exception) when (
+            OracleFailureClassifier.IsTopologyPermissionDenied(exception))
         {
             return OracleTargetProbeOutcome.TopologyPermissionDenied;
         }
@@ -359,6 +360,39 @@ internal static class OracleRuntimeTopology
 
 internal static class OracleFailureClassifier
 {
+    internal static bool IsTopologyPermissionDenied(Exception exception)
+    {
+        var errors = new List<(int Number, string? Message)>();
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is not OracleException oracleException)
+            {
+                continue;
+            }
+
+            errors.Add((oracleException.Number, oracleException.Message));
+            try
+            {
+                foreach (OracleError error in oracleException.Errors)
+                {
+                    errors.Add((error.Number, error.Message));
+                }
+            }
+            catch
+            {
+                // The primary number remains available if the provider's error collection is unreadable.
+            }
+        }
+
+        return IsTopologyPermissionDenied(errors);
+    }
+
+    internal static bool IsTopologyPermissionDenied(
+        IEnumerable<(int Number, string? Message)> errors) =>
+        errors.Any(error =>
+            error.Number is 1031 or 201 ||
+            error.Message?.Contains("PLS-00201", StringComparison.Ordinal) == true);
+
     internal static OracleTargetProbeOutcome ClassifyTargetProbe(Exception exception)
     {
         var number = FindOracleErrorNumber(exception);

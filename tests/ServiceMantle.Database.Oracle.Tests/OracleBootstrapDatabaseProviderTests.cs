@@ -129,13 +129,14 @@ public sealed class OracleBootstrapDatabaseProviderTests
     public async Task Cancellation_replaces_a_probe_exception_with_safe_diagnostics()
     {
         const string secret = "do-not-echo";
+        const string privateHost = "private-host-do-not-echo";
         using var source = new CancellationTokenSource();
         var operations = new FakeOracleOperations
         {
             ProbeHandler = (_, _, _) =>
             {
                 source.Cancel();
-                throw new InvalidOperationException($"Password={secret};Data Source=private");
+                throw new InvalidOperationException($"Password={secret};Data Source={privateHost}");
             }
         };
 
@@ -146,7 +147,7 @@ public sealed class OracleBootstrapDatabaseProviderTests
 
         Assert.Null(exception.InnerException);
         Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain("private", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(privateHost, exception.ToString(), StringComparison.Ordinal);
     }
 
     private static OracleBootstrapDatabaseProvider CreateProvider(OracleTargetProbeOutcome outcome) =>
