@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>ServiceMantle.Database.SqlServer</RootNamespace>
+    <AssemblyName>ServiceMantle.Database.SqlServer</AssemblyName>
+    <PackageId>ServiceMantle.Database.SqlServer</PackageId>
+    <PackageDescription>SQL Server database capabilities for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;database;sql-server;bootstrap;target-preparation</PackageTags>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ServiceMantle\ServiceMantle.csproj" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+  </ItemGroup>
+
+</Project>
