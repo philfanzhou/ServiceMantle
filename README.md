@@ -731,7 +731,8 @@ Current and planned provider packages are:
 - `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
 - `ServiceMantle.Database.Sqlite` is a referenceable package skeleton; SQLite target preparation and
   migration integration remain separate follow-up capabilities.
-- `ServiceMantle.Database.MySql`
+- `ServiceMantle.Database.MySql` validates MySQL 8+ settings, observes server-database targets,
+  and explicitly creates a missing target without changing an existing database.
 - `ServiceMantle.Database.MariaDb`
 - `ServiceMantle.Database.Oracle`
 - `ServiceMantle.Database.SqlServer`
@@ -815,6 +816,34 @@ if (!preparedObservation.IsTargetConnectable)
 `ServiceMantle.Database.PostgreSql.PostgreSqlDatabaseTargetPreparationProvider` observes a PostgreSQL target with a single connection attempt. A structured "database does not exist" response (SQLSTATE `3D000`) proves the server is reachable and the target is missing. Authentication errors can occur before PostgreSQL checks the database name, so those observations report a reachable server with `TargetExists == null`; target-level `CONNECT` denial (`42501`) reports a known existing but unreachable target. `PrepareAsync` uses the caller-supplied administrative connection string with pooling forcibly disabled and outside any ambient transaction to check `pg_database` and, only when the target is absent, issue `CREATE DATABASE ... OWNER ...`; the owner is the target connection string's PostgreSQL username and must already exist as a role.
 
 Before creating anything, preparation verifies that the requested database and owner names are actually reachable through Npgsql after creation: Npgsql writes startup-packet identifiers as UTF-8 and PostgreSQL silently truncates them at its 63-byte identifier limit while storing them converted into `server_encoding`, so names are accepted only when their UTF-8 form fits 63 bytes and is byte-identical to their stored form — meaning servers whose `server_encoding` differs from UTF-8 accept pure-ASCII names only. This rejects, before any side effect, names that would otherwise create a database the application can never connect to (for example non-ASCII names on LATIN1 servers). An existing database with the same name is reported as `AlreadyExists` only when it is owned by the target username; a differently-owned database — pre-existing or created concurrently in a race observed as either the `duplicate_database` error (`42P04`) or a unique-key violation on the `pg_database` name index (`23505`) — fails closed with `database_target_preparation.target_conflict` instead of pretending the target is ready.
+
+### MySQL target preparation
+
+`ServiceMantle.Database.MySql` keeps the canonical `MySQL` provider identity independent from
+`MariaDB`. Hosts opt in explicitly:
+
+```csharp
+services
+    .AddServiceMantle(serviceId, instanceId)
+    .AddBootstrapDatabaseProvider<MySqlBootstrapDatabaseProvider>()
+    .AddDatabaseTargetPreparationProvider<MySqlDatabaseTargetPreparationProvider>();
+```
+
+The provider accepts numeric MySQL 8+ server versions and database identifiers that fit MySQL's
+64-character limit without control characters, NUL, surrogate code units, or a trailing ASCII
+space. `ObserveAsync` only attempts a target connection and never invokes creation. `PrepareAsync`
+uses the caller's administrative connection only for that call, clears its database, disables
+pooling and ambient transaction enlistment, and creates a missing database with `utf8mb4` and
+`utf8mb4_0900_ai_ci`. An exact existing database is returned as `AlreadyExists` without altering
+its character set, collation, grants, or contents. On servers that fold database-name case,
+a differently-cased collision fails closed with `database_target_preparation.target_conflict`.
+MySQL returns `DatabaseAccessDenied` for both existing and missing database names when the account
+cannot see either target, so that observation reports `PermissionDenied` with
+`TargetExists == null` instead of guessing that the target exists.
+
+This capability does not provide a migration lock, run EF Core migrations, claim MariaDB
+compatibility, create database users, grant database permissions, or equate behavior across managed
+MySQL services. Those remain independently registered capabilities and deployment concerns.
 
 ### Error codes
 
