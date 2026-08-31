@@ -67,6 +67,22 @@
       ]
     },
     {
+      "id": "ServiceMantle.Database.MariaDb",
+      "project": "src/ServiceMantle.Database.MariaDb/ServiceMantle.Database.MariaDb.csproj",
+      "optional": true,
+      "dependencies": [
+        "MySqlConnector",
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Database.MariaDb.Tests/ServiceMantle.Database.MariaDb.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.Database.SqlServer",
       "project": "src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj",
       "optional": true,

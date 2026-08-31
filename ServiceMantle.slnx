@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/ServiceMantle/ServiceMantle.csproj" />
     <Project Path="src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" />
+    <Project Path="src/ServiceMantle.Database.MariaDb/ServiceMantle.Database.MariaDb.csproj" />
     <Project Path="src/ServiceMantle.Database.MySql/ServiceMantle.Database.MySql.csproj" />
     <Project Path="src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj" />
     <Project Path="src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj" />
@@ -14,6 +15,7 @@
     <Project Path="tests/ServiceMantle.Testing/ServiceMantle.Testing.csproj" />
     <Project Path="tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj" />
     <Project Path="tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj" />
+    <Project Path="tests/ServiceMantle.Database.MariaDb.Tests/ServiceMantle.Database.MariaDb.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Database.MySql.Tests/ServiceMantle.Database.MySql.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj" />
