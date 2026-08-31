@@ -115,6 +115,25 @@
       ]
     },
     {
+      "id": "ServiceMantle.Database.Oracle",
+      "project": "src/ServiceMantle.Database.Oracle/ServiceMantle.Database.Oracle.csproj",
+      "optional": true,
+      "dependencies": [
+        "Oracle.ManagedDataAccess.Core",
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Database.Oracle.Tests/ServiceMantle.Database.Oracle.Tests.csproj",
+          "realDatabase": true,
+          "environment": {
+            "RUN_SERVICEMANTLE_ORACLE_TESTS": "true"
+          }
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.OpenTelemetry",
       "project": "src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj",
       "optional": true,
