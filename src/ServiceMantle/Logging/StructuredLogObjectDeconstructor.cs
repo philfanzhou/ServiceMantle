@@ -5,43 +5,38 @@ using System.Reflection;
 namespace ServiceMantle.Logging;
 
 /// <summary>
-/// Owns reflection-based destructuring of exceptions, dictionaries, enumerables, and public object
-/// members for the structured log sanitizer.
+/// Reads exceptions, dictionaries, enumerables, and public object members while delegating
+/// recursive dispatch, reference tracking, and budgets to the coordinator-owned traversal context.
 /// </summary>
-/// <remarks>
-/// Reference tracking deliberately remains in the caller-owned set passed to every nested
-/// sanitization call. This component neither copies nor independently interprets traversal state.
-/// </remarks>
 internal sealed class StructuredLogObjectDeconstructor
 {
     internal bool TryDeconstruct(
         object value,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer,
+        StructuredLogTraversalCoordinator.TraversalContext context,
         out object? sanitized)
     {
         if (value is Exception exception)
         {
-            sanitized = DeconstructException(exception, depth, activeReferences, sanitizer);
+            sanitized = DeconstructException(exception, depth, context);
             return true;
         }
 
         if (value is IDictionary dictionary)
         {
-            sanitized = DeconstructDictionary(dictionary, depth, activeReferences, sanitizer);
+            sanitized = DeconstructDictionary(dictionary, depth, context);
             return true;
         }
 
         if (IsGenericDictionary(value.GetType()))
         {
-            sanitized = DeconstructGenericDictionary(value, depth, activeReferences, sanitizer);
+            sanitized = DeconstructGenericDictionary(value, depth, context);
             return true;
         }
 
         if (value is IEnumerable enumerable)
         {
-            sanitized = DeconstructEnumerable(enumerable, depth, activeReferences, sanitizer);
+            sanitized = DeconstructEnumerable(enumerable, depth, context);
             return true;
         }
 
@@ -51,15 +46,14 @@ internal sealed class StructuredLogObjectDeconstructor
             return false;
         }
 
-        sanitized = DeconstructPublicObject(value, depth, activeReferences, sanitizer);
+        sanitized = DeconstructPublicObject(value, depth, context);
         return true;
     }
 
     private static IReadOnlyDictionary<string, object?> DeconstructException(
         Exception exception,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer)
+        StructuredLogTraversalCoordinator.TraversalContext context)
     {
         var output = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -68,10 +62,7 @@ internal sealed class StructuredLogObjectDeconstructor
 
         if (exception.InnerException is not null)
         {
-            output["InnerException"] = sanitizer.SanitizeNestedValue(
-                exception.InnerException,
-                depth + 1,
-                activeReferences);
+            output["InnerException"] = context.SanitizeNestedValue(exception.InnerException, depth + 1);
         }
 
         return new ReadOnlyDictionary<string, object?>(output);
@@ -80,30 +71,28 @@ internal sealed class StructuredLogObjectDeconstructor
     private static IReadOnlyDictionary<string, object?> DeconstructDictionary(
         IDictionary dictionary,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer)
+        StructuredLogTraversalCoordinator.TraversalContext context)
     {
         var output = new Dictionary<string, object?>(StringComparer.Ordinal);
         var count = 0;
         foreach (DictionaryEntry entry in dictionary)
         {
-            if (count++ >= sanitizer.MaximumCollectionCount)
+            if (!context.TryAcceptCollectionItem(ref count))
             {
                 output["CollectionTruncated"] = StructuredLogSanitizer.CollectionTruncated;
                 break;
             }
 
-            if (!sanitizer.NamePolicy.TryGetFieldName(entry.Key, out var fieldName))
+            if (!context.TryGetFieldName(entry.Key, out var fieldName))
             {
                 continue;
             }
 
-            sanitizer.AddField(
+            context.AddField(
                 output,
                 fieldName,
                 entry.Value,
-                depth + 1,
-                activeReferences);
+                depth + 1);
         }
 
         return new ReadOnlyDictionary<string, object?>(output);
@@ -136,14 +125,13 @@ internal sealed class StructuredLogObjectDeconstructor
     private static IReadOnlyDictionary<string, object?> DeconstructGenericDictionary(
         object value,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer)
+        StructuredLogTraversalCoordinator.TraversalContext context)
     {
         var output = new Dictionary<string, object?>(StringComparer.Ordinal);
         var count = 0;
         foreach (var item in (IEnumerable)value)
         {
-            if (count++ >= sanitizer.MaximumCollectionCount)
+            if (!context.TryAcceptCollectionItem(ref count))
             {
                 output["CollectionTruncated"] = StructuredLogSanitizer.CollectionTruncated;
                 break;
@@ -163,28 +151,26 @@ internal sealed class StructuredLogObjectDeconstructor
             }
 
             var key = keyProperty.GetValue(item);
-            if (!sanitizer.NamePolicy.TryGetFieldName(key, out var fieldName))
+            if (!context.TryGetFieldName(key, out var fieldName))
             {
                 continue;
             }
 
-            if (sanitizer.NamePolicy.IsDeniedField(fieldName))
+            if (context.IsDeniedField(fieldName))
             {
-                sanitizer.AddField(
+                context.AddField(
                     output,
                     fieldName,
                     value: null,
-                    depth + 1,
-                    activeReferences);
+                    depth + 1);
                 continue;
             }
 
-            sanitizer.AddField(
+            context.AddField(
                 output,
                 fieldName,
                 valueProperty.GetValue(item),
-                depth + 1,
-                activeReferences);
+                depth + 1);
         }
 
         return new ReadOnlyDictionary<string, object?>(output);
@@ -193,20 +179,19 @@ internal sealed class StructuredLogObjectDeconstructor
     private static IReadOnlyList<object?> DeconstructEnumerable(
         IEnumerable enumerable,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer)
+        StructuredLogTraversalCoordinator.TraversalContext context)
     {
         var output = new List<object?>();
         var count = 0;
         foreach (var item in enumerable)
         {
-            if (count++ >= sanitizer.MaximumCollectionCount)
+            if (!context.TryAcceptCollectionItem(ref count))
             {
                 output.Add(StructuredLogSanitizer.CollectionTruncated);
                 break;
             }
 
-            output.Add(sanitizer.SanitizeNestedValue(item, depth + 1, activeReferences));
+            output.Add(context.SanitizeNestedValue(item, depth + 1));
         }
 
         return output.AsReadOnly();
@@ -215,8 +200,7 @@ internal sealed class StructuredLogObjectDeconstructor
     private static object DeconstructPublicObject(
         object value,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer)
+        StructuredLogTraversalCoordinator.TraversalContext context)
     {
         var type = value.GetType();
         var members = type
@@ -234,13 +218,13 @@ internal sealed class StructuredLogObjectDeconstructor
         var count = 0;
         foreach (var member in members)
         {
-            if (count++ >= sanitizer.MaximumCollectionCount)
+            if (!context.TryAcceptCollectionItem(ref count))
             {
                 output["CollectionTruncated"] = StructuredLogSanitizer.CollectionTruncated;
                 break;
             }
 
-            if (!sanitizer.NamePolicy.TryClassifyField(
+            if (!context.TryClassifyField(
                     member.Name,
                     out var outputName,
                     out var denied,
@@ -252,7 +236,7 @@ internal sealed class StructuredLogObjectDeconstructor
 
             if (denied)
             {
-                StructuredLogSanitizer.AddOutput(
+                context.AddOutput(
                     output,
                     outputName,
                     StructuredLogSanitizer.RedactedValue);
@@ -277,10 +261,10 @@ internal sealed class StructuredLogObjectDeconstructor
                 memberValue = StructuredLogSanitizer.SanitizationFailed;
             }
 
-            StructuredLogSanitizer.AddOutput(
+            context.AddOutput(
                 output,
                 outputName,
-                sanitizer.SanitizeNestedValue(memberValue, depth + 1, activeReferences));
+                context.SanitizeNestedValue(memberValue, depth + 1));
         }
 
         return new ReadOnlyDictionary<string, object?>(output);

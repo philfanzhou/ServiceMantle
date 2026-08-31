@@ -5,16 +5,15 @@ using System.Text.Json.Nodes;
 namespace ServiceMantle.Logging;
 
 /// <summary>
-/// Owns bounded traversal of every supported JSON representation. Container budgets and primitive
-/// conversion are deliberately shared so a JSON representation cannot introduce its own bypass.
+/// Reads every supported JSON representation while delegating recursive dispatch and all budget
+/// decisions to the coordinator-owned traversal context.
 /// </summary>
 internal sealed class StructuredLogJsonTraverser
 {
     internal bool TrySanitize(
         object value,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer,
+        StructuredLogTraversalCoordinator.TraversalContext context,
         out object? sanitized)
     {
         if (!JsonTraversalValue.TryCreate(value, out var jsonValue))
@@ -23,26 +22,25 @@ internal sealed class StructuredLogJsonTraverser
             return false;
         }
 
-        sanitized = Sanitize(jsonValue, depth, activeReferences, sanitizer);
+        sanitized = Sanitize(jsonValue, depth, context);
         return true;
     }
 
     private static object? Sanitize(
         JsonTraversalValue value,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer)
+        StructuredLogTraversalCoordinator.TraversalContext context)
     {
-        if (depth > sanitizer.MaximumDepth)
+        if (context.IsDepthExceeded(depth))
         {
             return StructuredLogSanitizer.MaximumDepthExceeded;
         }
 
         return value.Kind switch
         {
-            JsonTraversalKind.Object => SanitizeObject(value, depth, activeReferences, sanitizer),
-            JsonTraversalKind.Array => SanitizeArray(value, depth, activeReferences, sanitizer),
-            JsonTraversalKind.Scalar => SanitizeScalar(value, depth, activeReferences, sanitizer),
+            JsonTraversalKind.Object => SanitizeObject(value, depth, context),
+            JsonTraversalKind.Array => SanitizeArray(value, depth, context),
+            JsonTraversalKind.Scalar => SanitizeScalar(value, depth, context),
             _ => StructuredLogSanitizer.SanitizationFailed
         };
     }
@@ -50,25 +48,23 @@ internal sealed class StructuredLogJsonTraverser
     private static IReadOnlyDictionary<string, object?> SanitizeObject(
         JsonTraversalValue value,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer)
+        StructuredLogTraversalCoordinator.TraversalContext context)
     {
         var output = new Dictionary<string, object?>(StringComparer.Ordinal);
         var count = 0;
         foreach (var property in value.EnumerateObject())
         {
-            if (count++ >= sanitizer.MaximumCollectionCount)
+            if (!context.TryAcceptCollectionItem(ref count))
             {
                 output["CollectionTruncated"] = StructuredLogSanitizer.CollectionTruncated;
                 break;
             }
 
-            sanitizer.AddField(
+            context.AddField(
                 output,
                 property.Name,
                 property.Value,
-                depth + 1,
-                activeReferences);
+                depth + 1);
         }
 
         return new ReadOnlyDictionary<string, object?>(output);
@@ -77,14 +73,13 @@ internal sealed class StructuredLogJsonTraverser
     private static IReadOnlyList<object?> SanitizeArray(
         JsonTraversalValue value,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer)
+        StructuredLogTraversalCoordinator.TraversalContext context)
     {
         var output = new List<object?>();
         var count = 0;
         foreach (var item in value.EnumerateArray())
         {
-            if (count++ >= sanitizer.MaximumCollectionCount)
+            if (!context.TryAcceptCollectionItem(ref count))
             {
                 output.Add(StructuredLogSanitizer.CollectionTruncated);
                 break;
@@ -93,8 +88,7 @@ internal sealed class StructuredLogJsonTraverser
             output.Add(value.SanitizeArrayItem(
                 item,
                 depth + 1,
-                activeReferences,
-                sanitizer));
+                context));
         }
 
         return output.AsReadOnly();
@@ -103,20 +97,18 @@ internal sealed class StructuredLogJsonTraverser
     private static object? SanitizeScalar(
         JsonTraversalValue value,
         int depth,
-        HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer)
+        StructuredLogTraversalCoordinator.TraversalContext context)
     {
-        var scalar = value.ReadScalar();
+        var scalar = value.ReadScalar(context);
         return scalar.Kind switch
         {
-            JsonScalarKind.SanitizableValue => sanitizer.SanitizeNestedValue(
+            JsonScalarKind.SanitizableValue => context.SanitizeNestedValue(scalar.Value, depth),
+            JsonScalarKind.DirectJsonValue => context.SanitizeJsonPrimitive(
                 scalar.Value,
-                depth,
-                activeReferences),
-            JsonScalarKind.DirectJsonValue => scalar.Value is string text
-                ? sanitizer.SanitizeFreeText(text)
-                : scalar.Value,
-            JsonScalarKind.RawNumber => scalar.Value,
+                sanitizeText: true),
+            JsonScalarKind.RawNumber => context.SanitizeJsonPrimitive(
+                scalar.Value,
+                sanitizeText: false),
             _ => StructuredLogSanitizer.SanitizationFailed
         };
     }
@@ -263,8 +255,7 @@ internal sealed class StructuredLogJsonTraverser
         internal object? SanitizeArrayItem(
             object? item,
             int depth,
-            HashSet<object> activeReferences,
-            StructuredLogSanitizer sanitizer)
+            StructuredLogTraversalCoordinator.TraversalContext context)
         {
             if (source == JsonTraversalSource.Element && item is JsonElement elementItem)
             {
@@ -273,14 +264,14 @@ internal sealed class StructuredLogJsonTraverser
                 return Sanitize(
                     new JsonTraversalValue(elementItem),
                     depth,
-                    activeReferences,
-                    sanitizer);
+                    context);
             }
 
-            return sanitizer.SanitizeNestedValue(item, depth, activeReferences);
+            return context.SanitizeNestedValue(item, depth);
         }
 
-        internal JsonScalarValue ReadScalar()
+        internal JsonScalarValue ReadScalar(
+            StructuredLogTraversalCoordinator.TraversalContext context)
         {
             if (source == JsonTraversalSource.Element)
             {
@@ -289,7 +280,7 @@ internal sealed class StructuredLogJsonTraverser
 
             if (node is not JsonValue jsonValue ||
                 !jsonValue.TryGetValue<object>(out var value) ||
-                !StructuredLogSanitizer.IsSupportedJsonValueScalar(value))
+                !context.IsSupportedJsonValueScalar(value))
             {
                 return JsonScalarValue.Unsupported();
             }
