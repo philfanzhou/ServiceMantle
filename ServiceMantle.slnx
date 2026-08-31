@@ -4,6 +4,7 @@
     <Project Path="src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" />
     <Project Path="src/ServiceMantle.Database.MySql/ServiceMantle.Database.MySql.csproj" />
     <Project Path="src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj" />
+    <Project Path="src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj" />
     <Project Path="src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj" />
     <Project Path="src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj" />
     <Project Path="src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
@@ -15,6 +16,7 @@
     <Project Path="tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Database.MySql.Tests/ServiceMantle.Database.MySql.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj" />
+    <Project Path="tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj" />
     <Project Path="tests/ServiceMantle.OpenTelemetry.Tests/ServiceMantle.OpenTelemetry.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj" />
