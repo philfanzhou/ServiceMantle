@@ -411,6 +411,7 @@ internal sealed class SqlServerDatabaseCreationProbe : ISqlServerDatabaseCreatio
             SELECT
                 HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW ANY DATABASE'),
                 HAS_PERMS_BY_NAME(NULL, NULL, N'ALTER ANY DATABASE'),
+                HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'CREATE DATABASE'),
                 candidate.match
             FROM (VALUES (0)) AS singleton(value)
             OUTER APPLY
@@ -442,19 +443,24 @@ internal sealed class SqlServerDatabaseCreationProbe : ISqlServerDatabaseCreatio
         return InterpretExistingDatabase(
             reader.IsDBNull(0) ? null : reader.GetInt32(0),
             reader.IsDBNull(1) ? null : reader.GetInt32(1),
-            reader.IsDBNull(2) ? null : reader.GetInt32(2));
+            reader.IsDBNull(2) ? null : reader.GetInt32(2),
+            reader.IsDBNull(3) ? null : reader.GetInt32(3));
     }
 
     internal static ExistingDatabaseMatch InterpretExistingDatabase(
         int? hasViewAnyDatabase,
         int? hasAlterAnyDatabase,
+        int? hasCreateDatabase,
         int? match)
     {
         return match switch
         {
             1 => ExistingDatabaseMatch.Exact,
             2 => ExistingDatabaseMatch.Conflicting,
-            _ when hasViewAnyDatabase == 1 || hasAlterAnyDatabase == 1 =>
+            _ when SqlServerDatabaseTarget.HasCompleteDatabaseVisibility(
+                hasViewAnyDatabase,
+                hasAlterAnyDatabase,
+                hasCreateDatabase) =>
                 ExistingDatabaseMatch.Missing,
             _ => ExistingDatabaseMatch.VisibilityUnknown
         };

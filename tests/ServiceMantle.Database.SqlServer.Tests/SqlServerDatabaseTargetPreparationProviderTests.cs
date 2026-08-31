@@ -329,14 +329,15 @@ public sealed class SqlServerDatabaseTargetPreparationProviderTests
             SqlServerDatabaseCreationProbe.ClassifyFailure(new TimeoutException("safe")));
     }
 
-    public static TheoryData<int?, int?, int?, int> ExistingDatabaseStates => new()
+    public static TheoryData<int?, int?, int?, int?, int> ExistingDatabaseStates => new()
     {
-        { 0, 0, 1, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.Exact },
-        { 0, 0, 2, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.Conflicting },
-        { 1, 0, null, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.Missing },
-        { 0, 1, null, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.Missing },
-        { 0, 0, null, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.VisibilityUnknown },
-        { null, null, null, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.VisibilityUnknown },
+        { 0, 0, 0, 1, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.Exact },
+        { 0, 0, 0, 2, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.Conflicting },
+        { 1, 0, 0, null, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.Missing },
+        { 0, 1, 0, null, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.Missing },
+        { 0, 0, 1, null, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.Missing },
+        { 0, 0, 0, null, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.VisibilityUnknown },
+        { null, null, null, null, (int)SqlServerDatabaseCreationProbe.ExistingDatabaseMatch.VisibilityUnknown },
     };
 
     [Theory]
@@ -344,6 +345,7 @@ public sealed class SqlServerDatabaseTargetPreparationProviderTests
     public void Creation_requires_complete_visibility_before_treating_no_row_as_missing(
         int? hasViewAnyDatabase,
         int? hasAlterAnyDatabase,
+        int? hasCreateDatabase,
         int? match,
         int expectedValue)
     {
@@ -352,7 +354,28 @@ public sealed class SqlServerDatabaseTargetPreparationProviderTests
             SqlServerDatabaseCreationProbe.InterpretExistingDatabase(
                 hasViewAnyDatabase,
                 hasAlterAnyDatabase,
+                hasCreateDatabase,
                 match));
+    }
+
+    [Theory]
+    [InlineData(1, 0, 0, true)]
+    [InlineData(0, 1, 0, true)]
+    [InlineData(0, 0, 1, true)]
+    [InlineData(0, 0, 0, false)]
+    [InlineData(null, null, null, false)]
+    public void Complete_visibility_includes_create_database_permission_in_master(
+        int? hasViewAnyDatabase,
+        int? hasAlterAnyDatabase,
+        int? hasCreateDatabase,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            SqlServerDatabaseTarget.HasCompleteDatabaseVisibility(
+                hasViewAnyDatabase,
+                hasAlterAnyDatabase,
+                hasCreateDatabase));
     }
 
     [Theory]

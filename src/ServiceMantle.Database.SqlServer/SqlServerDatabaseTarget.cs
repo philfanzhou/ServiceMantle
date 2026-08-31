@@ -71,4 +71,10 @@ internal static class SqlServerDatabaseTarget
 
     internal static string QuoteIdentifier(string identifier) =>
         $"[{identifier.Replace("]", "]]", StringComparison.Ordinal)}]";
+
+    internal static bool HasCompleteDatabaseVisibility(
+        int? hasViewAnyDatabase,
+        int? hasAlterAnyDatabase,
+        int? hasCreateDatabase) =>
+        hasViewAnyDatabase == 1 || hasAlterAnyDatabase == 1 || hasCreateDatabase == 1;
 }

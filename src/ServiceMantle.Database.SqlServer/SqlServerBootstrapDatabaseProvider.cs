@@ -248,6 +248,7 @@ internal sealed class SqlServerTargetObservationProbe : ISqlServerTargetObservat
                     CONVERT(int, SERVERPROPERTY('ProductMajorVersion')),
                     HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW ANY DATABASE'),
                     HAS_PERMS_BY_NAME(NULL, NULL, N'ALTER ANY DATABASE'),
+                    HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'CREATE DATABASE'),
                     candidate.[name],
                     candidate.[state],
                     HAS_DBACCESS(candidate.[name])
@@ -280,11 +281,13 @@ internal sealed class SqlServerTargetObservationProbe : ISqlServerTargetObservat
 
             return InterpretMetadata(
                 databaseName,
-                (!reader.IsDBNull(1) && reader.GetInt32(1) == 1) ||
-                (!reader.IsDBNull(2) && reader.GetInt32(2) == 1),
-                reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetByte(4),
-                reader.IsDBNull(5) ? null : reader.GetInt32(5));
+                SqlServerDatabaseTarget.HasCompleteDatabaseVisibility(
+                    reader.IsDBNull(1) ? null : reader.GetInt32(1),
+                    reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                    reader.IsDBNull(3) ? null : reader.GetInt32(3)),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetByte(5),
+                reader.IsDBNull(6) ? null : reader.GetInt32(6));
         }
         catch (Exception exception)
         {
