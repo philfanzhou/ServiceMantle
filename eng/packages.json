@@ -67,6 +67,25 @@
       ]
     },
     {
+      "id": "ServiceMantle.OpenTelemetry",
+      "project": "src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj",
+      "optional": true,
+      "dependencies": [
+        "OpenTelemetry.Extensions.Hosting",
+        "OpenTelemetry.Instrumentation.AspNetCore",
+        "OpenTelemetry.Instrumentation.Http",
+        "OpenTelemetry.Instrumentation.Runtime",
+        "ServiceMantle.AspNetCore"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.OpenTelemetry.Tests/ServiceMantle.OpenTelemetry.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.Serilog",
       "project": "src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
       "optional": true,

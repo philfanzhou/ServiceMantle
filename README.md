@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the explicit forwarded-header trust boundary, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, broader observability, and service discovery capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -39,6 +39,48 @@ using (context.BeginScope(logger, new Dictionary<string, object?>
 ```
 
 Extension fields are limited to 32, require non-null values and identifier-style names, and cannot duplicate or override the four protected identity fields `ServiceName`, `ServiceVersion`, `InstanceId`, and `CorrelationId` (matching is case-insensitive). Disposing the returned handle ends the scope; standard `ILogger` async scope semantics keep concurrent execution contexts isolated. This context does not sanitize extension values or configure a logging sink, so callers remain responsible for passing only values safe for their providers.
+
+## Core OpenTelemetry instrumentation
+
+Install the optional `ServiceMantle.OpenTelemetry` package and opt in after the host identity is
+registered:
+
+```csharp
+builder.Services
+    .AddServiceMantle(
+        ServiceId.Parse("catalog"),
+        InstanceId.Parse("catalog-01"),
+        serviceVersion: "1.2.3")
+    .AddOpenTelemetryInstrumentation();
+```
+
+The registration creates one tracing provider for ASP.NET Core and `HttpClient` instrumentation and
+one metrics provider for .NET runtime instrumentation. It adds no exporter, network destination,
+background export worker, sampling policy, or batching policy. Omitting the call leaves both
+providers unregistered. A deployment can keep an otherwise shared composition path disabled, or
+select individual instrumentations explicitly:
+
+```csharp
+serviceMantle.AddOpenTelemetryInstrumentation(options =>
+{
+    options.Enabled = false;
+    options.EnableAspNetCoreTracing = true;
+    options.EnableHttpClientTracing = true;
+    options.EnableRuntimeMetrics = true;
+});
+```
+
+ServiceMantle replaces the OpenTelemetry resource with exactly `service.name`, `service.version`, and
+`service.instance.id`, using the same values as `ServiceLogContext.ServiceName`, `ServiceVersion`, and
+`InstanceId`. These options cannot add resource attributes. Equivalent repeated registrations are
+idempotent; an enabled registration that selects no instrumentation or repeated registrations with
+different effective settings fail when the host starts. Providers and their instrumentation are
+disposed with the host, and disposal failures remain observable to the caller.
+
+Instrumentation-generated span and metric attributes are controlled by the upstream OpenTelemetry
+packages, not by the ServiceMantle resource whitelist. This package does not guarantee their
+sensitivity or cardinality, export success, sampling behavior, or any mapping between W3C trace
+identity and the ServiceMantle Correlation ID.
 
 ## Explicit forwarded-header trust
 
