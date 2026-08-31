@@ -117,6 +117,50 @@ public sealed class ServiceMantleSensitiveHeaderTests
         await host.StopAsync(TestContext.Current.CancellationToken);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Official_Serilog_and_sensitive_headers_share_the_snapshot_in_either_order(
+        bool serilogFirst)
+    {
+        const string headerName = "X-Combined-Secret";
+        const string secret = "combined-secret-value";
+        var builder = Host.CreateApplicationBuilder();
+        var serviceMantle = builder.Services.AddServiceMantle(
+            ServiceId.Parse("catalog"),
+            InstanceId.Parse("catalog-01"));
+        if (serilogFirst)
+        {
+            builder.AddServiceMantleSerilog();
+        }
+
+        serviceMantle.AddSensitiveHeaders(options => options.DeniedHeaderNames = [headerName]);
+        if (!serilogFirst)
+        {
+            builder.AddServiceMantleSerilog();
+        }
+
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        var headers = new HeaderDictionary { [headerName] = secret };
+
+        var direct = host.Services.GetRequiredService<StructuredLogSanitizer>().SanitizeHeaders(
+            headers.Select(header =>
+                new KeyValuePair<string, object?>(header.Key, header.Value.ToArray())));
+        var projected = host.Services
+            .GetRequiredService<ServiceMantleRequestHeaderDiagnosticProjector>()
+            .Project(headers);
+
+        Assert.Equal(StructuredLogSanitizer.RedactedValue, direct[headerName]);
+        Assert.Equal(StructuredLogSanitizer.RedactedValue, projected[headerName]);
+        Assert.DoesNotContain(secret, System.Text.Json.JsonSerializer.Serialize(direct), StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            secret,
+            System.Text.Json.JsonSerializer.Serialize(projected),
+            StringComparison.Ordinal);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task All_HTTP_token_characters_are_supported_by_the_registry_and_sanitizer()
     {

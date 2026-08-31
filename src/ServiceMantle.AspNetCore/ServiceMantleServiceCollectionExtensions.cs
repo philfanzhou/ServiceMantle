@@ -367,8 +367,10 @@ public static class ServiceMantleServiceCollectionExtensions
         builder.Services.TryAddSingleton<ServiceMantleSensitiveHeaderSanitizer>(serviceProvider =>
             new ServiceMantleSensitiveHeaderSanitizer(
                 serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderRegistry>()));
+        builder.Services.TryAddSingleton<IStructuredLogSanitizerProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderSanitizer>());
         builder.Services.TryAddSingleton<StructuredLogSanitizer>(serviceProvider =>
-            serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderSanitizer>().Sanitizer);
+            serviceProvider.GetRequiredService<IStructuredLogSanitizerProvider>().Sanitizer);
         builder.Services.TryAddSingleton<ServiceMantleRequestHeaderDiagnosticProjector>(serviceProvider =>
             new ServiceMantleRequestHeaderDiagnosticProjector(
                 serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderSanitizer>()));

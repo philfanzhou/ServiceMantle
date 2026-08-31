@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ServiceMantle.AspNetCore\ServiceMantle.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\src\ServiceMantle.Serilog\ServiceMantle.Serilog.csproj" />
   </ItemGroup>
 
 </Project>

@@ -4,7 +4,7 @@ using ServiceMantle.Logging;
 
 namespace ServiceMantle.AspNetCore;
 
-internal sealed class ServiceMantleSensitiveHeaderSanitizer
+internal sealed class ServiceMantleSensitiveHeaderSanitizer : IStructuredLogSanitizerProvider
 {
     internal ServiceMantleSensitiveHeaderSanitizer(ServiceMantleSensitiveHeaderRegistry registry)
     {
@@ -14,7 +14,7 @@ internal sealed class ServiceMantleSensitiveHeaderSanitizer
         });
     }
 
-    internal StructuredLogSanitizer Sanitizer { get; }
+    public StructuredLogSanitizer Sanitizer { get; }
 }
 
 /// <summary>

@@ -1041,6 +1041,8 @@ merge case-insensitively, and cannot remove a built-in. Invalid names, collectio
 failures, and a separately registered `StructuredLogSanitizer` fail when the Host starts using only
 stable error metadata. The DI-provided sanitizer and request projector consume the same snapshot;
 denied single-value and multi-value Headers both become `[REDACTED]`.
+`AddSensitiveHeaders` and `AddServiceMantleSerilog` can be called in either order and share that
+snapshot. A sanitizer registered separately by the consumer remains a startup conflict.
 
 The registry has no runtime update or removal API. Product-specific names must be added explicitly.
 It does not mutate the original request Headers and does not govern third-party logging providers,
