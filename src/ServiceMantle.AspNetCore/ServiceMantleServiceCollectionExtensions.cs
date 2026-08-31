@@ -324,4 +324,57 @@ public static class ServiceMantleServiceCollectionExtensions
         builder.Services.TryAddSingleton<ServiceMantleSecurityResponseHeadersRegistration>();
         return builder;
     }
+
+    /// <summary>Adds the immutable sensitive request Header registry and safe diagnostic projector.</summary>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="configure">Adds product-independent or consumer-specific denied Header names.</param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// Built-in authentication, cookie, and API-key names cannot be removed. Repeated names merge
+    /// case-insensitively. Invalid names, enumeration failures, and sanitizer ownership conflicts
+    /// fail when the host starts without including Header or configuration values in diagnostics.
+    /// </remarks>
+    public static ServiceMantleBuilder AddSensitiveHeaders(
+        this ServiceMantleBuilder builder,
+        Action<ServiceMantleSensitiveHeadersOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var options = new ServiceMantleSensitiveHeadersOptions();
+        var configureFailed = false;
+        try
+        {
+            configure?.Invoke(options);
+        }
+        catch
+        {
+            configureFailed = true;
+        }
+
+        var firstRegistration = !builder.Services.Any(descriptor =>
+            descriptor.ServiceType == typeof(ServiceMantleSensitiveHeaderRegistration));
+        builder.Services.AddSingleton(new ServiceMantleSensitiveHeaderRegistration(
+            options,
+            configureFailed));
+        if (!firstRegistration)
+        {
+            return builder;
+        }
+
+        builder.Services.TryAddSingleton<ServiceMantleSensitiveHeaderRegistry>(serviceProvider =>
+            new ServiceMantleSensitiveHeaderRegistry(
+                serviceProvider.GetServices<ServiceMantleSensitiveHeaderRegistration>()));
+        builder.Services.TryAddSingleton<ServiceMantleSensitiveHeaderSanitizer>(serviceProvider =>
+            new ServiceMantleSensitiveHeaderSanitizer(
+                serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderRegistry>()));
+        builder.Services.TryAddSingleton<StructuredLogSanitizer>(serviceProvider =>
+            serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderSanitizer>().Sanitizer);
+        builder.Services.TryAddSingleton<ServiceMantleRequestHeaderDiagnosticProjector>(serviceProvider =>
+            new ServiceMantleRequestHeaderDiagnosticProjector(
+                serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderSanitizer>()));
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IHostedService,
+            ServiceMantleSensitiveHeaderStartupValidator>());
+        return builder;
+    }
 }
