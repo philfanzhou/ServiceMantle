@@ -736,7 +736,8 @@ Current and planned provider packages are:
 - `ServiceMantle.Database.MariaDb` validates MariaDB 10.11+ settings and server identity, observes
   server-database targets, and explicitly creates a missing target without changing an existing database.
 - `ServiceMantle.Database.Oracle`
-- `ServiceMantle.Database.SqlServer`
+- `ServiceMantle.Database.SqlServer` validates SQL Server 2019+ settings, observes server-database
+  targets, and explicitly creates a missing target without changing an existing database.
 
 The PostgreSQL provider validates configuration and target connectivity. It also provides session-level advisory lock capability for safe multi-instance migration coordination.
 
@@ -868,8 +869,9 @@ identity before any creation statement, so a MySQL server configured as `MariaDB
 Database identifiers must fit MariaDB's 64-character limit without control characters, NUL,
 surrogate code units, or a trailing ASCII space. A missing database is created with `utf8mb4` and
 `utf8mb4_uca1400_ai_ci`. An exact existing database is returned as `AlreadyExists` without altering
-its character set, collation, grants, or contents. On servers that fold database-name case, a
-differently-cased collision fails closed with `database_target_preparation.target_conflict`.
+its character set, collation, grants, or contents. When `lower_case_table_names` is `1` or `2`, a
+differently-cased name identifies the same logical database and is also returned as `AlreadyExists`;
+when it is `0`, database-name matching remains case-sensitive.
 MariaDB returns `DatabaseAccessDenied` for both existing and missing database names when the account
 cannot see either target, so that observation reports `PermissionDenied` with
 `TargetExists == null` instead of guessing that the target exists.
@@ -878,6 +880,49 @@ This capability does not provide a migration lock, run EF Core migrations, claim
 compatibility, create database users, grant database permissions, or equate behavior across managed
 MariaDB services. It does not attempt to defeat a proxy that deliberately forges the server product
 version. Those remain independently registered capabilities and deployment concerns.
+
+### SQL Server target preparation
+
+`ServiceMantle.Database.SqlServer` keeps the canonical `SqlServer` provider identity independent
+from every other database provider. Hosts opt in explicitly:
+
+```csharp
+services
+    .AddServiceMantle(serviceId, instanceId)
+    .AddBootstrapDatabaseProvider<SqlServerBootstrapDatabaseProvider>()
+    .AddDatabaseTargetPreparationProvider<SqlServerDatabaseTargetPreparationProvider>();
+```
+
+The provider accepts numeric SQL Server 2019 (major version 15) and later version declarations. It
+also verifies the connected server major version before accepting a target or creating a database.
+Database names must contain 1 through 123 characters and cannot contain NUL, control characters,
+surrogate code units, or a trailing ASCII space. Auto-attach (`AttachDBFilename`) connection strings
+are rejected before opening a connection because attaching a file would violate read-only
+observation. The 123-character limit accounts for the logical log-file name SQL Server generates
+when `CREATE DATABASE` does not specify a file list. Names are bracket-delimited and embedded `]`
+characters are doubled.
+
+`ObserveAsync` first attempts a connection to the requested database. SQL Server errors 4060 and
+916 do not by themselves prove whether a database is missing or hidden by metadata permissions, so
+the provider can use the same target credentials for one read-only query against `master`. It
+reports `TargetMissing` only when the account has complete database visibility and no matching
+database is visible. Otherwise, a hidden database keeps `TargetExists == null`; a visible online
+database without access reports `TargetExists == true`. Observation never invokes creation.
+
+`PrepareAsync` uses the caller-supplied administrative connection only for that call, forces its
+catalog to `master`, disables pooling, ambient transaction enlistment, and connection retries, and
+bounds connection and command timeouts. It queries `sys.databases` and creates only a proven-missing
+database with `Latin1_General_100_CI_AS_SC_UTF8`. An exact existing database is returned as
+`AlreadyExists` without changing its collation, files, permissions, metadata, or contents. A
+non-exact but collation-equivalent collision under the server collation returns
+`database_target_preparation.target_conflict`; a concurrent create is rechecked under the same
+rules.
+
+This capability does not provide `sp_getapplock`, run EF Core migrations, create logins or users,
+grant permissions, configure server or storage settings, or claim equivalent behavior on Azure SQL
+and other managed services. The caller must ensure that the target and administrative connection
+strings address the same trusted server instance; cross-connection server identity verification is
+tracked separately.
 
 ### Error codes
 
@@ -982,9 +1027,11 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 - `src/ServiceMantle/ServiceMantle.csproj`
 - `src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj`
 - `src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj`
+- `src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj`
 - `src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj`
 - `tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj`
 - `tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj`
+- `tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj`
 - `tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj`
 - `tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj`
 - `src/ServiceMantle/ServiceId.cs`
@@ -1013,6 +1060,7 @@ dotnet pack src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj -c Rele
 dotnet pack src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj -c Release --no-build
+dotnet pack src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj -c Release --no-build
 ```
 

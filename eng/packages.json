@@ -83,6 +83,22 @@
       ]
     },
     {
+      "id": "ServiceMantle.Database.SqlServer",
+      "project": "src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj",
+      "optional": true,
+      "dependencies": [
+        "Microsoft.Data.SqlClient",
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.Database.MySql",
       "project": "src/ServiceMantle.Database.MySql/ServiceMantle.Database.MySql.csproj",
       "optional": true,

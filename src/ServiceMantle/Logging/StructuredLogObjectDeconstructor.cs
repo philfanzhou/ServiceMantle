@@ -93,7 +93,7 @@ internal sealed class StructuredLogObjectDeconstructor
                 break;
             }
 
-            if (!StructuredLogSanitizer.TryGetFieldName(entry.Key, out var fieldName))
+            if (!sanitizer.NamePolicy.TryGetFieldName(entry.Key, out var fieldName))
             {
                 continue;
             }
@@ -163,12 +163,12 @@ internal sealed class StructuredLogObjectDeconstructor
             }
 
             var key = keyProperty.GetValue(item);
-            if (!StructuredLogSanitizer.TryGetFieldName(key, out var fieldName))
+            if (!sanitizer.NamePolicy.TryGetFieldName(key, out var fieldName))
             {
                 continue;
             }
 
-            if (sanitizer.IsDeniedField(fieldName))
+            if (sanitizer.NamePolicy.IsDeniedField(fieldName))
             {
                 sanitizer.AddField(
                     output,
@@ -240,7 +240,7 @@ internal sealed class StructuredLogObjectDeconstructor
                 break;
             }
 
-            if (!sanitizer.TryClassifyField(
+            if (!sanitizer.NamePolicy.TryClassifyField(
                     member.Name,
                     out var outputName,
                     out var denied,
