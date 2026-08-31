@@ -31,13 +31,21 @@ internal sealed class StructuredLogJsonTraverser
         JsonTraversalValue value,
         int depth,
         HashSet<object> activeReferences,
-        StructuredLogSanitizer sanitizer) => value.Kind switch
+        StructuredLogSanitizer sanitizer)
+    {
+        if (depth > sanitizer.MaximumDepth)
+        {
+            return StructuredLogSanitizer.MaximumDepthExceeded;
+        }
+
+        return value.Kind switch
         {
             JsonTraversalKind.Object => SanitizeObject(value, depth, activeReferences, sanitizer),
             JsonTraversalKind.Array => SanitizeArray(value, depth, activeReferences, sanitizer),
             JsonTraversalKind.Scalar => SanitizeScalar(value, depth, activeReferences, sanitizer),
             _ => StructuredLogSanitizer.SanitizationFailed
         };
+    }
 
     private static IReadOnlyDictionary<string, object?> SanitizeObject(
         JsonTraversalValue value,
@@ -82,7 +90,11 @@ internal sealed class StructuredLogJsonTraverser
                 break;
             }
 
-            output.Add(sanitizer.SanitizeNestedValue(item, depth + 1, activeReferences));
+            output.Add(value.SanitizeArrayItem(
+                item,
+                depth + 1,
+                activeReferences,
+                sanitizer));
         }
 
         return output.AsReadOnly();
@@ -97,10 +109,13 @@ internal sealed class StructuredLogJsonTraverser
         var scalar = value.ReadScalar();
         return scalar.Kind switch
         {
-            JsonScalarKind.Value => sanitizer.SanitizeNestedValue(
+            JsonScalarKind.SanitizableValue => sanitizer.SanitizeNestedValue(
                 scalar.Value,
                 depth,
                 activeReferences),
+            JsonScalarKind.DirectJsonValue => scalar.Value is string text
+                ? sanitizer.SanitizeFreeText(text)
+                : scalar.Value,
             JsonScalarKind.RawNumber => scalar.Value,
             _ => StructuredLogSanitizer.SanitizationFailed
         };
@@ -138,7 +153,10 @@ internal sealed class StructuredLogJsonTraverser
     private readonly record struct JsonScalarValue(JsonScalarKind Kind, object? Value)
     {
         internal static JsonScalarValue Sanitizable(object? value) =>
-            new(JsonScalarKind.Value, value);
+            new(JsonScalarKind.SanitizableValue, value);
+
+        internal static JsonScalarValue DirectJsonValue(object? value) =>
+            new(JsonScalarKind.DirectJsonValue, value);
 
         internal static JsonScalarValue RawNumber(string value) =>
             new(JsonScalarKind.RawNumber, value);
@@ -242,6 +260,26 @@ internal sealed class StructuredLogJsonTraverser
             }
         }
 
+        internal object? SanitizeArrayItem(
+            object? item,
+            int depth,
+            HashSet<object> activeReferences,
+            StructuredLogSanitizer sanitizer)
+        {
+            if (source == JsonTraversalSource.Element && item is JsonElement elementItem)
+            {
+                // JsonElement arrays historically recurse within the JSON path instead of
+                // reapplying the caller-configured sensitive type dispatch to each boxed item.
+                return Sanitize(
+                    new JsonTraversalValue(elementItem),
+                    depth,
+                    activeReferences,
+                    sanitizer);
+            }
+
+            return sanitizer.SanitizeNestedValue(item, depth, activeReferences);
+        }
+
         internal JsonScalarValue ReadScalar()
         {
             if (source == JsonTraversalSource.Element)
@@ -269,13 +307,13 @@ internal sealed class StructuredLogJsonTraverser
         private static JsonScalarValue ReadElementScalar(JsonElement element) =>
             element.ValueKind switch
             {
-                JsonValueKind.String => JsonScalarValue.Sanitizable(element.GetString()),
+                JsonValueKind.String => JsonScalarValue.DirectJsonValue(element.GetString()),
                 JsonValueKind.Number when element.TryGetDecimal(out var number) =>
-                    JsonScalarValue.Sanitizable(number),
+                    JsonScalarValue.DirectJsonValue(number),
                 JsonValueKind.Number => JsonScalarValue.RawNumber(element.GetRawText()),
-                JsonValueKind.True => JsonScalarValue.Sanitizable(true),
-                JsonValueKind.False => JsonScalarValue.Sanitizable(false),
-                JsonValueKind.Null => JsonScalarValue.Sanitizable(null),
+                JsonValueKind.True => JsonScalarValue.DirectJsonValue(true),
+                JsonValueKind.False => JsonScalarValue.DirectJsonValue(false),
+                JsonValueKind.Null => JsonScalarValue.DirectJsonValue(null),
                 _ => JsonScalarValue.Unsupported()
             };
     }
@@ -298,7 +336,8 @@ internal sealed class StructuredLogJsonTraverser
     private enum JsonScalarKind
     {
         Unsupported,
-        Value,
+        SanitizableValue,
+        DirectJsonValue,
         RawNumber
     }
 }

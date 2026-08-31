@@ -265,6 +265,26 @@ public sealed class StructuredLogSanitizerFailureTests
         AssertAllJsonRepresentations(json, new StructuredLogSanitizerOptions(), expected);
     }
 
+    [Theory]
+    [InlineData(typeof(JsonElement))]
+    [InlineData(typeof(ValueType))]
+    public void JSON_array_items_preserve_existing_sensitive_type_dispatch(
+        Type sensitiveType)
+    {
+        using var document = JsonDocument.Parse("[1,2]");
+        var node = JsonNode.Parse("[1,2]");
+        var sanitizer = new StructuredLogSanitizer(new StructuredLogSanitizerOptions
+        {
+            SensitiveTypes = [sensitiveType]
+        });
+
+        Assert.Equal("[1,2]", JsonSerializer.Serialize(sanitizer.Sanitize(document)));
+        Assert.Equal("[1,2]", JsonSerializer.Serialize(sanitizer.Sanitize(node)));
+        Assert.Equal(
+            StructuredLogSanitizer.RedactedValue,
+            sanitizer.Sanitize(document.RootElement));
+    }
+
     [Fact]
     public void Custom_JsonValue_fails_closed_without_reading_object_properties()
     {

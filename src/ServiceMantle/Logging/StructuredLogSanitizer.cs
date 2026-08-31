@@ -326,6 +326,8 @@ public sealed class StructuredLogSanitizer
 
     internal int MaximumCollectionCount => maximumCollectionCount;
 
+    internal int MaximumDepth => maximumDepth;
+
     internal object? SanitizeNestedValue(
         object? value,
         int depth,
