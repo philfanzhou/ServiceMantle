@@ -7,7 +7,6 @@ using System.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using ServiceMantle.Bootstrap;
 
 namespace ServiceMantle.Logging;
@@ -65,6 +64,7 @@ public sealed class StructuredLogSanitizer
     private readonly int maximumCollectionCount;
     private readonly int maximumStringLength;
     private readonly Func<string, int, string> freeTextSanitizer;
+    private readonly StructuredLogJsonTraverser jsonTraverser = new();
     private readonly StructuredLogNamePolicy namePolicy;
     private readonly StructuredLogObjectDeconstructor objectDeconstructor = new();
 
@@ -289,19 +289,14 @@ public sealed class StructuredLogSanitizer
 
         try
         {
-            if (value is JsonDocument jsonDocument)
+            if (jsonTraverser.TrySanitize(
+                    value,
+                    depth,
+                    activeReferences,
+                    this,
+                    out var sanitizedJson))
             {
-                return SanitizeJson(jsonDocument.RootElement, depth, activeReferences);
-            }
-
-            if (value is JsonElement jsonElement)
-            {
-                return SanitizeJson(jsonElement, depth, activeReferences);
-            }
-
-            if (value is JsonNode jsonNode)
-            {
-                return SanitizeJsonNode(jsonNode, depth, activeReferences);
+                return sanitizedJson;
             }
 
             if (objectDeconstructor.TryDeconstruct(
@@ -329,161 +324,9 @@ public sealed class StructuredLogSanitizer
         }
     }
 
-    private object? SanitizeJson(
-        JsonElement element,
-        int depth,
-        HashSet<object> activeReferences)
-    {
-        if (depth > maximumDepth)
-        {
-            return MaximumDepthExceeded;
-        }
-
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.Object:
-                {
-                    var output = new Dictionary<string, object?>(StringComparer.Ordinal);
-                    var count = 0;
-                    foreach (var property in element.EnumerateObject())
-                    {
-                        if (count++ >= maximumCollectionCount)
-                        {
-                            output["CollectionTruncated"] = CollectionTruncated;
-                            break;
-                        }
-
-                        AddField(
-                            output,
-                            property.Name,
-                            property.Value,
-                            depth + 1,
-                            activeReferences);
-                    }
-
-                    return new ReadOnlyDictionary<string, object?>(output);
-                }
-
-            case JsonValueKind.Array:
-                {
-                    var output = new List<object?>();
-                    var count = 0;
-                    foreach (var item in element.EnumerateArray())
-                    {
-                        if (count++ >= maximumCollectionCount)
-                        {
-                            output.Add(CollectionTruncated);
-                            break;
-                        }
-
-                        output.Add(SanitizeJson(item, depth + 1, activeReferences));
-                    }
-
-                    return output.AsReadOnly();
-                }
-
-            case JsonValueKind.String:
-                return SanitizeFreeText(element.GetString());
-
-            case JsonValueKind.Number:
-                if (element.TryGetDecimal(out var number))
-                {
-                    return number;
-                }
-
-                return element.GetRawText();
-
-            case JsonValueKind.True:
-                return true;
-
-            case JsonValueKind.False:
-                return false;
-
-            case JsonValueKind.Null:
-                return null;
-
-            default:
-                return SanitizationFailed;
-        }
-    }
-
-    private object? SanitizeJsonNode(
-        JsonNode node,
-        int depth,
-        HashSet<object> activeReferences)
-    {
-        if (depth > maximumDepth)
-        {
-            return MaximumDepthExceeded;
-        }
-
-        switch (node)
-        {
-            case JsonObject jsonObject:
-                {
-                    var output = new Dictionary<string, object?>(StringComparer.Ordinal);
-                    var count = 0;
-                    foreach (var property in jsonObject)
-                    {
-                        if (count++ >= maximumCollectionCount)
-                        {
-                            output["CollectionTruncated"] = CollectionTruncated;
-                            break;
-                        }
-
-                        AddField(
-                            output,
-                            property.Key,
-                            property.Value,
-                            depth + 1,
-                            activeReferences);
-                    }
-
-                    return new ReadOnlyDictionary<string, object?>(output);
-                }
-
-            case JsonArray jsonArray:
-                {
-                    var output = new List<object?>();
-                    var count = 0;
-                    foreach (var item in jsonArray)
-                    {
-                        if (count++ >= maximumCollectionCount)
-                        {
-                            output.Add(CollectionTruncated);
-                            break;
-                        }
-
-                        output.Add(SanitizeValue(item, depth + 1, activeReferences));
-                    }
-
-                    return output.AsReadOnly();
-                }
-
-            case JsonValue jsonValue:
-                {
-                    if (!jsonValue.TryGetValue<object>(out var value) ||
-                        !IsSupportedJsonValueScalar(value))
-                    {
-                        return SanitizationFailed;
-                    }
-
-                    if (value is JsonElement element)
-                    {
-                        return element.ValueKind is JsonValueKind.Object or JsonValueKind.Array
-                            ? SanitizationFailed
-                            : SanitizeJson(element, depth, activeReferences);
-                    }
-
-                    return SanitizeValue(value, depth, activeReferences);
-                }
-
-            default:
-                return SanitizationFailed;
-        }
-    }
-
     internal int MaximumCollectionCount => maximumCollectionCount;
+
+    internal int MaximumDepth => maximumDepth;
 
     internal object? SanitizeNestedValue(
         object? value,
@@ -530,7 +373,7 @@ public sealed class StructuredLogSanitizer
     private bool IsSensitiveType(Type actualType) =>
         sensitiveTypes.Any(sensitiveType => sensitiveType.IsAssignableFrom(actualType));
 
-    private static bool IsSupportedJsonValueScalar(object? value) =>
+    internal static bool IsSupportedJsonValueScalar(object? value) =>
         value is JsonElement or string or char ||
         value is not null && StructuredLogSafeScalar.IsSupported(value.GetType());
 
