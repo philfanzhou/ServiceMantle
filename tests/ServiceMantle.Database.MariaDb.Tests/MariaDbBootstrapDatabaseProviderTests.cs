@@ -219,6 +219,26 @@ public sealed class MariaDbBootstrapDatabaseProviderTests
         Assert.Equal(expected, MariaDbDatabaseTarget.IsMariaDbServerVersion(serverVersion));
     }
 
+    [Theory]
+    [InlineData(true, false, 0, (int)MariaDbProbeOutcome.Success)]
+    [InlineData(false, true, 0, (int)MariaDbProbeOutcome.TargetIdentityMismatch)]
+    [InlineData(false, true, 1, (int)MariaDbProbeOutcome.Success)]
+    [InlineData(false, true, 2, (int)MariaDbProbeOutcome.Success)]
+    [InlineData(false, false, 1, (int)MariaDbProbeOutcome.TargetIdentityMismatch)]
+    public void Target_identity_probe_follows_server_database_case_rules(
+        bool exactMatch,
+        bool caseFoldedMatch,
+        int lowerCaseTableNames,
+        int expectedValue)
+    {
+        Assert.Equal(
+            (MariaDbProbeOutcome)expectedValue,
+            MariaDbBootstrapProbe.ResolveTargetIdentityOutcome(
+                exactMatch,
+                caseFoldedMatch,
+                lowerCaseTableNames));
+    }
+
     private static MariaDbBootstrapDatabaseProvider CreateProvider(MariaDbProbeOutcome outcome) =>
         new(new FakeProbe(outcome));
 

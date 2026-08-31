@@ -226,7 +226,11 @@ internal sealed class MariaDbBootstrapProbe : IMariaDbBootstrapProbe
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT VERSION(), DATABASE()";
+        command.CommandText =
+            "SELECT VERSION(), @@lower_case_table_names, " +
+            "BINARY DATABASE() = BINARY @databaseName, " +
+            "LOWER(DATABASE()) = LOWER(@databaseName)";
+        command.Parameters.AddWithValue("@databaseName", connectionString.Database);
         command.CommandTimeout = commandTimeoutSeconds;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -235,19 +239,27 @@ internal sealed class MariaDbBootstrapProbe : IMariaDbBootstrapProbe
         }
 
         var serverVersion = reader.IsDBNull(0) ? null : reader.GetString(0);
-        var selectedDatabase = reader.IsDBNull(1) ? null : reader.GetString(1);
         if (!MariaDbDatabaseTarget.IsMariaDbServerVersion(serverVersion))
         {
             return MariaDbProbeOutcome.ServerProductMismatch;
         }
 
-        return string.Equals(
-            selectedDatabase,
-            connectionString.Database,
-            StringComparison.Ordinal)
+        var lowerCaseTableNames = reader.GetInt32(1);
+        var exactMatch = !reader.IsDBNull(2) && reader.GetBoolean(2);
+        var caseFoldedMatch = !reader.IsDBNull(3) && reader.GetBoolean(3);
+        return ResolveTargetIdentityOutcome(exactMatch, caseFoldedMatch, lowerCaseTableNames);
+    }
+
+    internal static MariaDbProbeOutcome ResolveTargetIdentityOutcome(
+        bool exactMatch,
+        bool caseFoldedMatch,
+        int lowerCaseTableNames) =>
+        MariaDbDatabaseTarget.MatchesDatabaseIdentifierRules(
+            exactMatch,
+            caseFoldedMatch,
+            lowerCaseTableNames)
             ? MariaDbProbeOutcome.Success
             : MariaDbProbeOutcome.TargetIdentityMismatch;
-    }
 
     private static async ValueTask<MariaDbProbeOutcome> ConfirmServerProductAsync(
         MySqlConnectionStringBuilder targetConnectionString,

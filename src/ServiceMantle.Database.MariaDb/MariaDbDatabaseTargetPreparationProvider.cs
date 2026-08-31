@@ -420,7 +420,10 @@ internal sealed class MariaDbDatabaseCreationProbe : IMariaDbDatabaseCreationPro
         bool caseFoldedMatch,
         int lowerCaseTableNames)
     {
-        if (exactMatch || (lowerCaseTableNames != 0 && caseFoldedMatch))
+        if (MariaDbDatabaseTarget.MatchesDatabaseIdentifierRules(
+                exactMatch,
+                caseFoldedMatch,
+                lowerCaseTableNames))
         {
             return ExistingDatabaseMatch.Exact;
         }

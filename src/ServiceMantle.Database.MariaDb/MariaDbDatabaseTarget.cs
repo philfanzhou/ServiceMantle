@@ -65,6 +65,12 @@ internal static class MariaDbDatabaseTarget
     internal static string QuoteIdentifier(string identifier) =>
         $"`{identifier.Replace("`", "``", StringComparison.Ordinal)}`";
 
+    internal static bool MatchesDatabaseIdentifierRules(
+        bool exactMatch,
+        bool caseFoldedMatch,
+        int lowerCaseTableNames) =>
+        exactMatch || (lowerCaseTableNames is 1 or 2 && caseFoldedMatch);
+
     internal static bool IsMariaDbServerVersion(string? serverVersion) =>
         !string.IsNullOrWhiteSpace(serverVersion) &&
         serverVersion.Contains("MariaDB", StringComparison.OrdinalIgnoreCase);
