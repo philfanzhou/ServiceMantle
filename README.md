@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the mandatory-sanitizing Serilog Host and Console defaults, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -1024,6 +1024,36 @@ Safe error codes for migration failures:
 The core package provides a sink-neutral, fail-closed structured value sanitizer. Its guaranteed
 field/Header/type boundaries and deliberately limited free-text detection contract are documented in
 [`LOGGING_SECURITY.md`](LOGGING_SECURITY.md).
+
+`ServiceMantle.AspNetCore` can opt into one startup-time sensitive request Header snapshot and the
+ServiceMantle-owned diagnostic projection that consumes it:
+
+```csharp
+var serviceMantle = builder.AddServiceMantle(
+    ServiceId.Parse("catalog"),
+    InstanceId.Parse("catalog-01"));
+
+serviceMantle.AddSensitiveHeaders(options =>
+{
+    options.DeniedHeaderNames = ["X-Deployment-Secret"];
+});
+
+var projector = app.Services.GetRequiredService<ServiceMantleRequestHeaderDiagnosticProjector>();
+IReadOnlyDictionary<string, object?> safeHeaders = projector.Project(httpContext.Request.Headers);
+```
+
+The immutable snapshot always contains the built-in authentication, cookie, and API-key names from
+`StructuredLogSanitizerDefaults.BuiltInDeniedHeaderNames`. Consumer additions use HTTP token syntax,
+merge case-insensitively, and cannot remove a built-in. Invalid names, collection enumeration
+failures, and a separately registered `StructuredLogSanitizer` fail when the Host starts using only
+stable error metadata. The DI-provided sanitizer and request projector consume the same snapshot;
+denied single-value and multi-value Headers both become `[REDACTED]`.
+`AddSensitiveHeaders` and `AddServiceMantleSerilog` can be called in either order and share that
+snapshot. A sanitizer registered separately by the consumer remains a startup conflict.
+
+The registry has no runtime update or removal API. Product-specific names must be added explicitly.
+It does not mutate the original request Headers and does not govern third-party logging providers,
+message templates, Activity tags, tracing exporters, or any path that bypasses the projector.
 
 The optional `ServiceMantle.Serilog` package installs a Serilog Console pipeline whose structured
 properties always pass through that sanitizer:

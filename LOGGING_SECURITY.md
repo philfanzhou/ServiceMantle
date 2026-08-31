@@ -37,3 +37,20 @@ Free-text cleaning is deliberately best effort. It removes log-injection control
 It cannot reliably identify an unlabelled opaque secret that looks like an ordinary identifier, nor every encoded, transformed, encrypted, or product-specific secret format. Never interpolate secrets into free text. Put potentially sensitive data in a denied structured field/Header, implement `ISensitiveLogValue`, or register its type in `StructuredLogSanitizerOptions.SensitiveTypes`.
 
 The sanitizer only governs values passed through it. It cannot protect separate sink configuration, message templates, scope data, or fields bypassing the sanitizer.
+
+## ASP.NET Core sensitive Header snapshot
+
+The optional `ServiceMantle.AspNetCore` `AddSensitiveHeaders` capability builds one immutable,
+case-insensitive startup snapshot. It always includes
+`StructuredLogSanitizerDefaults.BuiltInDeniedHeaderNames`; consumers can append valid HTTP token
+names but cannot remove a built-in. Repeated names and casing variants collapse into one entry.
+Configuration collections are enumerated once when the Host starts, and later mutations are ignored.
+
+The DI-provided `StructuredLogSanitizer` and `ServiceMantleRequestHeaderDiagnosticProjector` consume
+that snapshot. The projector copies an ASP.NET Core request Header collection into the sanitizer;
+denied single-value and multi-value Headers therefore produce only `[REDACTED]`. A request Header
+enumeration failure produces only `[SANITIZATION_FAILED]` and never falls back to the original values.
+
+This capability does not mutate `HttpRequest.Headers`, configure logging or tracing, inspect Activity
+tags, or govern third-party diagnostics. Product-specific Header names are not built in and must be
+registered by the consuming service. Runtime updates, removals, and hot reload are not supported.

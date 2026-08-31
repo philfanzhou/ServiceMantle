@@ -31,16 +31,6 @@ internal sealed class StructuredLogNamePolicy
         "cookie"
     ];
 
-    private static readonly string[] BuiltInDeniedHeaders =
-    [
-        "authorization",
-        "proxy-authorization",
-        "cookie",
-        "set-cookie",
-        "x-api-key",
-        "x-auth-token"
-    ];
-
     private readonly FrozenSet<string> allowedFields;
     private readonly FrozenSet<string> deniedFieldFragments;
     private readonly FrozenSet<string> allowedHeaders;
@@ -57,7 +47,7 @@ internal sealed class StructuredLogNamePolicy
         allowedHeaders = MaterializeHeaderNames(options.AllowedHeaderNames, []);
         deniedHeaders = MaterializeHeaderNames(
             options.DeniedHeaderNames,
-            BuiltInDeniedHeaders);
+            StructuredLogSanitizerDefaults.BuiltInDeniedHeaderNames);
         allowUnlistedFields = options.AllowUnlistedFields;
         allowUnlistedHeaders = options.AllowUnlistedHeaders;
     }
@@ -193,12 +183,7 @@ internal sealed class StructuredLogNamePolicy
         }
 
         var candidate = name.Trim();
-        if (candidate.Length > 128)
-        {
-            return false;
-        }
-
-        Span<char> buffer = stackalloc char[candidate.Length];
+        var buffer = new char[candidate.Length];
         for (var index = 0; index < candidate.Length; index++)
         {
             var character = candidate[index];
@@ -206,7 +191,7 @@ internal sealed class StructuredLogNamePolicy
             {
                 buffer[index] = (char)(character + ('a' - 'A'));
             }
-            else if (character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-')
+            else if (IsHttpTokenCharacter(character))
             {
                 buffer[index] = character;
             }
@@ -219,6 +204,12 @@ internal sealed class StructuredLogNamePolicy
         normalizedName = new string(buffer);
         return true;
     }
+
+    private static bool IsHttpTokenCharacter(char character) =>
+        character is >= 'a' and <= 'z' or
+            >= '0' and <= '9' or
+            '!' or '#' or '$' or '%' or '&' or '\'' or '*' or '+' or '-' or '.' or '^' or '_' or
+            '`' or '|' or '~';
 
     private static FrozenSet<string> MaterializeFieldNames(
         IEnumerable<string> configured,

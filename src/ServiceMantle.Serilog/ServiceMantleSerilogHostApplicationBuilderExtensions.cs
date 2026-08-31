@@ -45,7 +45,9 @@ public static class ServiceMantleSerilogHostApplicationBuilderExtensions
 
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton<ServiceMantle.Serilog.ServiceMantleSerilogMarker>();
-        builder.Services.TryAddSingleton<StructuredLogSanitizer>();
+        builder.Services.TryAddSingleton<StructuredLogSanitizer>(serviceProvider =>
+            serviceProvider.GetService<IStructuredLogSanitizerProvider>()?.Sanitizer ??
+            new StructuredLogSanitizer());
         builder.Services.TryAddSingleton<
             ServiceMantle.Serilog.IServiceMantleStructuredLogSanitizer,
             ServiceMantle.Serilog.ServiceMantleStructuredLogSanitizer>();
