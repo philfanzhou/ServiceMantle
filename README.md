@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -1045,6 +1045,32 @@ denied single-value and multi-value Headers both become `[REDACTED]`.
 The registry has no runtime update or removal API. Product-specific names must be added explicitly.
 It does not mutate the original request Headers and does not govern third-party logging providers,
 message templates, Activity tags, tracing exporters, or any path that bypasses the projector.
+
+The optional `ServiceMantle.Serilog` package installs a Serilog Console pipeline whose structured
+properties always pass through that sanitizer:
+
+```csharp
+var builder = Host.CreateApplicationBuilder(args);
+
+builder.AddServiceMantleSerilog(options =>
+{
+    options.MinimumLevel = "Information";
+    options.EnricherNames = ["FromLogContext"];
+    options.FlushTimeout = TimeSpan.FromSeconds(2);
+});
+```
+
+The default output template is deterministic and includes structured properties. Equivalent
+normalized registrations are idempotent. Invalid option values, conflicting registrations, or an
+existing Serilog configuration fail when the Host starts, using only stable field names and error
+codes. Public options cannot disable or bypass structured-property sanitization. Sanitizer failures
+emit `[SANITIZATION_FAILED]`, and controlled shutdown or an observable unhandled exception starts a
+bounded, exactly-once flush.
+
+Registration removes existing `Microsoft.Extensions.Logging` providers so that another Console
+provider cannot receive unsanitized properties. Add any intentional non-Console providers after this
+extension. This package does not sanitize caller-interpolated free text in message templates and
+cannot flush after forced termination such as `SIGKILL`, a host crash, or stack overflow.
 
 ## Frontend note
 
