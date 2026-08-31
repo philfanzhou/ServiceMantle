@@ -1,5 +1,8 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle;
@@ -322,6 +325,53 @@ public static class ServiceMantleServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.TryAddSingleton<ServiceMantleSecurityResponseHeadersRegistration>();
+        return builder;
+    }
+
+    /// <summary>Adds the isolated setup and management named rate-limit policies.</summary>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="configure">Optionally configures the two sliding-window policies.</param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// The policies count requests within the current process only, never queue rejected requests,
+    /// and must be applied explicitly by name. This registration does not add a global limiter.
+    /// Equivalent repeated registrations are idempotent; invalid or conflicting settings fail when
+    /// the host starts. Place ASP.NET Core Rate Limiting after Authentication and before
+    /// Authorization when applying the management policy.
+    /// </remarks>
+    public static ServiceMantleBuilder AddRateLimiting(
+        this ServiceMantleBuilder builder,
+        Action<ServiceMantleRateLimitingOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var options = new ServiceMantleRateLimitingOptions();
+        configure?.Invoke(options);
+        var firstRegistration = !builder.Services.Any(descriptor =>
+            descriptor.ServiceType == typeof(ServiceMantleRateLimitingRegistration));
+        builder.Services.AddSingleton(new ServiceMantleRateLimitingRegistration(options));
+        if (!firstRegistration)
+        {
+            return builder;
+        }
+
+        builder.Services.TryAddSingleton<IManagementClaimsParser, ManagementClaimsParser>();
+        builder.Services.TryAddSingleton<IManagementCurrentOperatorResolver, ManagementCurrentOperatorResolver>();
+        builder.Services.TryAddSingleton<ServiceMantleRateLimitingSnapshotProvider>();
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IHostedService,
+            ServiceMantleRateLimitingStartupValidator>());
+        builder.Services.AddRateLimiter(rateLimiterOptions =>
+        {
+            rateLimiterOptions.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            rateLimiterOptions.OnRejected = ServiceMantleRateLimitingPolicy.OnRejectedAsync;
+            rateLimiterOptions.AddPolicy<string>(
+                ServiceMantleRateLimitingDefaults.SetupPolicyName,
+                ServiceMantleRateLimitingPolicy.SetupPartition);
+            rateLimiterOptions.AddPolicy<string>(
+                ServiceMantleRateLimitingDefaults.ManagementPolicyName,
+                ServiceMantleRateLimitingPolicy.ManagementPartition);
+        });
         return builder;
     }
 
