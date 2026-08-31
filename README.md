@@ -735,14 +735,21 @@ Current and planned provider packages are:
   and explicitly creates a missing target without changing an existing database.
 - `ServiceMantle.Database.MariaDb` validates MariaDB 10.11+ settings and server identity, observes
   server-database targets, and explicitly creates a missing target without changing an existing database.
-- `ServiceMantle.Database.Oracle`
+- `ServiceMantle.Database.Oracle` validates Oracle 19c+ single-instance PDB password-user
+  settings, observes a local user and its same-named schema, and can explicitly create a missing
+  user with only `CREATE SESSION` while preserving every pre-existing user.
 - `ServiceMantle.Database.SqlServer` validates SQL Server 2019+ settings, observes server-database
   targets, and explicitly creates a missing target without changing an existing database.
 
 The PostgreSQL provider validates configuration and target connectivity. It also provides session-level advisory lock capability for safe multi-instance migration coordination.
 
 MySQL and MariaDB keep independent provider IDs even if they can share lower-level behavior.
-Oracle is planned as a `ServerSchema`-style target provider; SQL Server and SQLite follow their own target semantics.
+Oracle uses a `ServerSchema` target: the canonical local PDB user and its same-named schema are one
+identity. Preparation requires an unpooled administrator connection to the same `Data Source` and
+direct `CREATE USER`, `DROP USER`, and `CREATE SESSION WITH ADMIN OPTION` privileges. It does not
+grant quota or schema-object DDL privileges, repair an existing account, or support RAC, cloud,
+root/common users, wallets, tokens, external authentication, proxy authentication, or non-CDB
+deployments. SQL Server and SQLite follow their own target semantics.
 
 ## Database target preparation
 

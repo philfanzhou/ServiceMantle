@@ -23,7 +23,7 @@ jobs:
   build-test-pack:
     name: Build, test, and pack
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       PACKAGE_VERSION: 0.0.0-ci.${{ github.run_number }}.${{ github.run_attempt }}
     steps:
@@ -61,6 +61,59 @@ jobs:
           -- build
           --version $PACKAGE_VERSION
           --commit ${{ github.sha }}
+
+      - name: Start pinned Oracle Database Free
+        shell: bash
+        run: |
+          set -euo pipefail
+          oracle_password="Sm$(openssl rand -hex 10)"
+          echo "::add-mask::$oracle_password"
+          image="container-registry.oracle.com/database/free:23.26.1.0-lite-amd64@sha256:ef1a38683b3783b80e033be6b8f2cb31299dcba5430514ec96e2e8f4f0307d15"
+          docker pull "$image"
+          docker run --detach --name servicemantle-oracle \
+            --publish 127.0.0.1::1521 \
+            --env ORACLE_PWD="$oracle_password" \
+            "$image"
+
+          oracle_port="$(docker port servicemantle-oracle 1521/tcp | sed -E 's/.*:([0-9]+)$/\1/')"
+          if [[ ! "$oracle_port" =~ ^[0-9]+$ ]]; then
+            echo "Oracle container did not publish a valid listener port." >&2
+            exit 1
+          fi
+
+          for attempt in $(seq 1 90); do
+            container_state="$(docker inspect --format '{{.State.Status}}' servicemantle-oracle)"
+            health_state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' servicemantle-oracle)"
+            if [[ "$container_state" == "exited" || "$container_state" == "dead" ]]; then
+              echo "Oracle container exited before becoming healthy." >&2
+              exit 1
+            fi
+            if [[ "$health_state" == "healthy" ]]; then
+              break
+            fi
+            if [[ "$attempt" == "90" ]]; then
+              echo "Oracle container did not become healthy within 15 minutes." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+          admin_connection="User Id=system;Password=$oracle_password;Data Source=127.0.0.1:$oracle_port/FREEPDB1;Pooling=false;Enlist=false"
+          echo "::add-mask::$admin_connection"
+          echo "RUN_SERVICEMANTLE_ORACLE_TESTS=true" >> "$GITHUB_ENV"
+          echo "SERVICEMANTLE_ORACLE_ADMIN_CONNECTION_STRING=$admin_connection" >> "$GITHUB_ENV"
+
+      - name: Verify Oracle listener with ODP.NET
+        run: >-
+          dotnet test
+          --project tests/ServiceMantle.Database.Oracle.Tests/ServiceMantle.Database.Oracle.Tests.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          --filter-method ServiceMantle.Database.Oracle.Tests.OracleRealDatabaseTests.Real_database_environment_is_reachable
+          --minimum-expected-tests 1
+          --zero-tests-policy strict
+          --fail-skips on
 
       - name: Test registered projects
         run: >-
@@ -104,3 +157,11 @@ jobs:
             artifacts/packages/*.snupkg
           if-no-files-found: error
           retention-days: 14
+
+      - name: Stop Oracle Database Free
+        if: always()
+        shell: bash
+        run: |
+          if docker inspect servicemantle-oracle >/dev/null 2>&1; then
+            docker rm --force servicemantle-oracle >/dev/null
+          fi

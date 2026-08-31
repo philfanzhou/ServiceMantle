@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ServiceMantle.AspNetCore\ServiceMantle.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\src\ServiceMantle.Database.Oracle\ServiceMantle.Database.Oracle.csproj" />
+    <ProjectReference Include="..\ServiceMantle.Testing\ServiceMantle.Testing.csproj" />
+  </ItemGroup>
+
+</Project>

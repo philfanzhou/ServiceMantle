@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>ServiceMantle.Database.Oracle</RootNamespace>
+    <AssemblyName>ServiceMantle.Database.Oracle</AssemblyName>
+    <PackageId>ServiceMantle.Database.Oracle</PackageId>
+    <PackageDescription>Oracle database capabilities for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;database;oracle;bootstrap;target-preparation</PackageTags>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ServiceMantle\ServiceMantle.csproj" />
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" />
+  </ItemGroup>
+
+</Project>
