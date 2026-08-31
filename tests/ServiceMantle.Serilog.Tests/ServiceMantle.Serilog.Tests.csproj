@@ -7,11 +7,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\ServiceMantle.AspNetCore\ServiceMantle.AspNetCore.csproj" />
     <ProjectReference Include="..\..\src\ServiceMantle.Serilog\ServiceMantle.Serilog.csproj" />
   </ItemGroup>
 
