@@ -67,6 +67,22 @@
       ]
     },
     {
+      "id": "ServiceMantle.Database.MySql",
+      "project": "src/ServiceMantle.Database.MySql/ServiceMantle.Database.MySql.csproj",
+      "optional": true,
+      "dependencies": [
+        "MySqlConnector",
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Database.MySql.Tests/ServiceMantle.Database.MySql.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.OpenTelemetry",
       "project": "src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj",
       "optional": true,
