@@ -308,6 +308,26 @@ public sealed class MariaDbDatabaseTargetPreparationProviderTests
         }
     }
 
+    [Theory]
+    [InlineData(true, false, 0, (int)MariaDbDatabaseCreationProbe.ExistingDatabaseMatch.Exact)]
+    [InlineData(false, true, 0, (int)MariaDbDatabaseCreationProbe.ExistingDatabaseMatch.Missing)]
+    [InlineData(false, true, 1, (int)MariaDbDatabaseCreationProbe.ExistingDatabaseMatch.Exact)]
+    [InlineData(false, true, 2, (int)MariaDbDatabaseCreationProbe.ExistingDatabaseMatch.Exact)]
+    [InlineData(false, false, 1, (int)MariaDbDatabaseCreationProbe.ExistingDatabaseMatch.Missing)]
+    public void Existing_database_matching_follows_server_identifier_case_rules(
+        bool exactMatch,
+        bool caseFoldedMatch,
+        int lowerCaseTableNames,
+        int expectedValue)
+    {
+        Assert.Equal(
+            (MariaDbDatabaseCreationProbe.ExistingDatabaseMatch)expectedValue,
+            MariaDbDatabaseCreationProbe.ResolveExistingDatabaseMatch(
+                exactMatch,
+                caseFoldedMatch,
+                lowerCaseTableNames));
+    }
+
     private static MariaDbDatabaseTargetPreparationProvider CreateProvider(
         FakeObservationProbe? observationProbe = null,
         FakeCreationProbe? creationProbe = null) =>
