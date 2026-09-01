@@ -13,6 +13,7 @@
     <Project Path="src/ServiceMantle.OpenTelemetry.Prometheus/ServiceMantle.OpenTelemetry.Prometheus.csproj" />
     <Project Path="src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
     <Project Path="src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" />
+    <Project Path="src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ServiceMantle.Testing/ServiceMantle.Testing.csproj" />
@@ -29,5 +30,6 @@
     <Project Path="tests/ServiceMantle.OpenTelemetry.Prometheus.Tests/ServiceMantle.OpenTelemetry.Prometheus.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj" />
+    <Project Path="tests/ServiceMantle.Serilog.GrafanaLoki.Tests/ServiceMantle.Serilog.GrafanaLoki.Tests.csproj" />
   </Folder>
 </Solution>
