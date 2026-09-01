@@ -357,6 +357,37 @@ response falls back to the generic 500 before any bytes are written.
 - The middleware does not implement endpoints, authentication, authorization results, rate limiting,
   or logging sinks. Existing 401, 403, 429, and stage-gate results are unchanged.
 
+## Live and readiness endpoints
+
+The opt-in health capability exposes fixed `GET /health/live`, `GET /health/ready`, and
+`GET /health` routes. Live never resolves application state and returns 200 whenever the endpoint can
+execute. Ready succeeds only for the finite `Completed + Succeeded + Reachable` combination.
+
+```csharp
+builder.Services.AddSingleton<IServiceHealthSnapshotSource, MyHealthSnapshotSource>();
+builder.Services
+    .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+    .AddServiceMantleHealthEndpoints(options =>
+        options.ProbeTimeout = TimeSpan.FromSeconds(3));
+
+var app = builder.Build();
+app.MapServiceMantleHealthEndpoints();
+```
+
+The consumer-owned `IServiceHealthSnapshotSource` returns one immutable `ServiceHealthSnapshot` per
+request. ServiceMantle does not infer health from the migration executor and does not run migration,
+create a database, write installation state, cache snapshots, or poll in the background. The default
+probe timeout is five seconds; valid values are 100 milliseconds through 30 seconds. Internal timeout
+and source failure map to `health.probe_timeout` and `health.probe_failed`; caller request cancellation
+propagates.
+
+Ready responses use `application/json` and contain only `status`, `phase`, `migrationStatus`,
+`databaseStatus`, and `errorCode`. Probe failures use null state fields and a stable error code. The
+source is responsible for read-only, cancellation-aware sampling and for keeping its optional error
+code free of connection, exception, SQL, migration-name, or other sensitive values. The result is a
+single-process sample, not a freshness, transport-availability, or cross-instance consistency
+guarantee.
+
 ## Management identity and authorization
 
 `ServiceMantle` defines a product-agnostic management identity contract, and
