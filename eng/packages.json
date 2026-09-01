@@ -99,7 +99,10 @@
       "tests": [
         {
           "project": "tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj",
-          "environment": {}
+          "realDatabase": true,
+          "environment": {
+            "RUN_SERVICEMANTLE_SQLSERVER_TESTS": "true"
+          }
         }
       ]
     },
