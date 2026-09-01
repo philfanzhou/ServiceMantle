@@ -791,7 +791,8 @@ Current and planned provider packages are:
   user with only `CREATE SESSION` while preserving every pre-existing user. It also provides an
   exclusive `SYS.DBMS_LOCK` migration lease on a dedicated target-user session.
 - `ServiceMantle.Database.SqlServer` validates SQL Server 2019+ settings, observes server-database
-  targets, and explicitly creates a missing target without changing an existing database.
+  targets, explicitly creates a missing target without changing an existing database, and provides
+  a session-owned `sp_getapplock` migration lease.
 
 The PostgreSQL provider validates configuration and target connectivity. It also provides session-level advisory lock capability for safe multi-instance migration coordination.
 
@@ -954,7 +955,8 @@ from every other database provider. Hosts opt in explicitly:
 services
     .AddServiceMantle(serviceId, instanceId)
     .AddBootstrapDatabaseProvider<SqlServerBootstrapDatabaseProvider>()
-    .AddDatabaseTargetPreparationProvider<SqlServerDatabaseTargetPreparationProvider>();
+    .AddDatabaseTargetPreparationProvider<SqlServerDatabaseTargetPreparationProvider>()
+    .AddMigrationLockProvider<SqlServerMigrationLockProvider>();
 ```
 
 The provider accepts numeric SQL Server 2019 (major version 15) and later version declarations. It
@@ -982,11 +984,10 @@ non-exact but collation-equivalent collision under the server collation returns
 `database_target_preparation.target_conflict`; a concurrent create is rechecked under the same
 rules.
 
-This capability does not provide `sp_getapplock`, run EF Core migrations, create logins or users,
-grant permissions, configure server or storage settings, or claim equivalent behavior on Azure SQL
-and other managed services. The caller must ensure that the target and administrative connection
-strings address the same trusted server instance; cross-connection server identity verification is
-tracked separately.
+These capabilities do not run EF Core migrations, create logins or users, grant permissions,
+configure server or storage settings, or claim equivalent behavior on Azure SQL and other managed
+services. The caller must ensure that the target and administrative connection strings address the
+same trusted server instance; cross-connection server identity verification is tracked separately.
 
 ### Error codes
 
@@ -1085,7 +1086,27 @@ provider. That signal prevents orchestration from reporting success after Oracle
 because its session ended. It cannot undo consumer side effects performed before loss was detected,
 and it is not a fencing token.
 
-No lock providers for SQLite, MySQL, MariaDB, or SQL Server are implemented in this release.
+### SQL Server application lock
+
+`ServiceMantle.Database.SqlServer.Migration.SqlServerMigrationLockProvider` derives the resource as
+`ServiceMantle.Migration.` followed by the full 64-character lowercase SHA-256 digest of the
+normalized `ServiceId`. It opens the configured target database with pooling, ambient enlistment,
+and connection retries disabled, verifies SQL Server 2019+ and `DB_NAME()`, and calls
+`sys.sp_getapplock` with `Exclusive`, `Session`, and the `public` database principal. Connection,
+identity validation, and lock acquisition share one positive timeout no greater than
+`int.MaxValue` milliseconds.
+
+Return codes 0 and 1 acquire the lease; -1 is `migration.lock_timeout`, while cancellation,
+deadlock, parameter, SQL, identity, and other failures retain the documented safe cancellation or
+`migration.lock_failed` behavior. A direct application-lock permission denial is
+`migration.lock_not_supported`. The lease verifies `APPLOCK_MODE` and its session identity every
+250 milliseconds with a one-second command timeout, signalling permanent `LeaseLost` within the
+conservative five-second running-process bound. Disposal attempts `sp_releaseapplock` once and then
+closes the dedicated session as the authoritative fallback. The lock is scoped to one database,
+uses session rather than transaction ownership, is not a fencing token, and cannot undo already
+committed migration side effects.
+
+No lock providers for SQLite, MySQL, or MariaDB are implemented in this release.
 Multi-instance migrations without registered lock support fail closed with
 `migration.lock_not_supported`.
 
@@ -1235,11 +1256,12 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 With SQL Server Testcontainers (requires Docker on a supported Linux/AMD64 host):
 
 ```bash
+RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Database.SqlServer.Tests -c Release
 RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests -c Release
 ```
 
 To override the SQL Server image:
 
 ```bash
-SERVICEMANTLE_SQLSERVER_IMAGE=mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04 RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests -c Release
+SERVICEMANTLE_SQLSERVER_IMAGE=mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04 RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Database.SqlServer.Tests -c Release
 ```
