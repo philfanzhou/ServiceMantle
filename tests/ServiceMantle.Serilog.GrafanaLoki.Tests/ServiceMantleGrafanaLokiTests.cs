@@ -530,7 +530,7 @@ public sealed class ServiceMantleGrafanaLokiTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Host_shutdown_cancellation_reaches_the_single_drain_for_both_registration_orders(
+    public async Task Host_shutdown_cancellation_preempts_base_flush_for_both_registration_orders(
         bool lokiRegisteredFirst)
     {
         var handler = new IgnoringCancellationHandler(HttpStatusCode.NoContent);
@@ -547,7 +547,7 @@ public sealed class ServiceMantleGrafanaLokiTests
             options.ShutdownDrainTimeout = TimeSpan.FromSeconds(30);
         });
         void RegisterSerilog() => builder.AddServiceMantleSerilog(options =>
-            options.FlushTimeout = TimeSpan.FromMilliseconds(100));
+            options.FlushTimeout = TimeSpan.FromSeconds(5));
 
         if (lokiRegisteredFirst)
         {
@@ -568,6 +568,7 @@ public sealed class ServiceMantleGrafanaLokiTests
             TimeSpan.FromSeconds(2),
             TestContext.Current.CancellationToken);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(25));
+        var stopwatch = Stopwatch.StartNew();
 
         var stopTask = host.StopAsync(cancellation.Token);
         var completed = await Task.WhenAny(
@@ -578,9 +579,13 @@ public sealed class ServiceMantleGrafanaLokiTests
         await handler.Completed.Task.WaitAsync(
             TimeSpan.FromSeconds(2),
             TestContext.Current.CancellationToken);
+        stopwatch.Stop();
 
         var diagnostics = host.Services.GetRequiredService<ServiceMantleGrafanaLokiDiagnostics>();
         Assert.Same(stopTask, completed);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromMilliseconds(750),
+            $"Host shutdown took {stopwatch.Elapsed} before cancellation reached the Loki drain.");
         Assert.Equal(1, diagnostics.DrainCancellationCount);
         Assert.Equal(0, diagnostics.DrainTimeoutCount);
     }

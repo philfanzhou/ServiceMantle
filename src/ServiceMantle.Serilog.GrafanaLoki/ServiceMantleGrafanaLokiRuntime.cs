@@ -24,8 +24,10 @@ internal sealed class ServiceMantleGrafanaLokiRuntime
 internal sealed class ServiceMantleGrafanaLokiLifecycle(
     IServiceProvider serviceProvider,
     ServiceMantleGrafanaLokiConfigurationProvider configurationProvider,
-    ServiceMantleGrafanaLokiRuntime runtime) : IHostedService
+    ServiceMantleGrafanaLokiRuntime runtime) : IHostedLifecycleService
 {
+    public Task StartingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -48,5 +50,12 @@ internal sealed class ServiceMantleGrafanaLokiLifecycle(
         return Task.CompletedTask;
     }
 
+    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppingAsync(CancellationToken cancellationToken) =>
+        runtime.StopAsync(cancellationToken);
+
     public Task StopAsync(CancellationToken cancellationToken) => runtime.StopAsync(cancellationToken);
+
+    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
