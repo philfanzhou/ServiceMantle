@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle;
 using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Http;
 using ServiceMantle.Logging;
@@ -179,6 +180,28 @@ public static class ServiceMantleServiceCollectionExtensions
 
         builder.Services.TryAddScoped<IDatabaseMigrationExecutor, TExecutor>();
         builder.Services.TryAddScoped<DatabaseMigrationOrchestrator>();
+        return builder;
+    }
+
+    /// <summary>Adds the fixed ServiceMantle live and readiness endpoint capability.</summary>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="configure">An optional bounded probe-timeout configuration.</param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// The consuming service separately registers one <see cref="IServiceHealthSnapshotSource"/>.
+    /// The live endpoint does not resolve that source; readiness fails closed when it is absent.
+    /// </remarks>
+    public static ServiceMantleBuilder AddServiceMantleHealthEndpoints(
+        this ServiceMantleBuilder builder,
+        Action<ServiceMantleHealthOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        var options = new ServiceMantleHealthOptions();
+        configure?.Invoke(options);
+        builder.Services.AddSingleton(new ServiceMantleHealthRegistration(options.ProbeTimeout));
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IHostedService,
+            ServiceMantleHealthStartupValidator>());
         return builder;
     }
 

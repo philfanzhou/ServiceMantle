@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, the optional bounded Grafana Loki sink, core OpenTelemetry instrumentation, the optional OTLP trace and metric exporter, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, additional telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, the optional bounded Grafana Loki sink, core OpenTelemetry instrumentation, the optional OTLP trace and metric exporter, the isolated authorized Prometheus endpoint, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, additional telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -127,6 +127,49 @@ shutdown belong to the pinned upstream exporter and OpenTelemetry SDK. The bound
 guarantee delivery, exactly-once export, or loss-free operation during network failures. This package
 does not export logs, configure mTLS certificate lifecycles, run a collector, or own the consuming
 application's complete telemetry pipeline.
+
+## Authorized Prometheus endpoint
+
+Install the optional `ServiceMantle.OpenTelemetry.Prometheus` package to expose metrics from meters
+already selected by the consuming host. The capability is disabled by default and requires an
+existing authorization policy when enabled:
+
+```csharp
+builder.Services.AddAuthorization(options =>
+    options.AddPolicy("metrics.read", policy =>
+        policy.RequireAuthenticatedUser().RequireClaim("scope", "metrics")));
+
+builder.Services
+    .AddServiceMantle(
+        ServiceId.Parse("catalog"),
+        InstanceId.Parse("catalog-01"))
+    .AddOpenTelemetryPrometheusEndpoint(options =>
+    {
+        options.Enabled = true;
+        options.AuthorizationPolicyName = "metrics.read";
+        options.EndpointPath = "/metrics";
+    });
+
+var app = builder.Build();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapServiceMantlePrometheusEndpoint();
+```
+
+The endpoint accepts only authorized `GET` and `HEAD` requests on one exact absolute,
+single-segment path. It returns the content type produced by the official
+`OpenTelemetry.Exporter.Prometheus.AspNetCore` 1.18.0-beta.1 exporter. Scrape responses are limited
+to 4 MiB and four concurrent requests; excess work returns an empty `503` response. Request
+cancellation and host shutdown are propagated to the response pipeline, and a stopping host rejects
+new scrapes. Invalid paths, missing policies, duplicate mappings, route collisions, and conflicting
+registrations fail when the host starts.
+
+ServiceMantle disables exporter-generated scope and target-info labels and does not add label mapping
+options. It does not add route, service identity, tenant, user, trace/span identity, exception text,
+or request values as labels. This boundary does not sanitize or constrain meters, instruments, or
+labels registered by the consuming service. The package does not create an authentication scheme or
+authorization policy, configure a push gateway, provide storage, alerts, or dashboards, or guarantee
+binary compatibility with later prerelease exporter versions.
 
 ## Explicit forwarded-header trust
 
@@ -356,6 +399,37 @@ response falls back to the generic 500 before any bytes are written.
   the already-sent status, headers, and body unchanged.
 - The middleware does not implement endpoints, authentication, authorization results, rate limiting,
   or logging sinks. Existing 401, 403, 429, and stage-gate results are unchanged.
+
+## Live and readiness endpoints
+
+The opt-in health capability exposes fixed `GET /health/live`, `GET /health/ready`, and
+`GET /health` routes. Live never resolves application state and returns 200 whenever the endpoint can
+execute. Ready succeeds only for the finite `Completed + Succeeded + Reachable` combination.
+
+```csharp
+builder.Services.AddSingleton<IServiceHealthSnapshotSource, MyHealthSnapshotSource>();
+builder.Services
+    .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+    .AddServiceMantleHealthEndpoints(options =>
+        options.ProbeTimeout = TimeSpan.FromSeconds(3));
+
+var app = builder.Build();
+app.MapServiceMantleHealthEndpoints();
+```
+
+The consumer-owned `IServiceHealthSnapshotSource` returns one immutable `ServiceHealthSnapshot` per
+request. ServiceMantle does not infer health from the migration executor and does not run migration,
+create a database, write installation state, cache snapshots, or poll in the background. The default
+probe timeout is five seconds; valid values are 100 milliseconds through 30 seconds. Internal timeout
+and source failure map to `health.probe_timeout` and `health.probe_failed`; caller request cancellation
+propagates.
+
+Ready responses use `application/json` and contain only `status`, `phase`, `migrationStatus`,
+`databaseStatus`, and `errorCode`. Probe failures use null state fields and a stable error code. The
+source is responsible for read-only, cancellation-aware sampling and for keeping its optional error
+code free of connection, exception, SQL, migration-name, or other sensitive values. The result is a
+single-process sample, not a freshness, transport-availability, or cross-instance consistency
+guarantee.
 
 ## Management identity and authorization
 

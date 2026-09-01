@@ -177,6 +177,23 @@
       ]
     },
     {
+      "id": "ServiceMantle.OpenTelemetry.Prometheus",
+      "project": "src/ServiceMantle.OpenTelemetry.Prometheus/ServiceMantle.OpenTelemetry.Prometheus.csproj",
+      "optional": true,
+      "dependencies": [
+        "OpenTelemetry.Exporter.Prometheus.AspNetCore",
+        "ServiceMantle.AspNetCore",
+        "ServiceMantle.OpenTelemetry"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.OpenTelemetry.Prometheus.Tests/ServiceMantle.OpenTelemetry.Prometheus.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.Serilog",
       "project": "src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
       "optional": true,
