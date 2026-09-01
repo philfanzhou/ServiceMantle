@@ -80,6 +80,23 @@ The core package defines the contract and orchestration logic without any databa
      - Closes connection (session lock released by PostgreSQL)
      - Suppresses any errors to avoid masking primary exceptions
 
+### Oracle Provider (`ServiceMantle.Database.Oracle.Migration`)
+
+**`OracleMigrationLockProvider`** implements `IDatabaseMigrationLockProvider`:
+
+1. It derives `ServiceMantle.Migration.` plus the full lowercase SHA-256 digest of the normalized
+   `ServiceId`, avoiding the collision-prone caller-assigned numeric lock-ID range.
+2. It opens a dedicated target-user session with pooling and ambient enlistment disabled, validates
+   the supported runtime topology, allocates the handle with
+   `DBMS_LOCK.ALLOCATE_UNIQUE_AUTONOMOUS`, and requests `X_MODE` using the remaining bounded timeout
+   and `release_on_commit => FALSE`.
+3. A missing direct `EXECUTE ON SYS.DBMS_LOCK` grant maps to `migration.lock_not_supported`;
+   `REQUEST` code 1 maps to `migration.lock_timeout`; codes 2 through 5 and other operational
+   failures map to `migration.lock_failed`; caller cancellation remains `OperationCanceledException`.
+4. The acquired lease probes its dedicated session every 250 milliseconds with a one-second command
+   timeout and uses the provider-neutral `LeaseLost` signal. Disposal explicitly calls
+   `DBMS_LOCK.RELEASE` and then closes the unpooled session.
+
 ## Orchestration Flow
 
 **The authority flow is:**
@@ -169,6 +186,11 @@ numbers recorded here, since counts drift as tests are added.
 **`ServiceMantle.Database.PostgreSql.Tests.Migration`:**
 - `ServiceIdToLockKeyDeriverTests` - lock key derivation is deterministic, differs per ServiceId, matches fixed SHA-256 vectors, and rejects null input
 
+**`ServiceMantle.Database.Oracle.Tests.Migration`:**
+- `OracleMigrationLockProviderTests` - full-digest fixed vectors, target-session isolation, timeout
+  and caller cancellation precedence, every `REQUEST` return-code mapping, missing direct privilege,
+  safe failures, explicit release, cleanup, and lease-loss signalling
+
 ### Real PostgreSQL tests (Testcontainers, require Docker, run in GitHub Actions CI)
 
 **`PostgreSqlMigrationLockConcurrencyTests`** is enabled via environment variable:
@@ -203,6 +225,16 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 - Real `PostgreSqlMigrationLockProvider` using PostgreSQL advisory locks (no fake/in-memory locking in these tests)
 - Real `DatabaseMigrationOrchestrator` orchestrating both instances
 
+### Real Oracle tests (pinned FREEPDB1, require the shared Oracle environment)
+
+`OracleMigrationLockRealDatabaseTests` uses the hard-fail environment registered in
+`eng/packages.json`. It proves same-service exclusion, different-service independence,
+release/reacquire and unpooled connection cleanup, bounded timeout, caller cancellation, direct
+package-permission denial, termination before acquisition, deterministic termination during initial
+inspection/execution/final inspection, and two-orchestrator lock-held recheck with exactly one real
+state update. CI and ReleaseTool require the environment, fail on missing variables, skips, zero
+discovered tests, container or connection failure, and use the ADR-pinned Oracle Database Free image.
+
 ## Limitations and Future Work
 
 ### Current Scope (Implemented)
@@ -217,7 +249,7 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 
 ### Out of Scope (Not Implemented)
 
-- Other database providers (MySQL, MariaDB, Oracle, SQL Server, SQLite)
+- Other database lock providers (MySQL, MariaDB, SQL Server, SQLite)
 - Database creation or target preparation (see the separate "Database target preparation" section in `README.md`, added independently of this migration orchestration work)
 - Configuration tables or audit tables
 - Setup code or management admin features
