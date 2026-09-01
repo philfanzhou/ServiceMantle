@@ -895,8 +895,9 @@ space. `ObserveAsync` only attempts a target connection and never invokes creati
 uses the caller's administrative connection only for that call, clears its database, disables
 pooling and ambient transaction enlistment, and creates a missing database with `utf8mb4` and
 `utf8mb4_0900_ai_ci`. An exact existing database is returned as `AlreadyExists` without altering
-its character set, collation, grants, or contents. On servers that fold database-name case,
-a differently-cased collision fails closed with `database_target_preparation.target_conflict`.
+its character set, collation, grants, or contents. When `lower_case_table_names` is `1` or `2`, a
+differently-cased name identifies the same logical database and is also returned as `AlreadyExists`;
+when it is `0`, database-name matching remains case-sensitive.
 MySQL returns `DatabaseAccessDenied` for both existing and missing database names when the account
 cannot see either target, so that observation reports `PermissionDenied` with
 `TargetExists == null` instead of guessing that the target exists.

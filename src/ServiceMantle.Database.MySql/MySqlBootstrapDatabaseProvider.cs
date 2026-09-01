@@ -175,17 +175,22 @@ internal sealed class MySqlBootstrapProbe : IMySqlBootstrapProbe
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT DATABASE()";
+            command.CommandText =
+                "SELECT @@lower_case_table_names, " +
+                "BINARY DATABASE() = BINARY @databaseName, " +
+                "LOWER(DATABASE()) = LOWER(@databaseName)";
+            command.Parameters.AddWithValue("@databaseName", connectionString.Database);
             command.CommandTimeout = commandTimeoutSeconds;
-            var selectedDatabase = (await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))?
-                .ToString();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return MySqlProbeOutcome.ValidationFailed;
+            }
 
-            return string.Equals(
-                selectedDatabase,
-                connectionString.Database,
-                StringComparison.Ordinal)
-                ? MySqlProbeOutcome.Success
-                : MySqlProbeOutcome.TargetIdentityMismatch;
+            var lowerCaseTableNames = reader.GetInt32(0);
+            var exactMatch = !reader.IsDBNull(1) && reader.GetBoolean(1);
+            var caseFoldedMatch = !reader.IsDBNull(2) && reader.GetBoolean(2);
+            return ResolveTargetIdentityOutcome(exactMatch, caseFoldedMatch, lowerCaseTableNames);
         }
         catch (Exception exception)
         {
@@ -199,6 +204,17 @@ internal sealed class MySqlBootstrapProbe : IMySqlBootstrapProbe
             return MySqlProbeFailureClassifier.Classify(exception);
         }
     }
+
+    internal static MySqlProbeOutcome ResolveTargetIdentityOutcome(
+        bool exactMatch,
+        bool caseFoldedMatch,
+        int lowerCaseTableNames) =>
+        MySqlDatabaseTarget.MatchesDatabaseIdentifierRules(
+            exactMatch,
+            caseFoldedMatch,
+            lowerCaseTableNames)
+            ? MySqlProbeOutcome.Success
+            : MySqlProbeOutcome.TargetIdentityMismatch;
 }
 
 internal static class MySqlProbeFailureClassifier

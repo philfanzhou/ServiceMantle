@@ -64,4 +64,10 @@ internal static class MySqlDatabaseTarget
 
     internal static string QuoteIdentifier(string identifier) =>
         $"`{identifier.Replace("`", "``", StringComparison.Ordinal)}`";
+
+    internal static bool MatchesDatabaseIdentifierRules(
+        bool exactMatch,
+        bool caseFoldedMatch,
+        int lowerCaseTableNames) =>
+        exactMatch || (lowerCaseTableNames is 1 or 2 && caseFoldedMatch);
 }

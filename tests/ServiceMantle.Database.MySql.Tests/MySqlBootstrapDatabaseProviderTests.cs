@@ -184,6 +184,26 @@ public sealed class MySqlBootstrapDatabaseProviderTests
     };
 
     [Theory]
+    [InlineData(true, false, 0, (int)MySqlProbeOutcome.Success)]
+    [InlineData(false, true, 0, (int)MySqlProbeOutcome.TargetIdentityMismatch)]
+    [InlineData(false, true, 1, (int)MySqlProbeOutcome.Success)]
+    [InlineData(false, true, 2, (int)MySqlProbeOutcome.Success)]
+    [InlineData(false, false, 1, (int)MySqlProbeOutcome.TargetIdentityMismatch)]
+    public void Target_identity_follows_server_database_case_rules(
+        bool exactMatch,
+        bool caseFoldedMatch,
+        int lowerCaseTableNames,
+        int expectedValue)
+    {
+        Assert.Equal(
+            (MySqlProbeOutcome)expectedValue,
+            MySqlBootstrapProbe.ResolveTargetIdentityOutcome(
+                exactMatch,
+                caseFoldedMatch,
+                lowerCaseTableNames));
+    }
+
+    [Theory]
     [MemberData(nameof(ErrorClassifications))]
     public void Failure_classifier_maps_only_stable_error_categories(
         MySqlErrorCode errorCode,
