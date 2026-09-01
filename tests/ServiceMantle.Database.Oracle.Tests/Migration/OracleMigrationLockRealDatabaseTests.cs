@@ -367,8 +367,22 @@ public sealed class OracleMigrationLockRealDatabaseTests
         await ExecuteAdminAsync(admin, $"GRANT CREATE SESSION TO \"{user}\"");
         if (grantDbmsLock)
         {
-            await ExecuteAdminAsync(admin, $"GRANT EXECUTE ON SYS.DBMS_LOCK TO \"{user}\"");
+            await ExecuteAdminAsync(
+                CreateSysDbaConnectionString(admin),
+                $"GRANT EXECUTE ON SYS.DBMS_LOCK TO \"{user}\"");
         }
+    }
+
+    private static string CreateSysDbaConnectionString(string admin)
+    {
+        var builder = new OracleConnectionStringBuilder(admin)
+        {
+            UserID = "sys",
+            Pooling = false,
+            Enlist = "false"
+        };
+        builder["DBA Privilege"] = "SYSDBA";
+        return builder.ConnectionString;
     }
 
     private static async Task CreateMigrationStateAsync(string admin, string user, string table)
