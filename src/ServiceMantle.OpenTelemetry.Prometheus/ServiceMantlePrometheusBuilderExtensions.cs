@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.OpenTelemetry.Prometheus;
@@ -46,16 +48,13 @@ public static class ServiceMantlePrometheusBuilderExtensions
             return builder;
         }
 
-        builder.Services.AddOpenTelemetry().WithMetrics(metrics => metrics.AddPrometheusExporter(
-            exporterOptions =>
-            {
-                exporterOptions.ScrapeEndpointPath = ServiceMantlePrometheusDefaults.EndpointPath;
-                exporterOptions.MaxScrapeResponseSizeBytes =
-                    ServiceMantlePrometheusDefaults.MaximumResponseSizeBytes;
-                exporterOptions.ScopeInfoEnabled = false;
-                exporterOptions.TargetInfoEnabled = false;
-                exporterOptions.ResourceConstantLabels = null;
-            }));
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IPostConfigureOptions<PrometheusAspNetCoreOptions>,
+            ServiceMantlePrometheusExporterOptionsPolicy>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IValidateOptions<PrometheusAspNetCoreOptions>,
+            ServiceMantlePrometheusExporterOptionsPolicy>());
+        builder.Services.AddOpenTelemetry().WithMetrics(metrics => metrics.AddPrometheusExporter());
 
         return builder;
     }

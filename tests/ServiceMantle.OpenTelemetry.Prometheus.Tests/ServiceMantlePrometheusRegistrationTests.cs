@@ -76,12 +76,19 @@ public sealed class ServiceMantlePrometheusRegistrationTests
         "/one/two",
         "/metric?query",
         "/metric#fragment",
+        "/metric%3Fquery",
+        "/metric%23fragment",
         "/metric..backup",
         "/metric%2fother",
+        "/metric%252fother",
         "/metric%5Cother",
+        "/metric%255Cother",
         "/%2e%2e",
+        "/%252e%252e",
         "/metric%",
+        "/metric%25",
         "/{metric}",
+        "/metric%257Bvalue%257D",
         "/metric\\other",
         "/metric other",
     };
@@ -496,19 +503,59 @@ public sealed class ServiceMantlePrometheusRegistrationTests
     [Fact]
     public async Task Fixed_official_exporter_options_are_applied()
     {
-        await using var application = CreateApplication(Enable);
+        var builder = CreateBuilder();
+        RegisterAuthorization(builder.Services);
+        builder.Services
+            .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+            .AddOpenTelemetryPrometheusEndpoint(Enable);
+        builder.Services.Configure<PrometheusAspNetCoreOptions>(options =>
+        {
+            options.ScrapeEndpointPath = "/consumer-path";
+            options.MaxScrapeResponseSizeBytes =
+                ServiceMantlePrometheusDefaults.MaximumResponseSizeBytes + 1;
+            options.ScopeInfoEnabled = true;
+            options.TargetInfoEnabled = true;
+            options.ResourceConstantLabels = static _ => true;
+        });
+        await using var application = builder.Build();
+        application.UseAuthentication();
+        application.UseAuthorization();
         application.MapServiceMantlePrometheusEndpoint();
         await application.StartAsync(TestContext.Current.CancellationToken);
 
         var options = application.Services
             .GetRequiredService<IOptionsMonitor<PrometheusAspNetCoreOptions>>()
             .CurrentValue;
+        Assert.Equal(ServiceMantlePrometheusDefaults.EndpointPath, options.ScrapeEndpointPath);
         Assert.Equal(
             ServiceMantlePrometheusDefaults.MaximumResponseSizeBytes,
             options.MaxScrapeResponseSizeBytes);
         Assert.False(options.ScopeInfoEnabled);
         Assert.False(options.TargetInfoEnabled);
         Assert.Null(options.ResourceConstantLabels);
+    }
+
+    [Fact]
+    public async Task Later_post_configuration_cannot_bypass_fixed_exporter_options()
+    {
+        var builder = CreateBuilder();
+        RegisterAuthorization(builder.Services);
+        builder.Services
+            .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+            .AddOpenTelemetryPrometheusEndpoint(Enable);
+        builder.Services.PostConfigure<PrometheusAspNetCoreOptions>(options =>
+            options.MaxScrapeResponseSizeBytes =
+                ServiceMantlePrometheusDefaults.MaximumResponseSizeBytes + 1);
+        await using var application = builder.Build();
+        application.UseAuthentication();
+        application.UseAuthorization();
+
+        var exception = Assert.Throws<OptionsValidationException>(() =>
+            application.MapServiceMantlePrometheusEndpoint());
+
+        Assert.Contains(
+            WellKnownServiceMantlePrometheusErrorCodes.ExporterOptionsConflict,
+            exception.Failures);
     }
 
     private static WebApplication CreateApplication(

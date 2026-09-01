@@ -18,6 +18,9 @@ public static class WellKnownServiceMantlePrometheusErrorCodes
     /// <summary>Multiple registrations do not describe the same effective endpoint.</summary>
     public const string ConflictingRegistration = "prometheus.conflicting_registration";
 
+    /// <summary>The effective exporter options do not preserve the fixed endpoint guarantees.</summary>
+    public const string ExporterOptionsConflict = "prometheus.exporter_options_conflict";
+
     /// <summary>The enabled endpoint was not mapped exactly once.</summary>
     public const string EndpointMappingRequired = "prometheus.endpoint_mapping_required";
 }

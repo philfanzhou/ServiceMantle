@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using OpenTelemetry.Exporter;
 
 namespace ServiceMantle.OpenTelemetry.Prometheus;
 
@@ -99,27 +101,43 @@ internal sealed class ServiceMantlePrometheusSnapshotProvider(
     {
         normalized = string.Empty;
         if (path is not { Length: > 1 } ||
-            path[0] != '/' ||
-            path.Contains('?', StringComparison.Ordinal) ||
-            path.Contains('#', StringComparison.Ordinal) ||
-            !HasValidPercentEncoding(path))
+            path[0] != '/')
         {
             return false;
         }
 
-        try
+        normalized = path;
+        while (normalized.Contains('%', StringComparison.Ordinal))
         {
-            normalized = Uri.UnescapeDataString(path);
-        }
-        catch (UriFormatException)
-        {
-            return false;
+            if (!HasValidPercentEncoding(normalized))
+            {
+                return false;
+            }
+
+            string decoded;
+            try
+            {
+                decoded = Uri.UnescapeDataString(normalized);
+            }
+            catch (UriFormatException)
+            {
+                return false;
+            }
+
+            if (string.Equals(decoded, normalized, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            normalized = decoded;
         }
 
         return normalized is { Length: > 1 } &&
             normalized[0] == '/' &&
             normalized[^1] != '/' &&
             normalized.AsSpan(1).IndexOf('/') < 0 &&
+            !normalized.Contains('?', StringComparison.Ordinal) &&
+            !normalized.Contains('#', StringComparison.Ordinal) &&
             !normalized.Contains('\\', StringComparison.Ordinal) &&
             !normalized.Contains("..", StringComparison.Ordinal) &&
             !normalized.Contains('{', StringComparison.Ordinal) &&
@@ -153,6 +171,55 @@ internal sealed class ServiceMantlePrometheusSnapshotProvider(
     private static ServiceMantlePrometheusConfigurationException Failure(
         string errorCode,
         string fieldName) => new(errorCode, fieldName);
+}
+
+internal sealed class ServiceMantlePrometheusExporterOptionsPolicy :
+    IPostConfigureOptions<PrometheusAspNetCoreOptions>,
+    IValidateOptions<PrometheusAspNetCoreOptions>
+{
+    public void PostConfigure(string? name, PrometheusAspNetCoreOptions options)
+    {
+        if (IsDefaultOptionsName(name))
+        {
+            ApplyFixedValues(options);
+        }
+    }
+
+    public ValidateOptionsResult Validate(string? name, PrometheusAspNetCoreOptions options)
+    {
+        if (!IsDefaultOptionsName(name))
+        {
+            return ValidateOptionsResult.Skip;
+        }
+
+        return HasFixedValues(options)
+            ? ValidateOptionsResult.Success
+            : ValidateOptionsResult.Fail(
+                WellKnownServiceMantlePrometheusErrorCodes.ExporterOptionsConflict);
+    }
+
+    private static void ApplyFixedValues(PrometheusAspNetCoreOptions options)
+    {
+        options.ScrapeEndpointPath = ServiceMantlePrometheusDefaults.EndpointPath;
+        options.MaxScrapeResponseSizeBytes = ServiceMantlePrometheusDefaults.MaximumResponseSizeBytes;
+        options.ScopeInfoEnabled = false;
+        options.TargetInfoEnabled = false;
+        options.ResourceConstantLabels = null;
+    }
+
+    private static bool HasFixedValues(PrometheusAspNetCoreOptions options) =>
+        string.Equals(
+            options.ScrapeEndpointPath,
+            ServiceMantlePrometheusDefaults.EndpointPath,
+            StringComparison.Ordinal) &&
+        options.MaxScrapeResponseSizeBytes == ServiceMantlePrometheusDefaults.MaximumResponseSizeBytes &&
+        !options.ScopeInfoEnabled &&
+        !options.TargetInfoEnabled &&
+        options.ResourceConstantLabels is null;
+
+    private static bool IsDefaultOptionsName(string? name) =>
+        name is null ||
+        string.Equals(name, Microsoft.Extensions.Options.Options.DefaultName, StringComparison.Ordinal);
 }
 
 internal sealed class ServiceMantlePrometheusEndpointState(IHostApplicationLifetime lifetime)
