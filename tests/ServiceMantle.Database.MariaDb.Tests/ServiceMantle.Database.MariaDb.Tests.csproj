@@ -13,11 +13,13 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Testcontainers.MariaDb" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ServiceMantle.AspNetCore\ServiceMantle.AspNetCore.csproj" />
     <ProjectReference Include="..\..\src\ServiceMantle.Database.MariaDb\ServiceMantle.Database.MariaDb.csproj" />
+    <ProjectReference Include="..\ServiceMantle.Testing\ServiceMantle.Testing.csproj" />
   </ItemGroup>
 
 </Project>
