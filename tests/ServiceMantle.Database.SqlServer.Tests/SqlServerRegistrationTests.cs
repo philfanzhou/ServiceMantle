@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Database.SqlServer;
+using ServiceMantle.Database.SqlServer.Migration;
+using ServiceMantle.Migration;
 using Xunit;
 
 namespace ServiceMantle.Database.SqlServer.Tests;
@@ -15,19 +17,24 @@ public sealed class SqlServerRegistrationTests
         services
             .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
             .AddBootstrapDatabaseProvider<SqlServerBootstrapDatabaseProvider>()
-            .AddDatabaseTargetPreparationProvider<SqlServerDatabaseTargetPreparationProvider>();
+            .AddDatabaseTargetPreparationProvider<SqlServerDatabaseTargetPreparationProvider>()
+            .AddMigrationLockProvider<SqlServerMigrationLockProvider>();
 
         using var serviceProvider = services.BuildServiceProvider();
         var bootstrapRegistry = serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>();
         var preparationRegistry = serviceProvider.GetRequiredService<DatabaseTargetPreparationProviderRegistry>();
+        var lockRegistry = serviceProvider.GetRequiredService<DatabaseMigrationLockProviderRegistry>();
 
         Assert.True(bootstrapRegistry.TryGetProvider(WellKnownDatabaseProviderIds.SqlServer, out var bootstrap));
         Assert.IsType<SqlServerBootstrapDatabaseProvider>(bootstrap);
         Assert.True(preparationRegistry.TryGetProvider(WellKnownDatabaseProviderIds.SqlServer, out var preparation));
         Assert.IsType<SqlServerDatabaseTargetPreparationProvider>(preparation);
+        Assert.True(lockRegistry.TryGetProvider(WellKnownDatabaseProviderIds.SqlServer, out var migrationLock));
+        Assert.IsType<SqlServerMigrationLockProvider>(migrationLock);
 
         Assert.False(bootstrapRegistry.TryGetProvider(WellKnownDatabaseProviderIds.PostgreSql, out _));
         Assert.False(preparationRegistry.TryGetProvider(WellKnownDatabaseProviderIds.PostgreSql, out _));
+        Assert.False(lockRegistry.TryGetProvider(WellKnownDatabaseProviderIds.PostgreSql, out _));
     }
 
     [Fact]

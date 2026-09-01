@@ -5,8 +5,8 @@
     <RootNamespace>ServiceMantle.Database.MariaDb</RootNamespace>
     <AssemblyName>ServiceMantle.Database.MariaDb</AssemblyName>
     <PackageId>ServiceMantle.Database.MariaDb</PackageId>
-    <PackageDescription>MariaDB database capabilities for ServiceMantle.</PackageDescription>
-    <PackageTags>service-management;database;mariadb;bootstrap;target-preparation</PackageTags>
+    <PackageDescription>MariaDB database and migration-lock capabilities for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;database;mariadb;bootstrap;target-preparation;migration</PackageTags>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
 

@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Database.MariaDb;
+using ServiceMantle.Database.MariaDb.Migration;
+using ServiceMantle.Migration;
 using Xunit;
 
 namespace ServiceMantle.Database.MariaDb.Tests;
@@ -15,19 +17,24 @@ public sealed class MariaDbRegistrationTests
         services
             .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
             .AddBootstrapDatabaseProvider<MariaDbBootstrapDatabaseProvider>()
-            .AddDatabaseTargetPreparationProvider<MariaDbDatabaseTargetPreparationProvider>();
+            .AddDatabaseTargetPreparationProvider<MariaDbDatabaseTargetPreparationProvider>()
+            .AddMigrationLockProvider<MariaDbMigrationLockProvider>();
 
         using var serviceProvider = services.BuildServiceProvider();
         var bootstrapRegistry = serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>();
         var preparationRegistry = serviceProvider.GetRequiredService<DatabaseTargetPreparationProviderRegistry>();
+        var lockRegistry = serviceProvider.GetRequiredService<DatabaseMigrationLockProviderRegistry>();
 
         Assert.True(bootstrapRegistry.TryGetProvider(WellKnownDatabaseProviderIds.MariaDb, out var bootstrap));
         Assert.IsType<MariaDbBootstrapDatabaseProvider>(bootstrap);
         Assert.True(preparationRegistry.TryGetProvider(WellKnownDatabaseProviderIds.MariaDb, out var preparation));
         Assert.IsType<MariaDbDatabaseTargetPreparationProvider>(preparation);
+        Assert.True(lockRegistry.TryGetProvider(WellKnownDatabaseProviderIds.MariaDb, out var migrationLock));
+        Assert.IsType<MariaDbMigrationLockProvider>(migrationLock);
 
         Assert.False(bootstrapRegistry.TryGetProvider(WellKnownDatabaseProviderIds.MySql, out _));
         Assert.False(preparationRegistry.TryGetProvider(WellKnownDatabaseProviderIds.MySql, out _));
+        Assert.False(lockRegistry.TryGetProvider(WellKnownDatabaseProviderIds.MySql, out _));
     }
 
     [Fact]

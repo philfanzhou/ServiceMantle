@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
@@ -16,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\\..\\src\\ServiceMantle\\ServiceMantle.csproj" />
+    <ProjectReference Include="..\\..\\src\\ServiceMantle.AspNetCore\\ServiceMantle.AspNetCore.csproj" />
     <ProjectReference Include="..\\..\\src\\ServiceMantle.Persistence.EntityFrameworkCore\\ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\\ServiceMantle.Testing\\ServiceMantle.Testing.csproj" />
   </ItemGroup>

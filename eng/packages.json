@@ -5,7 +5,9 @@
       "id": "ServiceMantle",
       "project": "src/ServiceMantle/ServiceMantle.csproj",
       "optional": false,
-      "dependencies": [],
+      "dependencies": [
+        "Microsoft.Extensions.DependencyInjection.Abstractions"
+      ],
       "frameworkReferences": [],
       "tests": [
         {
@@ -78,7 +80,10 @@
       "tests": [
         {
           "project": "tests/ServiceMantle.Database.MariaDb.Tests/ServiceMantle.Database.MariaDb.Tests.csproj",
-          "environment": {}
+          "realDatabase": true,
+          "environment": {
+            "RUN_SERVICEMANTLE_MARIADB_TESTS": "true"
+          }
         }
       ]
     },
@@ -94,7 +99,10 @@
       "tests": [
         {
           "project": "tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj",
-          "environment": {}
+          "realDatabase": true,
+          "environment": {
+            "RUN_SERVICEMANTLE_SQLSERVER_TESTS": "true"
+          }
         }
       ]
     },
@@ -148,6 +156,22 @@
       "tests": [
         {
           "project": "tests/ServiceMantle.OpenTelemetry.Tests/ServiceMantle.OpenTelemetry.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
+      "id": "ServiceMantle.OpenTelemetry.Otlp",
+      "project": "src/ServiceMantle.OpenTelemetry.Otlp/ServiceMantle.OpenTelemetry.Otlp.csproj",
+      "optional": true,
+      "dependencies": [
+        "OpenTelemetry.Exporter.OpenTelemetryProtocol",
+        "ServiceMantle.OpenTelemetry"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.OpenTelemetry.Otlp.Tests/ServiceMantle.OpenTelemetry.Otlp.Tests.csproj",
           "environment": {}
         }
       ]
