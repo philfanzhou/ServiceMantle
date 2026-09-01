@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, core OpenTelemetry instrumentation, the optional OTLP trace and metric exporter, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, additional telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -81,6 +81,52 @@ Instrumentation-generated span and metric attributes are controlled by the upstr
 packages, not by the ServiceMantle resource whitelist. This package does not guarantee their
 sensitivity or cardinality, export success, sampling behavior, or any mapping between W3C trace
 identity and the ServiceMantle Correlation ID.
+
+## Optional OTLP exporter
+
+Install `ServiceMantle.OpenTelemetry.Otlp` to add the official
+`OpenTelemetry.Exporter.OpenTelemetryProtocol` 1.18.0 exporter without adding that driver to the
+core, ASP.NET Core, or base OpenTelemetry packages. Traces and metrics are disabled independently by
+default; an all-disabled registration creates no telemetry provider, exporter, authentication
+lookup, network connection, or background export activity.
+
+```csharp
+serviceMantle.AddOpenTelemetryOtlpExporter(options =>
+{
+    options.Traces.Enabled = true;
+    options.Traces.Protocol = ServiceMantleOtlpProtocol.Grpc;
+    options.Traces.Endpoint = new Uri("https://collector.example.com:4317/");
+    options.Traces.AuthenticationHeaderName = "primary-otlp";
+    options.Traces.ExportTimeout = TimeSpan.FromSeconds(10);
+    options.Traces.BatchDelay = TimeSpan.FromSeconds(5);
+    options.Traces.MaxQueueSize = 2_048;
+    options.Traces.MaxExportBatchSize = 512;
+
+    options.Metrics.Enabled = true;
+    options.Metrics.Protocol = ServiceMantleOtlpProtocol.HttpProtobuf;
+    options.Metrics.Endpoint = new Uri("https://collector.example.com:4318/v1/metrics");
+    options.Metrics.AuthenticationHeaderName = "primary-otlp";
+});
+```
+
+When authentication is configured, register an
+`IServiceMantleOtlpAuthenticationHeaderResolver`. Its non-secret lookup name is stored in options;
+the header value is resolved only for an enabled exporter and passed through the official
+`OtlpExporterOptions.Headers` entry. ServiceMantle exceptions and option diagnostics do not include
+the header value or URI user-info/query components.
+
+Endpoints must be absolute HTTPS URIs. Signal-specific endpoints are passed to the official exporter
+as-is; standard OTLP/HTTP collectors commonly use `/v1/traces` and `/v1/metrics`. The
+`AllowInsecureLoopbackForTesting` switch permits HTTP only for loopback integration tests and must
+not be enabled in deployed configuration. Export timeout is bounded to 1–30 seconds, batch or
+collection delay to 100 ms–30 seconds, trace queue size to 100–50,000, and trace batch size to
+1–1,000 without exceeding the queue.
+
+ServiceMantle does not add a retry loop. Retry behavior, export failures, batching workers, and host
+shutdown belong to the pinned upstream exporter and OpenTelemetry SDK. The bounded queue does not
+guarantee delivery, exactly-once export, or loss-free operation during network failures. This package
+does not export logs, configure mTLS certificate lifecycles, run a collector, or own the consuming
+application's complete telemetry pipeline.
 
 ## Explicit forwarded-header trust
 

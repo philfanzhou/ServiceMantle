@@ -153,6 +153,22 @@
       ]
     },
     {
+      "id": "ServiceMantle.OpenTelemetry.Otlp",
+      "project": "src/ServiceMantle.OpenTelemetry.Otlp/ServiceMantle.OpenTelemetry.Otlp.csproj",
+      "optional": true,
+      "dependencies": [
+        "OpenTelemetry.Exporter.OpenTelemetryProtocol",
+        "ServiceMantle.OpenTelemetry"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.OpenTelemetry.Otlp.Tests/ServiceMantle.OpenTelemetry.Otlp.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.Serilog",
       "project": "src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
       "optional": true,
