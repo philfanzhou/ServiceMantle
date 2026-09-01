@@ -5,8 +5,8 @@
     <RootNamespace>ServiceMantle.Database.SqlServer</RootNamespace>
     <AssemblyName>ServiceMantle.Database.SqlServer</AssemblyName>
     <PackageId>ServiceMantle.Database.SqlServer</PackageId>
-    <PackageDescription>SQL Server database capabilities for ServiceMantle.</PackageDescription>
-    <PackageTags>service-management;database;sql-server;bootstrap;target-preparation</PackageTags>
+    <PackageDescription>SQL Server database and migration-lock capabilities for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;database;sql-server;bootstrap;target-preparation;migration</PackageTags>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
 
