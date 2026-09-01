@@ -5,7 +5,9 @@
       "id": "ServiceMantle",
       "project": "src/ServiceMantle/ServiceMantle.csproj",
       "optional": false,
-      "dependencies": [],
+      "dependencies": [
+        "Microsoft.Extensions.DependencyInjection.Abstractions"
+      ],
       "frameworkReferences": [],
       "tests": [
         {

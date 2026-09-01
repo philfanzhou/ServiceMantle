@@ -363,6 +363,71 @@ public sealed class ServiceSettingPersistenceTests
             metadataCorruptUpdate.ErrorCode);
     }
 
+    [Fact]
+    public async Task Two_store_instances_materialize_the_same_normalized_snapshot_version()
+    {
+        await using var harness = await Harness.CreateAsync();
+        const string rootKey = "shared-bootstrap-root-key-for-tests";
+        var registry = new ServiceSettingDefinitionRegistry(
+        [
+            new DefinitionProvider(
+                new ServiceSettingDefinition(
+                    "product.retries",
+                    ServiceSettingValueType.Number,
+                    isRequired: true),
+                new ServiceSettingDefinition(
+                    "product.enabled",
+                    ServiceSettingValueType.Boolean,
+                    isRequired: true),
+                new ServiceSettingDefinition(
+                    "product.token",
+                    ServiceSettingValueType.String,
+                    isRequired: true,
+                    isSensitive: true))
+        ]);
+        var protectedToken = new SensitiveValueProtector(Service, "product.token")
+            .Protect("shared-secret", rootKey, TestContext.Current.CancellationToken);
+        await harness.Store().UpdateAsync(
+            Service,
+            Update(0, new Dictionary<string, string?>
+            {
+                ["product.retries"] = "2.50",
+                ["product.enabled"] = "TRUE",
+                ["product.token"] = protectedToken,
+            }),
+            TestContext.Current.CancellationToken);
+        var firstAccessor = new ServiceSettingCurrentSnapshotAccessor();
+        var secondAccessor = new ServiceSettingCurrentSnapshotAccessor();
+        using var firstLoader = new ServiceSettingSnapshotLoader(
+            Service,
+            new ServiceSettingStoreSnapshotSource(harness.Store(), registry),
+            registry,
+            firstAccessor,
+            new FixedRootKeySource(rootKey));
+        using var secondLoader = new ServiceSettingSnapshotLoader(
+            Service,
+            new ServiceSettingStoreSnapshotSource(harness.Store(), registry),
+            registry,
+            secondAccessor,
+            new FixedRootKeySource(rootKey));
+
+        var first = await firstLoader.RefreshAsync(TestContext.Current.CancellationToken);
+        var second = await secondLoader.RefreshAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(first.Succeeded);
+        Assert.True(second.Succeeded);
+        Assert.Equal(first.Snapshot!.Version, second.Snapshot!.Version);
+        Assert.Equal(
+            first.Snapshot.Values["product.retries"].GetNumber(),
+            second.Snapshot.Values["product.retries"].GetNumber());
+        Assert.Equal(
+            first.Snapshot.Values["product.enabled"].GetBoolean(),
+            second.Snapshot.Values["product.enabled"].GetBoolean());
+        Assert.Equal(
+            first.Snapshot.Values["product.token"].GetString(),
+            second.Snapshot.Values["product.token"].GetString());
+    }
+
     private static ServiceSettingStoreUpdate Update(
         long expectedVersion,
         IReadOnlyDictionary<string, string?> changes,
@@ -477,5 +542,17 @@ public sealed class ServiceSettingPersistenceTests
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    private sealed class DefinitionProvider(params ServiceSettingDefinition[] definitions)
+        : IServiceSettingDefinitionProvider
+    {
+        public IEnumerable<ServiceSettingDefinition> GetDefinitions() => definitions;
+    }
+
+    private sealed class FixedRootKeySource(string rootKey) : IServiceSettingRootKeySource
+    {
+        public ValueTask<string> GetRootKeyAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(rootKey);
     }
 }
