@@ -160,24 +160,29 @@ public sealed class OracleMigrationLockProviderTests
     }
 
     [Fact]
-    public async Task Caller_cancellation_precedes_timeout_and_cleans_up()
+    public async Task Caller_cancellation_after_inner_request_is_pending_precedes_timeout_and_cleans_up()
     {
         var operations = new FakeOperations();
         operations.Session.BlockRequestUntilCancellation = true;
+        var requestPending = new TaskCompletionSource<long>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
             TestContext.Current.CancellationToken);
-        var acquisition = new OracleMigrationLockProvider(operations).AcquireAsync(
+        var acquisition = new OracleMigrationLockProvider(
+            new RequestSignallingOperations(operations, requestPending)).AcquireAsync(
             ServiceId.Parse("catalog"),
             CreateBootstrap(),
             TimeSpan.FromSeconds(5),
             cancellation.Token).AsTask();
-        await operations.Session.RequestStarted.Task.WaitAsync(
+        var sessionId = await requestPending.Task.WaitAsync(
             TimeSpan.FromSeconds(5),
             TestContext.Current.CancellationToken);
 
         await cancellation.CancelAsync();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => acquisition);
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => acquisition);
+        Assert.Equal(operations.Session.SessionId, sessionId);
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
         Assert.Equal(1, operations.Session.DisposeCount);
     }
 
