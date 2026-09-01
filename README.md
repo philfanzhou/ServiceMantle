@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -115,6 +115,57 @@ and IDN matching, original headers, and truncation use the .NET 10 Forwarded Hea
 semantics. This capability does not configure a proxy, firewall, Host Filtering Middleware, HSTS, or
 HTTPS redirection, and it cannot prevent consumers or environment variables from separately enabling
 the framework middleware.
+
+## Isolated setup and management rate limiting
+
+Rate limiting is opt-in and registers two named sliding-window policies without a global limiter:
+
+```csharp
+builder.Services
+    .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+    .AddRateLimiting(options =>
+    {
+        options.Setup.PermitLimit = 5;
+        options.Management.PermitLimit = 120;
+    });
+
+var app = builder.Build();
+app.UseServiceMantleForwardedHeaders(); // when the trusted-proxy capability is configured
+app.UseRouting();
+app.UseAuthentication();
+app.UseRateLimiter();
+app.UseAuthorization();
+
+app.MapPost("/setup/complete", CompleteSetup)
+    .RequireRateLimiting(ServiceMantleRateLimitingDefaults.SetupPolicyName);
+app.MapGet("/management/status", GetManagementStatus)
+    .RequireRateLimiting(ServiceMantleRateLimitingDefaults.ManagementPolicyName);
+```
+
+`servicemantle.setup` allows 5 requests per minute by default. It partitions by the normalized
+`RemoteIpAddress` produced by the configured trusted-proxy boundary, and uses one `unknown-client`
+partition when no address is available. It never reads a request Header as an IP fallback.
+
+`servicemantle.management` allows 120 requests per minute by default. A principal with a valid
+ServiceMantle management identity is partitioned by a fixed-length SHA-256 projection of its
+normalized operator source and ID. An unauthenticated or invalid principal falls back to a separate
+trusted-client partition, so management and setup buckets never overlap.
+
+Both policies use six segments by default and always set `QueueLimit` to zero. Permit limits may be
+configured from 1 through 60 for setup and 1 through 10,000 for management. Windows may be configured
+from 10 seconds through 10 minutes; segment counts may be 1 through 60 and cannot exceed the whole
+seconds in the window. Invalid or conflicting repeated registrations fail when the Host starts, while
+equivalent repeats are idempotent.
+
+A rejection returns safe `application/problem+json` with status 429 and error code
+`rate_limit.exceeded`. `Retry-After` is emitted as rounded-up delta seconds only when the limiter lease
+provides that metadata. Rejection bodies, Headers, ServiceMantle diagnostics, and framework metric
+tags do not contain the client address, operator identity, partition key, or credentials.
+
+The counters and partition cache belong to the current Host process and are disposed with it. This is
+not distributed rate limiting, edge/WAF protection, or a DDoS guarantee; aggregate throughput across
+instances is the sum of their independent limits. Endpoints must opt in by policy name, and the
+management policy must run after Authentication and before Authorization or endpoint execution.
 
 ## Mandatory security response headers
 
