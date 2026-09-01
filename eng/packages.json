@@ -78,7 +78,10 @@
       "tests": [
         {
           "project": "tests/ServiceMantle.Database.MariaDb.Tests/ServiceMantle.Database.MariaDb.Tests.csproj",
-          "environment": {}
+          "realDatabase": true,
+          "environment": {
+            "RUN_SERVICEMANTLE_MARIADB_TESTS": "true"
+          }
         }
       ]
     },

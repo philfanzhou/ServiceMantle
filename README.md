@@ -785,7 +785,8 @@ Current and planned provider packages are:
 - `ServiceMantle.Database.MySql` validates MySQL 8+ settings, observes server-database targets,
   and explicitly creates a missing target without changing an existing database.
 - `ServiceMantle.Database.MariaDb` validates MariaDB 10.11+ settings and server identity, observes
-  server-database targets, and explicitly creates a missing target without changing an existing database.
+  server-database targets, explicitly creates a missing target without changing an existing database,
+  and provides a dedicated-session `GET_LOCK` migration lease.
 - `ServiceMantle.Database.Oracle` validates Oracle 19c+ single-instance PDB password-user
   settings, observes a local user and its same-named schema, and can explicitly create a missing
   user with only `CREATE SESSION` while preserving every pre-existing user. It also provides an
@@ -921,7 +922,8 @@ explicitly:
 services
     .AddServiceMantle(serviceId, instanceId)
     .AddBootstrapDatabaseProvider<MariaDbBootstrapDatabaseProvider>()
-    .AddDatabaseTargetPreparationProvider<MariaDbDatabaseTargetPreparationProvider>();
+    .AddDatabaseTargetPreparationProvider<MariaDbDatabaseTargetPreparationProvider>()
+    .AddMigrationLockProvider<MariaDbMigrationLockProvider>();
 ```
 
 The provider accepts numeric MariaDB 10.11+ server versions and verifies the server's MariaDB
@@ -940,10 +942,10 @@ MariaDB returns `DatabaseAccessDenied` for both existing and missing database na
 cannot see either target, so that observation reports `PermissionDenied` with
 `TargetExists == null` instead of guessing that the target exists.
 
-This capability does not provide a migration lock, run EF Core migrations, claim MySQL
-compatibility, create database users, grant database permissions, or equate behavior across managed
-MariaDB services. It does not attempt to defeat a proxy that deliberately forges the server product
-version. Those remain independently registered capabilities and deployment concerns.
+These capabilities do not run EF Core migrations, claim MySQL compatibility, create database users,
+grant database permissions, or equate behavior across managed MariaDB services. They do not attempt
+to defeat a proxy that deliberately forges the server product version. Those remain consuming-service
+and deployment concerns.
 
 ### SQL Server target preparation
 
@@ -1085,7 +1087,24 @@ provider. That signal prevents orchestration from reporting success after Oracle
 because its session ended. It cannot undo consumer side effects performed before loss was detected,
 and it is not a fencing token.
 
-No lock providers for SQLite, MySQL, MariaDB, or SQL Server are implemented in this release.
+### MariaDB named lock
+
+`ServiceMantle.Database.MariaDb.Migration.MariaDbMigrationLockProvider` uses MariaDB `GET_LOCK` on
+an unpooled, non-enlisted target-database session. Its exact 64-byte ASCII name is `sm:migration:`
+followed by the first 51 lowercase hexadecimal characters of the normalized `ServiceId` SHA-256
+digest. Connection, MariaDB product and database-identity validation, and the parameterized
+`GET_LOCK` call share one positive bounded acquisition timeout; timeout returns
+`migration.lock_timeout`, while SQL, product, identity, and null-result failures return the safe
+`migration.lock_failed` classification.
+
+The lease probes the same connection identity every 250 milliseconds with a one-second command
+timeout and signals permanent `LeaseLost` within the conservative five-second running-process bound.
+Disposal attempts `RELEASE_LOCK` once and then closes the dedicated session as the authoritative
+fallback. The lock is session-scoped rather than transaction-scoped, recursive acquisition is not a
+supported usage, and the lease is not a fencing token; it cannot undo side effects committed before
+loss is detected.
+
+No lock providers for SQLite, MySQL, or SQL Server are implemented in this release.
 Multi-instance migrations without registered lock support fail closed with
 `migration.lock_not_supported`.
 
