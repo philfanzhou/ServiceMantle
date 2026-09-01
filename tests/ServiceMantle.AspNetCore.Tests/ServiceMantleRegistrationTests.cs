@@ -343,6 +343,8 @@ public sealed class ServiceMantleRegistrationTests
     {
         public string ProviderId => "fake";
 
+        public CancellationToken LeaseLost => CancellationToken.None;
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

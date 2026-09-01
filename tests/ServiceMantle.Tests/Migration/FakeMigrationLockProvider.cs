@@ -15,6 +15,7 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
 
     private readonly Exception? acquireException;
     private readonly bool returnNullLease;
+    private CancellationTokenSource? activeLeaseLoss;
     private int leaseDisposeCount;
 
     public string ProviderId { get; }
@@ -26,6 +27,8 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
     /// lease (returnNullLease) never contributes to it.
     /// </summary>
     public int LeaseDisposeCount => leaseDisposeCount;
+
+    public void LoseLease() => activeLeaseLoss?.Cancel();
 
     public FakeMigrationLockProvider(
         string providerId = "PostgreSQL",
@@ -89,9 +92,11 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
             throw;
         }
 
+        activeLeaseLoss = new CancellationTokenSource();
         IDatabaseMigrationLock fakeLock = new FakeMigrationLock(
             ProviderId,
             semaphore,
+            activeLeaseLoss.Token,
             () => Interlocked.Increment(ref leaseDisposeCount));
         return fakeLock;
     }
@@ -100,16 +105,24 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
     {
         private int disposed;
         private readonly SemaphoreSlim? semaphore;
+        private readonly CancellationToken leaseLost;
         private readonly Action? onFirstDispose;
 
         public string ProviderId { get; }
 
-        public FakeMigrationLock(string providerId, SemaphoreSlim? semaphore, Action? onFirstDispose)
+        public FakeMigrationLock(
+            string providerId,
+            SemaphoreSlim? semaphore,
+            CancellationToken leaseLost,
+            Action? onFirstDispose)
         {
             ProviderId = providerId;
             this.semaphore = semaphore;
+            this.leaseLost = leaseLost;
             this.onFirstDispose = onFirstDispose;
         }
+
+        public CancellationToken LeaseLost => leaseLost;
 
         public ValueTask DisposeAsync()
         {

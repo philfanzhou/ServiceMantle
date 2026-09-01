@@ -8,35 +8,26 @@ public sealed class DatabaseMigrationOrchestrator
     private readonly IDatabaseMigrationExecutor executor;
     private readonly DatabaseMigrationLockProviderRegistry lockProviderRegistry;
 
-    /// <summary>
-    /// Initializes a migration orchestrator.
-    /// </summary>
-    /// <param name="executor">The consuming service's migration executor.</param>
-    /// <param name="lockProviderRegistry">The registry of available lock providers.</param>
+    /// <summary>Initializes a migration orchestrator.</summary>
     public DatabaseMigrationOrchestrator(
         IDatabaseMigrationExecutor executor,
         DatabaseMigrationLockProviderRegistry lockProviderRegistry)
     {
         this.executor = executor ?? throw new ArgumentNullException(nameof(executor));
-        this.lockProviderRegistry = lockProviderRegistry ?? throw new ArgumentNullException(nameof(lockProviderRegistry));
+        this.lockProviderRegistry = lockProviderRegistry ??
+            throw new ArgumentNullException(nameof(lockProviderRegistry));
     }
 
     /// <summary>
-    /// Orchestrates the migration workflow with the following semantics:
-    /// 1. Validate parameters and check for caller cancellation.
-    /// 2. Resolve and acquire the provider-specific migration lock based on service ID.
-    /// 3. After acquiring the lock, re-inspect the database state.
-    /// 4. If already at the current compatible version, return success without calling the executor.
-    /// 5. If the database version is newer than the application, fail closed without calling the executor.
-    /// 6. If the database is empty or needs migration, call the executor exactly once.
-    /// 7. After executor completion, re-inspect the database state.
-    /// 8. Return success only if the final state is compatible with the current application version.
-    /// 9. Always release the lock, even on failure or cancellation.
+    /// Acquires the provider lock, inspects under that authority, executes at most once when
+    /// required, and succeeds only after a compatible final inspection. Caller cancellation takes
+    /// precedence over detected lease loss; lease loss fails closed with
+    /// <c>migration.lock_failed</c> and prevents any later stage from starting.
     /// </summary>
     /// <param name="serviceId">The service identifier for which to orchestrate migration.</param>
     /// <param name="bootstrap">The bootstrap configuration for lock acquisition.</param>
     /// <param name="lockAcquireTimeout">Maximum time to wait for lock acquisition.</param>
-    /// <param name="cancellationToken">Cancellation token. Cancellation takes precedence over timeout.</param>
+    /// <param name="cancellationToken">Cancellation token. Cancellation takes precedence over timeout and lease loss.</param>
     /// <returns>A structured result indicating success or safe failure.</returns>
     public async ValueTask<MigrationExecutionResult> OrchestrateMigrationAsync(
         ServiceId serviceId,
@@ -55,8 +46,6 @@ public sealed class DatabaseMigrationOrchestrator
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-
-        // Resolve the lock provider for this database provider.
         if (!lockProviderRegistry.TryGetProvider(bootstrap.Provider, out var lockProvider))
         {
             return MigrationExecutionResult.Failure(
@@ -64,7 +53,6 @@ public sealed class DatabaseMigrationOrchestrator
                 $"No migration lock provider is registered for database provider '{bootstrap.Provider}'.");
         }
 
-        // Lock provider is not registered; we must fail closed rather than silently proceeding without locking.
         if (lockProvider is null)
         {
             return MigrationExecutionResult.Failure(
@@ -75,7 +63,6 @@ public sealed class DatabaseMigrationOrchestrator
         IDatabaseMigrationLock? lock_ = null;
         try
         {
-            // Acquire the lock. This will fail if no lock capability is registered or if acquisition times out.
             try
             {
                 lock_ = await lockProvider.AcquireAsync(
@@ -101,7 +88,6 @@ public sealed class DatabaseMigrationOrchestrator
                     $"Unexpected error during lock acquisition: {ex.GetType().Name}");
             }
 
-            // Verify that the provider returned a valid lock (fail-closed if null).
             if (lock_ is null)
             {
                 return MigrationExecutionResult.Failure(
@@ -109,11 +95,26 @@ public sealed class DatabaseMigrationOrchestrator
                     "Migration lock provider returned null lease.");
             }
 
-            // Authority check: re-inspect the database state under the lock.
+            using var authorityCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                lock_.LeaseLost);
+            var authorityToken = authorityCts.Token;
+
+            var authorityFailure = CheckAuthority(lock_, cancellationToken, executorWasCalled: false);
+            if (authorityFailure is not null)
+            {
+                return authorityFailure;
+            }
+
             MigrationObservationState initialState;
             try
             {
-                initialState = await executor.InspectAsync(cancellationToken).ConfigureAwait(false);
+                initialState = await executor.InspectAsync(authorityToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (lock_.LeaseLost.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return LeaseLostFailure(executorWasCalled: false);
             }
             catch (OperationCanceledException)
             {
@@ -121,21 +122,25 @@ public sealed class DatabaseMigrationOrchestrator
             }
             catch (Exception)
             {
-                return MigrationExecutionResult.Failure(
+                authorityFailure = CheckAuthority(lock_, cancellationToken, executorWasCalled: false);
+                return authorityFailure ?? MigrationExecutionResult.Failure(
                     WellKnownMigrationErrorCodes.InspectionFailed,
                     "Failed to inspect database state after acquiring the migration lock.");
             }
 
-            // Decision: do we need to call the executor?
+            authorityFailure = CheckAuthority(lock_, cancellationToken, executorWasCalled: false);
+            if (authorityFailure is not null)
+            {
+                return authorityFailure;
+            }
+
             if (initialState == MigrationObservationState.CurrentVersionCompatible)
             {
-                // Already at current version; skip execution. Another waiting instance will observe the same state.
                 return MigrationExecutionResult.Success(executorWasCalled: false);
             }
 
             if (initialState == MigrationObservationState.VersionTooNew)
             {
-                // Database version is newer than the application; this instance cannot proceed.
                 return MigrationExecutionResult.Failure(
                     WellKnownMigrationErrorCodes.VersionTooNew,
                     "Database schema version is newer than the current application version.");
@@ -148,11 +153,14 @@ public sealed class DatabaseMigrationOrchestrator
                     "Database state inspection failed.");
             }
 
-            // At this point, the database is empty or requires migration.
-            // Call the executor exactly once.
             try
             {
-                await executor.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+                await executor.ExecuteAsync(authorityToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (lock_.LeaseLost.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return LeaseLostFailure(executorWasCalled: true);
             }
             catch (OperationCanceledException)
             {
@@ -160,17 +168,28 @@ public sealed class DatabaseMigrationOrchestrator
             }
             catch (Exception)
             {
-                return MigrationExecutionResult.Failure(
+                authorityFailure = CheckAuthority(lock_, cancellationToken, executorWasCalled: true);
+                return authorityFailure ?? MigrationExecutionResult.Failure(
                     WellKnownMigrationErrorCodes.ExecutionFailed,
                     "The consuming service's migration executor failed.",
                     executorWasCalled: true);
             }
 
-            // Authority check: re-inspect the final state while still holding the lock.
+            authorityFailure = CheckAuthority(lock_, cancellationToken, executorWasCalled: true);
+            if (authorityFailure is not null)
+            {
+                return authorityFailure;
+            }
+
             MigrationObservationState finalState;
             try
             {
-                finalState = await executor.InspectAsync(cancellationToken).ConfigureAwait(false);
+                finalState = await executor.InspectAsync(authorityToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (lock_.LeaseLost.IsCancellationRequested)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return LeaseLostFailure(executorWasCalled: true);
             }
             catch (OperationCanceledException)
             {
@@ -178,27 +197,28 @@ public sealed class DatabaseMigrationOrchestrator
             }
             catch (Exception)
             {
-                return MigrationExecutionResult.Failure(
+                authorityFailure = CheckAuthority(lock_, cancellationToken, executorWasCalled: true);
+                return authorityFailure ?? MigrationExecutionResult.Failure(
                     WellKnownMigrationErrorCodes.InspectionFailed,
                     "Failed to inspect database state after migration execution.",
                     executorWasCalled: true);
             }
 
-            // Success requires the database to be at the current compatible version.
-            if (finalState == MigrationObservationState.CurrentVersionCompatible)
+            authorityFailure = CheckAuthority(lock_, cancellationToken, executorWasCalled: true);
+            if (authorityFailure is not null)
             {
-                return MigrationExecutionResult.Success(executorWasCalled: true);
+                return authorityFailure;
             }
 
-            // Any other state after execution is a failure.
-            return MigrationExecutionResult.Failure(
-                WellKnownMigrationErrorCodes.FinalStateInvalid,
-                $"Database state after migration is incompatible: {finalState}",
-                executorWasCalled: true);
+            return finalState == MigrationObservationState.CurrentVersionCompatible
+                ? MigrationExecutionResult.Success(executorWasCalled: true)
+                : MigrationExecutionResult.Failure(
+                    WellKnownMigrationErrorCodes.FinalStateInvalid,
+                    $"Database state after migration is incompatible: {finalState}",
+                    executorWasCalled: true);
         }
         finally
         {
-            // Always attempt to release the lock, even on failure or cancellation.
             if (lock_ is not null)
             {
                 try
@@ -207,10 +227,26 @@ public sealed class DatabaseMigrationOrchestrator
                 }
                 catch
                 {
-                    // Suppress lock release errors to avoid masking the primary exception.
-                    // The provider is responsible for eventual cleanup (e.g., session timeout).
+                    // Release failure must not replace the primary result or cancellation.
                 }
             }
         }
     }
+
+    private static MigrationExecutionResult? CheckAuthority(
+        IDatabaseMigrationLock lock_,
+        CancellationToken cancellationToken,
+        bool executorWasCalled)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return lock_.LeaseLost.IsCancellationRequested
+            ? LeaseLostFailure(executorWasCalled)
+            : null;
+    }
+
+    private static MigrationExecutionResult LeaseLostFailure(bool executorWasCalled) =>
+        MigrationExecutionResult.Failure(
+            WellKnownMigrationErrorCodes.LockFailed,
+            "The migration lock lease was lost before orchestration completed.",
+            executorWasCalled);
 }

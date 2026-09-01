@@ -200,6 +200,102 @@ public class DatabaseMigrationOrchestratorTests
         Assert.Equal(1, lockProvider.LeaseDisposeCount);
     }
 
+    [Theory]
+    [InlineData(0, 1, 0)]
+    [InlineData(1, 1, 1)]
+    [InlineData(2, 2, 1)]
+    public async Task Lease_loss_during_each_stage_fails_closed_and_starts_no_later_stage(
+        int lostStage,
+        int expectedInspectCalls,
+        int expectedExecuteCalls)
+    {
+        var stageStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new FakeMigrationExecutor(
+            [MigrationObservationState.PendingMigration, MigrationObservationState.CurrentVersionCompatible],
+            executeDelay: async token =>
+            {
+                if (lostStage == 1)
+                {
+                    stageStarted.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                }
+            },
+            inspectDelay: async (call, token) =>
+            {
+                if ((lostStage == 0 && call == 1) || (lostStage == 2 && call == 2))
+                {
+                    stageStarted.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                }
+            });
+        var lockProvider = new FakeMigrationLockProvider();
+        var registry = new DatabaseMigrationLockProviderRegistry(
+            [lockProvider],
+            DatabaseProviderIdResolver.Empty);
+        var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
+
+        var orchestration = orchestrator.OrchestrateMigrationAsync(
+            TestServiceId,
+            TestBootstrap,
+            DefaultLockTimeout,
+            TestContext.Current.CancellationToken).AsTask();
+        await stageStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        lockProvider.LoseLease();
+        var result = await orchestration.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownMigrationErrorCodes.LockFailed, result.ErrorCode);
+        Assert.Equal(
+            "The migration lock lease was lost before orchestration completed.",
+            result.ErrorMessage);
+        Assert.DoesNotContain("Password", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(expectedExecuteCalls != 0, result.ExecutorWasCalled);
+        Assert.Equal(expectedInspectCalls, executor.InspectCallCount);
+        Assert.Equal(expectedExecuteCalls, executor.ExecuteCallCount);
+        Assert.Equal(1, lockProvider.LeaseDisposeCount);
+    }
+
+    [Fact]
+    public async Task Caller_cancellation_takes_priority_when_it_races_with_lease_loss()
+    {
+        var executionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new FakeMigrationExecutor(
+            [MigrationObservationState.PendingMigration],
+            executeDelay: async token =>
+            {
+                executionStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            });
+        var lockProvider = new FakeMigrationLockProvider();
+        var registry = new DatabaseMigrationLockProviderRegistry(
+            [lockProvider],
+            DatabaseProviderIdResolver.Empty);
+        var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
+        using var cancellation = new CancellationTokenSource();
+
+        var orchestration = orchestrator.OrchestrateMigrationAsync(
+            TestServiceId,
+            TestBootstrap,
+            DefaultLockTimeout,
+            cancellation.Token).AsTask();
+        await executionStarted.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        cancellation.Cancel();
+        lockProvider.LoseLease();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => orchestration);
+        Assert.Equal(1, executor.InspectCallCount);
+        Assert.Equal(1, executor.ExecuteCallCount);
+        Assert.Equal(1, lockProvider.LeaseDisposeCount);
+    }
+
     [Fact]
     public async Task OrchestrateMigration_WhenFinalStateInvalid_FailsButMarksExecutorCalled()
     {

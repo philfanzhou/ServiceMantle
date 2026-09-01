@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ServiceMantle;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Database.PostgreSql.Migration;
@@ -251,8 +252,10 @@ public class PostgreSqlMigrationLockConcurrencyTests : IAsyncLifetime
             bootstrap,
             lockTimeout,
             testToken);
+        var leaseLost = lock1.LeaseLost;
 
         await lock1.DisposeAsync();
+        Assert.False(leaseLost.IsCancellationRequested);
 
         // Second instance should acquire successfully
         var lock2 = await lockProvider.AcquireAsync(
@@ -373,6 +376,58 @@ public class PostgreSqlMigrationLockConcurrencyTests : IAsyncLifetime
         {
             await leaseA.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task Orchestrator_fails_closed_when_the_holding_backend_is_terminated()
+    {
+        Assert.SkipUnless(
+            ShouldRunPostgreSqlTests() && connectionString is not null,
+            "PostgreSQL tests disabled or container not initialized.");
+
+        var testToken = TestContext.Current.CancellationToken;
+        var bootstrap = new BootstrapDatabaseConfiguration(
+            "PostgreSQL",
+            "15",
+            connectionString);
+        var executionStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new LeaseLossGatedExecutor(executionStarted);
+        var lockProvider = new CapturingMigrationLockProvider();
+        var registry = new DatabaseMigrationLockProviderRegistry(
+            [lockProvider],
+            DatabaseProviderIdResolver.Empty);
+        var orchestrator = new DatabaseMigrationOrchestrator(executor, registry);
+
+        var orchestration = orchestrator.OrchestrateMigrationAsync(
+            ServiceId.Parse("lease-loss-test"),
+            bootstrap,
+            TimeSpan.FromSeconds(10),
+            testToken).AsTask();
+        await executionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+        var lease = Assert.IsType<PostgreSqlMigrationLock>(lockProvider.AcquiredLease);
+
+        await using (var terminatingConnection = new Npgsql.NpgsqlConnection(connectionString))
+        {
+            await terminatingConnection.OpenAsync(testToken);
+            await using var terminate = terminatingConnection.CreateCommand();
+            terminate.CommandText = "SELECT pg_terminate_backend(@backend_pid)";
+            terminate.Parameters.AddWithValue("@backend_pid", lease.BackendProcessId);
+            Assert.Equal(true, await terminate.ExecuteScalarAsync(testToken));
+        }
+
+        var detection = Stopwatch.StartNew();
+        var result = await orchestration.WaitAsync(
+            PostgreSqlMigrationLock.LeaseLossDetectionBound,
+            testToken);
+        detection.Stop();
+
+        Assert.True(detection.Elapsed <= PostgreSqlMigrationLock.LeaseLossDetectionBound);
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownMigrationErrorCodes.LockFailed, result.ErrorCode);
+        Assert.True(result.ExecutorWasCalled);
+        Assert.Equal(1, executor.InspectCallCount);
+        Assert.Equal(1, executor.ExecuteCallCount);
     }
 
     /// <summary>
@@ -645,6 +700,54 @@ public class PostgreSqlMigrationLockConcurrencyTests : IAsyncLifetime
             {
                 await connection.CloseAsync();
             }
+        }
+    }
+
+    private sealed class CapturingMigrationLockProvider : IDatabaseMigrationLockProvider
+    {
+        private readonly PostgreSqlMigrationLockProvider inner = new();
+
+        public string ProviderId => inner.ProviderId;
+
+        internal IDatabaseMigrationLock? AcquiredLease { get; private set; }
+
+        public async ValueTask<IDatabaseMigrationLock> AcquireAsync(
+            ServiceId serviceId,
+            BootstrapDatabaseConfiguration bootstrap,
+            TimeSpan acquireTimeout,
+            CancellationToken cancellationToken = default)
+        {
+            AcquiredLease = await inner.AcquireAsync(
+                serviceId,
+                bootstrap,
+                acquireTimeout,
+                cancellationToken);
+            return AcquiredLease;
+        }
+    }
+
+    private sealed class LeaseLossGatedExecutor(TaskCompletionSource executionStarted)
+        : IDatabaseMigrationExecutor
+    {
+        internal int InspectCallCount { get; private set; }
+        internal int ExecuteCallCount { get; private set; }
+
+        public ValueTask<MigrationObservationState> InspectAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InspectCallCount++;
+            return ValueTask.FromResult(InspectCallCount == 1
+                ? MigrationObservationState.PendingMigration
+                : MigrationObservationState.CurrentVersionCompatible);
+        }
+
+        public async ValueTask ExecuteAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ExecuteCallCount++;
+            executionStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
 }

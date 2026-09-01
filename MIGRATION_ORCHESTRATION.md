@@ -17,6 +17,7 @@ The core package defines the contract and orchestration logic without any databa
 2. **`IDatabaseMigrationLock`** - Acquired lock lease
    - Extends `IAsyncDisposable` for RAII semantics
    - Holds the lock for its lifetime
+   - Exposes a permanent `LeaseLost` cancellation signal when the provider detects lost authority
 
 3. **`IDatabaseMigrationLockProvider`** - Provider SPI for lock capabilities
    - `ProviderId` property to match bootstrap provider ID
@@ -72,6 +73,8 @@ The core package defines the contract and orchestration logic without any databa
 
 3. **Lock Lease** (`PostgreSqlMigrationLock`):
    - Holds an open connection for the lock lifetime
+   - Probes the dedicated connection every 250ms with a one-second command timeout
+   - Signals detected session loss within a conservative five-second running-process bound
    - On `DisposeAsync()`:
      - Attempts explicit `pg_advisory_unlock()` if connection is open
      - Closes connection (session lock released by PostgreSQL)
@@ -85,15 +88,21 @@ The core package defines the contract and orchestration logic without any databa
 2. **Lock resolution** - Find and acquire provider-specific lock
    - Fail closed if no lock provider registered (security boundary)
    - Fail closed on timeout or cancellation
-3. **Authority inspection** - Re-check state under the lock
+3. **Authority inspection** - Re-check state under the lock while monitoring `LeaseLost`
 4. **Decision tree**:
    - If `CurrentVersionCompatible` → Skip execution, return success
    - If `VersionTooNew` → Fail closed, do not execute
    - If `InspectionFailed` → Fail closed, do not execute
    - If `Empty` or `PendingMigration` → Call executor exactly once
-5. **Authority re-inspection** - Check state after execution
+5. **Authority re-inspection** - Check state after execution under the same monitored lease
    - Success only if final state is `CurrentVersionCompatible`
 6. **Lock release** - Always in finally block, errors suppressed
+
+Every executor call receives a token linked to caller cancellation and `LeaseLost`. The orchestrator
+checks caller cancellation first before and after every stage, so a caller-cancellation/lease-loss
+race remains `OperationCanceledException`. Lease loss maps to `migration.lock_failed`, records whether
+execution had started, and prevents a not-yet-started next stage. Executors must observe the supplied
+token promptly; loss detection cannot roll back side effects already committed by an executor.
 
 ## Multi-Instance Behavior
 
@@ -136,7 +145,11 @@ The lock key is:
 
 ## Testing and Validation Status
 
-**Implementation complete, pending CI container verification.** All unit and in-memory concurrency tests pass locally. The real PostgreSQL Testcontainers suite requires Docker and does not run on this development machine; it is exercised by GitHub Actions on every pull request and before release (see `.github/workflows/ci.yml`, step "Test (PostgreSQL with containers)"). This document will be updated to reflect accepted status once that CI run has passed on this branch. Run `dotnet test --solution ServiceMantle.slnx` for current pass/fail/skip counts rather than relying on numbers recorded here, since counts drift as tests are added.
+The unit and in-memory concurrency tests run in the normal solution suite. The real PostgreSQL
+Testcontainers suite requires Docker; it can be enabled locally and is exercised by GitHub Actions
+on every pull request and before release (see `.github/workflows/ci.yml`). Run
+`dotnet test --solution ServiceMantle.slnx` for current pass/fail/skip counts rather than relying on
+numbers recorded here, since counts drift as tests are added.
 
 ### Unit and in-memory tests (verified locally)
 
@@ -148,6 +161,8 @@ The lock key is:
   - Lock timeout, lock-not-supported, and null-lease fail-closed paths
   - Lease release count for every success and failure path (via `FakeMigrationLockProvider.LeaseDisposeCount`)
   - Double-instance scenario with shared in-memory state (only one instance executes)
+  - Lease loss during initial inspection, execution, and final inspection
+  - Caller cancellation priority when it races with lease loss
 - `DatabaseMigrationLockProviderRegistryTests` - registry lookup, case-insensitivity, duplicate/null rejection
 - `ProviderIdCanonicalizationTests` - alias-to-canonical resolution across persistence, provider dispatch, target preparation, and lock lookup
 
@@ -175,6 +190,9 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 - Cancellation during polling throws (`OperationCanceledException` or `TaskCanceledException`)
 - Lock release allows re-acquisition
 - No secrets (passwords, connection strings) in exception messages
+- Deterministic `pg_terminate_backend` of the holding session during execution, proving that the
+  orchestrator returns `migration.lock_failed` within the five-second detection bound and does not
+  begin final inspection
 
 **End-to-end orchestration test against a real PostgreSQL container:**
 - `OrchestratorDoubleInstance_OnlyOneExecutes_ViaAdvisoryLock` runs two orchestrator instances concurrently against the same ServiceId and a real `test_migration_state` table. A shared gate (`TaskCompletionSource`, `RunContinuationsAsynchronously`) holds the winning executor inside `ExecuteAsync` — with the advisory lock still held, verified by a bounded probe acquisition that must time out — until the second orchestrator's own acquisition attempt has started. Both executors share the same gate, so if the advisory lock failed to provide mutual exclusion, both would reach `ExecuteAsync` and, once released, race to increment `execution_count` concurrently. The test asserts both orchestrators succeed, exactly one reports `ExecutorWasCalled`, `execution_count` is exactly 1, and the final state is `current` — making the assertions fail deterministically if locking is broken, rather than passing by timing coincidence.
@@ -195,6 +213,7 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 - Timeout and cancellation support
 - Structured safe error handling
 - Comprehensive unit and concurrency tests
+- Lease-loss detection during all orchestration stages
 
 ### Out of Scope (Not Implemented)
 
@@ -204,6 +223,11 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 - Setup code or management admin features
 - EF Core automatic migration execution
 - Break-glass/emergency unlock procedures
+- Fencing tokens or automatic rollback of executor side effects committed before lease loss
+
+The five-second PostgreSQL bound assumes a running process with normally scheduled timers and a
+working Npgsql command-timeout mechanism. Process suspension, severe scheduler starvation, and a
+runtime or network stack that cannot deliver the configured timeout are explicit non-guarantees.
 
 ### Future Provider Support
 
