@@ -9,6 +9,7 @@
     <Project Path="src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj" />
     <Project Path="src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj" />
     <Project Path="src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj" />
+    <Project Path="src/ServiceMantle.OpenTelemetry.Prometheus/ServiceMantle.OpenTelemetry.Prometheus.csproj" />
     <Project Path="src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
     <Project Path="src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" />
   </Folder>
@@ -23,6 +24,7 @@
     <Project Path="tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj" />
     <Project Path="tests/ServiceMantle.OpenTelemetry.Tests/ServiceMantle.OpenTelemetry.Tests.csproj" />
+    <Project Path="tests/ServiceMantle.OpenTelemetry.Prometheus.Tests/ServiceMantle.OpenTelemetry.Prometheus.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj" />
   </Folder>
