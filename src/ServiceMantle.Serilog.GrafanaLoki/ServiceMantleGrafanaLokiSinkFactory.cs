@@ -200,8 +200,10 @@ internal sealed class ServiceMantleGrafanaLokiRemoteSink(
     ServiceMantleGrafanaLokiDiagnostics diagnostics,
     ServiceMantleGrafanaLokiDeliveryCounter deliveryCounter) : ILogEventSink, IDisposable
 {
-    private readonly object sync = new();
+    private readonly object disposeSync = new();
+    private readonly object stopSync = new();
     private Task? disposeTask;
+    private Task? stopTask;
     private int stopping;
 
     public void Emit(LogEvent logEvent)
@@ -213,7 +215,15 @@ internal sealed class ServiceMantleGrafanaLokiRemoteSink(
         }
     }
 
-    internal async Task StopAsync(CancellationToken cancellationToken)
+    internal Task StopAsync(CancellationToken cancellationToken)
+    {
+        lock (stopSync)
+        {
+            return stopTask ??= StopCoreAsync(cancellationToken);
+        }
+    }
+
+    private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
         Interlocked.Exchange(ref stopping, 1);
         var task = StartDispose();
@@ -267,7 +277,7 @@ internal sealed class ServiceMantleGrafanaLokiRemoteSink(
 
     private Task StartDispose()
     {
-        lock (sync)
+        lock (disposeSync)
         {
             return disposeTask ??= Task.Run(remoteLogger.Dispose);
         }

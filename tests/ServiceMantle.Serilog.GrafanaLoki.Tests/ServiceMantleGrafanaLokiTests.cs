@@ -479,6 +479,54 @@ public sealed class ServiceMantleGrafanaLokiTests
         await cancelHost.StopAsync(TestContext.Current.CancellationToken);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Completed_shutdown_attempt_is_not_repeated_when_the_base_pipeline_is_disposed(
+        bool cancelFirstAttempt)
+    {
+        var handler = new IgnoringCancellationHandler(HttpStatusCode.NoContent);
+        var builder = CreateBuilder(handler, new RecordingResolver(AuthorizationHeader));
+        builder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.BatchSize = 1;
+            options.ShutdownDrainTimeout = TimeSpan.FromSeconds(1);
+        });
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ILogger<ServiceMantleGrafanaLokiTests>>()
+            .LogInformation("ignored cancellation event");
+        await handler.Entered.Task.WaitAsync(
+            TimeSpan.FromSeconds(2),
+            TestContext.Current.CancellationToken);
+        var lifecycle = host.Services.GetServices<IHostedService>()
+            .OfType<ServiceMantleGrafanaLokiLifecycle>()
+            .Single();
+        using var cancellation = new CancellationTokenSource();
+        if (cancelFirstAttempt)
+        {
+            cancellation.Cancel();
+        }
+
+        await lifecycle.StopAsync(cancelFirstAttempt ? cancellation.Token : CancellationToken.None);
+
+        var stopwatch = Stopwatch.StartNew();
+        await host.StopAsync(TestContext.Current.CancellationToken);
+        stopwatch.Stop();
+        handler.Release.TrySetResult();
+        await handler.Completed.Task.WaitAsync(
+            TimeSpan.FromSeconds(2),
+            TestContext.Current.CancellationToken);
+
+        var diagnostics = host.Services.GetRequiredService<ServiceMantleGrafanaLokiDiagnostics>();
+        Assert.Equal(cancelFirstAttempt ? 1 : 0, diagnostics.DrainCancellationCount);
+        Assert.Equal(cancelFirstAttempt ? 0 : 1, diagnostics.DrainTimeoutCount);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromMilliseconds(750),
+            $"Base pipeline disposal repeated the shutdown window and took {stopwatch.Elapsed}.");
+    }
+
     private static HostApplicationBuilder CreateBuilder(
         HttpMessageHandler handler,
         IServiceMantleLokiAuthorizationHeaderResolver? resolver)
@@ -619,6 +667,28 @@ public sealed class ServiceMantleGrafanaLokiTests
                 Cancelled = true;
                 throw;
             }
+        }
+    }
+
+    private sealed class IgnoringCancellationHandler(HttpStatusCode statusCode) : HttpMessageHandler
+    {
+        internal TaskCompletionSource Entered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Completed { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Entered.TrySetResult();
+            await Release.Task;
+            Completed.TrySetResult();
+            return new HttpResponseMessage(statusCode);
         }
     }
 
