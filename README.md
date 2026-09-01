@@ -491,6 +491,45 @@ of `ServiceSettingDefinitionRegistry`; this persistence layer stores the caller-
 Read failures expose only a stable `ServiceSettingStoreException` classification and safe message;
 the exception never retains provider diagnostics, connection strings, credentials, or setting values.
 
+## Typed setting snapshots
+
+`AddServiceMantleSettingSnapshots()` registers the provider-independent snapshot loader, immutable
+definition registry, store adapter, and process-local current-snapshot accessor. Register product
+definitions and an `IServiceSettingStore`; catalogs containing sensitive definitions must also
+register an `IServiceSettingRootKeySource` backed by the instance's Bootstrap root key.
+
+```csharp
+services.AddSingleton<IServiceSettingDefinitionProvider, ProductSettingDefinitions>();
+services.AddSingleton<IServiceSettingStore, ProductSettingStore>();
+services.AddSingleton<IServiceSettingRootKeySource, BootstrapRootKeySource>();
+services.AddServiceMantleSettingSnapshots();
+
+var result = await serviceProvider
+    .GetRequiredService<ServiceSettingSnapshotLoader>()
+    .RefreshAsync(cancellationToken);
+
+if (result.Succeeded &&
+    serviceProvider.GetRequiredService<IServiceSettingCurrentSnapshotAccessor>()
+        .TryGetCurrent(out var snapshot))
+{
+    var enabled = snapshot!.Values["product.enabled"].GetBoolean();
+}
+```
+
+Every refresh reads one complete service-level version, verifies registered keys and persisted
+types, decrypts sensitive values only from `sm:v1:` envelopes using the stable setting key as the
+protection purpose, performs deterministic type conversion, and runs the existing single-value and
+composite validation rules. Refreshes on one loader are serialized. A successful newer version is
+published by one atomic reference replacement; readers therefore observe either the previous
+complete snapshot or the new complete snapshot. A failed or cancelled refresh preserves the exact
+previous reference. Older versions fail with `configuration.snapshot_stale`; equal normalized
+content is idempotent, while different content at the same version fails with
+`configuration.snapshot_conflict`.
+
+This atomicity is process-local. The source must provide a complete read and is responsible for any
+storage snapshot isolation. The loader does not write settings, assign versions, rotate keys, poll
+for changes, coordinate publication across processes, or accept unknown future envelope formats.
+
 Management consumers should implement a minimal integration model, for example:
 
 ```csharp
