@@ -161,9 +161,57 @@ public sealed class ServiceMantleHealthEndpointTests
 
         cancellation.Cancel();
         var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+        await source.CancellationObserved.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(cancellation.Token, exception.CancellationToken);
         Assert.True(source.ObservedToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task Already_cancelled_request_does_not_resolve_the_snapshot_source()
+    {
+        var sourceResolved = false;
+        await using var application = await StartAsync(services =>
+            services.AddSingleton<IServiceHealthSnapshotSource>(_ =>
+            {
+                sourceResolved = true;
+                return new SequenceSource(ReadySnapshot);
+            }));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            application.GetTestServer().SendAsync(context =>
+            {
+                context.Request.Method = "GET";
+                context.Request.Path = "/health/ready";
+                context.RequestAborted = cancellation.Token;
+            }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+        Assert.False(sourceResolved);
+    }
+
+    [Fact]
+    public async Task Cancellation_during_snapshot_source_resolution_takes_priority_over_failure()
+    {
+        using var cancellation = new CancellationTokenSource();
+        await using var application = await StartAsync(services =>
+            services.AddSingleton<IServiceHealthSnapshotSource>(_ =>
+            {
+                cancellation.Cancel();
+                throw new InvalidOperationException("connection-secret");
+            }));
+
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            application.GetTestServer().SendAsync(context =>
+            {
+                context.Request.Method = "GET";
+                context.Request.Path = "/health/ready";
+                context.RequestAborted = cancellation.Token;
+            }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
     }
 
     [Fact]
@@ -335,12 +383,17 @@ public sealed class ServiceMantleHealthEndpointTests
         internal TaskCompletionSource Started { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        internal TaskCompletionSource CancellationObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         internal CancellationToken ObservedToken { get; private set; }
 
         public async ValueTask<ServiceHealthSnapshot> GetSnapshotAsync(
             CancellationToken cancellationToken = default)
         {
             ObservedToken = cancellationToken;
+            using var registration = cancellationToken.Register(
+                () => CancellationObserved.TrySetResult());
             Started.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return ReadySnapshot;

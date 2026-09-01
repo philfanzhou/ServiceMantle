@@ -38,6 +38,8 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
 
     private static async Task<IResult> EvaluateReadinessAsync(HttpContext context)
     {
+        var requestAborted = context.RequestAborted;
+        requestAborted.ThrowIfCancellationRequested();
         var registration = context.RequestServices
             .GetRequiredService<ServiceMantleHealthRegistration>();
         IServiceHealthSnapshotSource? source;
@@ -47,16 +49,16 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         }
         catch
         {
+            requestAborted.ThrowIfCancellationRequested();
             return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
         }
 
+        requestAborted.ThrowIfCancellationRequested();
         if (source is null)
         {
             return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
         }
 
-        var requestAborted = context.RequestAborted;
-        requestAborted.ThrowIfCancellationRequested();
         using var timeout = new CancellationTokenSource(registration.ProbeTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             requestAborted,
