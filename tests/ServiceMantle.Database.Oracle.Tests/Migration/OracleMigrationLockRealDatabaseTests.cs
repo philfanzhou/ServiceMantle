@@ -171,6 +171,7 @@ public sealed class OracleMigrationLockRealDatabaseTests
             continueAcquisition.TrySetResult();
             var exception = await Assert.ThrowsAsync<DatabaseMigrationLockException>(() => acquisition);
 
+            await WaitForSessionToCloseAsync(admin, user, sessionId);
             Assert.Equal(WellKnownMigrationErrorCodes.LockFailed, exception.ErrorCode);
         }
         finally
@@ -217,6 +218,7 @@ public sealed class OracleMigrationLockRealDatabaseTests
                 TestContext.Current.CancellationToken);
             detection.Stop();
 
+            await WaitForSessionToCloseAsync(admin, user, lease.SessionId);
             Assert.True(detection.Elapsed <= OracleMigrationLock.LeaseLossDetectionBound);
             Assert.False(result.Succeeded);
             Assert.Equal(WellKnownMigrationErrorCodes.LockFailed, result.ErrorCode);
