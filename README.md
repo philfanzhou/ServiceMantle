@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, the optional bounded Grafana Loki sink, core OpenTelemetry instrumentation, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -1168,6 +1168,36 @@ provider cannot receive unsanitized properties. Add any intentional non-Console 
 extension. This package does not sanitize caller-interpolated free text in message templates and
 cannot flush after forced termination such as `SIGKILL`, a host crash, or stack overflow.
 
+The separate `ServiceMantle.Serilog.GrafanaLoki` package adds an opt-in remote sink after the same
+mandatory sanitizer. Authentication is resolved at startup from a non-secret name and is never part
+of the options snapshot:
+
+```csharp
+builder.AddServiceMantleSerilog();
+builder.Services.AddSingleton<IServiceMantleLokiAuthorizationHeaderResolver, LokiAuthorizationResolver>();
+builder.AddServiceMantleGrafanaLoki(options =>
+{
+    options.Enabled = true;
+    options.Endpoint = new Uri("https://logs.example.com/grafana");
+    options.AuthorizationHeaderResolverName = "primary-loki";
+    options.BatchSize = 100;
+    options.QueueLimit = 1_000;
+    options.FlushPeriod = TimeSpan.FromSeconds(2);
+    options.ShutdownDrainTimeout = TimeSpan.FromSeconds(5);
+});
+```
+
+Enabled endpoints must use absolute HTTPS URIs without user information, query strings, or
+fragments. An explicit test-only option permits loopback HTTP. Batch size is limited to 1-1,000,
+queue capacity to 100-50,000 events, and flush and shutdown drain periods to 1-30 seconds. Invalid
+configuration, a missing resolver, or an unavailable authorization value fails when the Host starts
+without including submitted values in the exception.
+
+The fixed upstream driver owns the bounded in-memory queue and retry schedule. Capacity drops,
+permanent delivery failures, drain timeouts, and caller-cancelled drains are exposed only through
+content-free counters and stable error codes on `ServiceMantleGrafanaLokiDiagnostics`. The package
+does not add disk buffering, unbounded retries, dynamic reload, query APIs, or exactly-once delivery.
+
 ## Frontend note
 
 Frontend work is intentionally out of scope and will be implemented in a separate `ServiceMantle.Console` project.
@@ -1179,10 +1209,12 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 - `src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj`
 - `src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj`
 - `src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj`
+- `src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj`
 - `tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj`
 - `tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj`
 - `tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj`
 - `tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj`
+- `tests/ServiceMantle.Serilog.GrafanaLoki.Tests/ServiceMantle.Serilog.GrafanaLoki.Tests.csproj`
 - `tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj`
 - `src/ServiceMantle/ServiceId.cs`
 - `src/ServiceMantle/InstanceId.cs`
@@ -1208,6 +1240,7 @@ dotnet test --solution ServiceMantle.slnx -c Release
 dotnet pack src/ServiceMantle/ServiceMantle.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj -c Release --no-build
+dotnet pack src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj -c Release --no-build

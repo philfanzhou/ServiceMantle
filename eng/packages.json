@@ -171,6 +171,22 @@
       ]
     },
     {
+      "id": "ServiceMantle.Serilog.GrafanaLoki",
+      "project": "src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj",
+      "optional": true,
+      "dependencies": [
+        "Serilog.Sinks.Grafana.Loki",
+        "ServiceMantle.Serilog"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Serilog.GrafanaLoki.Tests/ServiceMantle.Serilog.GrafanaLoki.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.Persistence.EntityFrameworkCore",
       "project": "src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj",
       "optional": true,

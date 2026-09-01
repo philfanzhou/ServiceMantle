@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>ServiceMantle.Serilog.GrafanaLoki</RootNamespace>
+    <AssemblyName>ServiceMantle.Serilog.GrafanaLoki</AssemblyName>
+    <PackageId>ServiceMantle.Serilog.GrafanaLoki</PackageId>
+    <PackageDescription>Bounded Grafana Loki sink integration for ServiceMantle Serilog.</PackageDescription>
+    <PackageTags>service-management;serilog;grafana;loki;logging</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog.Sinks.Grafana.Loki" />
+    <ProjectReference Include="..\ServiceMantle.Serilog\ServiceMantle.Serilog.csproj" />
+  </ItemGroup>
+
+</Project>
