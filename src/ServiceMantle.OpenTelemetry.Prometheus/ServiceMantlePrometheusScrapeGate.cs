@@ -15,6 +15,7 @@ internal sealed class ServiceMantlePrometheusScrapeGate(
         }
 
         var originalResponseBody = context.Response.Body;
+        var requestAborted = context.RequestAborted;
         try
         {
             if (HttpMethods.IsHead(context.Request.Method))
@@ -23,7 +24,7 @@ internal sealed class ServiceMantlePrometheusScrapeGate(
             }
 
             using var stopping = CancellationTokenSource.CreateLinkedTokenSource(
-                context.RequestAborted,
+                requestAborted,
                 endpointState.ApplicationStopping);
             context.RequestAborted = stopping.Token;
             await next(context);
@@ -33,6 +34,15 @@ internal sealed class ServiceMantlePrometheusScrapeGate(
             {
                 Reject(context);
             }
+        }
+        catch (OperationCanceledException) when (
+            requestAborted.IsCancellationRequested || endpointState.IsStopping)
+        {
+            throw;
+        }
+        catch (Exception) when (!context.Response.HasStarted)
+        {
+            Reject(context);
         }
         finally
         {

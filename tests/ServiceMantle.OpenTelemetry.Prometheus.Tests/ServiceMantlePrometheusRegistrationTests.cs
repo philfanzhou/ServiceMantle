@@ -468,6 +468,32 @@ public sealed class ServiceMantlePrometheusRegistrationTests
     }
 
     [Fact]
+    public async Task Internal_failure_before_response_start_returns_empty_503()
+    {
+        const string secret = "scrape-internal-secret";
+        await using var application = CreateApplication(Enable);
+        application.MapServiceMantlePrometheusEndpoint();
+        await application.StartAsync(TestContext.Current.CancellationToken);
+        var state = application.Services.GetRequiredService<ServiceMantlePrometheusEndpointState>();
+        var gate = new ServiceMantlePrometheusScrapeGate(
+            _ => Task.FromException(new InvalidOperationException(secret)),
+            state);
+        await using var body = new MemoryStream();
+        var context = new DefaultHttpContext();
+        context.Response.Body = body;
+
+        await gate.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+        Assert.Equal(0, context.Response.ContentLength);
+        Assert.Null(context.Response.ContentType);
+        Assert.Empty(body.ToArray());
+        Assert.Equal(
+            ServiceMantlePrometheusDefaults.MaximumConcurrentScrapes,
+            state.AvailableScrapeSlots);
+    }
+
+    [Fact]
     public async Task Fixed_official_exporter_options_are_applied()
     {
         await using var application = CreateApplication(Enable);
