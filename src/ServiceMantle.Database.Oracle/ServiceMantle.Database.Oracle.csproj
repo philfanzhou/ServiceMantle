@@ -5,8 +5,8 @@
     <RootNamespace>ServiceMantle.Database.Oracle</RootNamespace>
     <AssemblyName>ServiceMantle.Database.Oracle</AssemblyName>
     <PackageId>ServiceMantle.Database.Oracle</PackageId>
-    <PackageDescription>Oracle database capabilities for ServiceMantle.</PackageDescription>
-    <PackageTags>service-management;database;oracle;bootstrap;target-preparation</PackageTags>
+    <PackageDescription>Oracle bootstrap, target-preparation, and migration-lock capabilities for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;database;oracle;bootstrap;target-preparation;migration-lock</PackageTags>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
 

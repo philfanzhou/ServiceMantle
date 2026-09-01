@@ -788,7 +788,8 @@ Current and planned provider packages are:
   server-database targets, and explicitly creates a missing target without changing an existing database.
 - `ServiceMantle.Database.Oracle` validates Oracle 19c+ single-instance PDB password-user
   settings, observes a local user and its same-named schema, and can explicitly create a missing
-  user with only `CREATE SESSION` while preserving every pre-existing user.
+  user with only `CREATE SESSION` while preserving every pre-existing user. It also provides an
+  exclusive `SYS.DBMS_LOCK` migration lease on a dedicated target-user session.
 - `ServiceMantle.Database.SqlServer` validates SQL Server 2019+ settings, observes server-database
   targets, and explicitly creates a missing target without changing an existing database.
 
@@ -801,6 +802,10 @@ direct `CREATE USER`, `DROP USER`, and `CREATE SESSION WITH ADMIN OPTION` privil
 grant quota or schema-object DDL privileges, repair an existing account, or support RAC, cloud,
 root/common users, wallets, tokens, external authentication, proxy authentication, or non-CDB
 deployments. SQL Server and SQLite follow their own target semantics.
+
+Oracle migration locking is a separately registered capability. The target user needs a direct
+`EXECUTE ON SYS.DBMS_LOCK` grant; target preparation deliberately does not grant it. The provider
+uses an unpooled, non-enlisted target-user session and never commits the consumer's work unit.
 
 ## Database target preparation
 
@@ -1036,7 +1041,7 @@ The `DatabaseMigrationOrchestrator` is instantiated with the executor and a lock
 ```csharp
 var executor = new MyServiceMigrationExecutor(dbContext);
 var lockProviders = new DatabaseMigrationLockProviderRegistry(
-    [new PostgreSqlMigrationLockProvider()],
+    [new OracleMigrationLockProvider()],
     providerRegistry.ProviderIdResolver);
 var orchestrator = new DatabaseMigrationOrchestrator(executor, lockProviders);
 
@@ -1064,7 +1069,25 @@ milliseconds with a one-second command timeout and exposes detected session loss
 Process suspension, severe thread-pool starvation, or an environment that prevents command timeout
 delivery is outside that bound; detection is not zero-latency.
 
-No other lock providers (SQLite, MySQL, etc.) are implemented in this release. Multi-instance migrations without registered lock support fail closed with `migration.lock_not_supported`.
+### Oracle DBMS_LOCK
+
+`ServiceMantle.Database.Oracle.Migration.OracleMigrationLockProvider` derives a stable name as
+`ServiceMantle.Migration.` followed by the lowercase SHA-256 digest of the normalized `ServiceId`.
+It obtains the same-name handle with `DBMS_LOCK.ALLOCATE_UNIQUE_AUTONOMOUS`, requests `X_MODE` with
+the remaining bounded acquisition timeout and `release_on_commit => FALSE`, then explicitly releases
+the handle before closing the dedicated session. Missing direct package access fails with
+`migration.lock_not_supported`; timeout, cancellation, and other Oracle failures retain their
+documented migration-lock semantics.
+
+The lease probes its session every 250 milliseconds with a one-second command timeout and signals
+detected loss within the same conservative five-second running-process bound as the PostgreSQL
+provider. That signal prevents orchestration from reporting success after Oracle has released a lock
+because its session ended. It cannot undo consumer side effects performed before loss was detected,
+and it is not a fencing token.
+
+No lock providers for SQLite, MySQL, MariaDB, or SQL Server are implemented in this release.
+Multi-instance migrations without registered lock support fail closed with
+`migration.lock_not_supported`.
 
 ### Error codes
 
