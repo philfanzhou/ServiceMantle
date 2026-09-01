@@ -202,6 +202,7 @@ internal sealed class ServiceMantleGrafanaLokiRemoteSink(
 {
     private readonly object disposeSync = new();
     private readonly object stopSync = new();
+    private readonly CancellationTokenSource stopCancellation = new();
     private Task? disposeTask;
     private Task? stopTask;
     private int stopping;
@@ -217,10 +218,23 @@ internal sealed class ServiceMantleGrafanaLokiRemoteSink(
 
     internal Task StopAsync(CancellationToken cancellationToken)
     {
+        var registration = cancellationToken.CanBeCanceled
+            ? cancellationToken.UnsafeRegister(
+                static state => ((CancellationTokenSource)state!).Cancel(),
+                stopCancellation)
+            : default;
+        Task task;
         lock (stopSync)
         {
-            return stopTask ??= StopCoreAsync(cancellationToken);
+            task = stopTask ??= StopCoreAsync(stopCancellation.Token);
         }
+
+        if (cancellationToken.CanBeCanceled)
+        {
+            _ = DisposeRegistrationAfterStopAsync(task, registration);
+        }
+
+        return task;
     }
 
     private async Task StopCoreAsync(CancellationToken cancellationToken)
@@ -292,6 +306,20 @@ internal sealed class ServiceMantleGrafanaLokiRemoteSink(
         catch
         {
             // Serilog disposal failures are represented only by the bounded diagnostics above.
+        }
+    }
+
+    private static async Task DisposeRegistrationAfterStopAsync(
+        Task task,
+        CancellationTokenRegistration registration)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        finally
+        {
+            await registration.DisposeAsync().ConfigureAwait(false);
         }
     }
 

@@ -527,6 +527,64 @@ public sealed class ServiceMantleGrafanaLokiTests
             $"Base pipeline disposal repeated the shutdown window and took {stopwatch.Elapsed}.");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Host_shutdown_cancellation_reaches_the_single_drain_for_both_registration_orders(
+        bool lokiRegisteredFirst)
+    {
+        var handler = new IgnoringCancellationHandler(HttpStatusCode.NoContent);
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddSingleton<IServiceMantleLokiAuthorizationHeaderResolver>(
+            new RecordingResolver(AuthorizationHeader));
+        builder.Services.Replace(ServiceDescriptor.Singleton<IServiceMantleLokiHttpMessageHandlerFactory>(
+            new StaticHandlerFactory(handler)));
+
+        void RegisterLoki() => builder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.BatchSize = 1;
+            options.ShutdownDrainTimeout = TimeSpan.FromSeconds(30);
+        });
+        void RegisterSerilog() => builder.AddServiceMantleSerilog(options =>
+            options.FlushTimeout = TimeSpan.FromMilliseconds(100));
+
+        if (lokiRegisteredFirst)
+        {
+            RegisterLoki();
+            RegisterSerilog();
+        }
+        else
+        {
+            RegisterSerilog();
+            RegisterLoki();
+        }
+
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ILogger<ServiceMantleGrafanaLokiTests>>()
+            .LogInformation("registration-order cancellation event");
+        await handler.Entered.Task.WaitAsync(
+            TimeSpan.FromSeconds(2),
+            TestContext.Current.CancellationToken);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(25));
+
+        var stopTask = host.StopAsync(cancellation.Token);
+        var completed = await Task.WhenAny(
+            stopTask,
+            Task.Delay(TimeSpan.FromMilliseconds(750), TestContext.Current.CancellationToken));
+        handler.Release.TrySetResult();
+        await stopTask.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        await handler.Completed.Task.WaitAsync(
+            TimeSpan.FromSeconds(2),
+            TestContext.Current.CancellationToken);
+
+        var diagnostics = host.Services.GetRequiredService<ServiceMantleGrafanaLokiDiagnostics>();
+        Assert.Same(stopTask, completed);
+        Assert.Equal(1, diagnostics.DrainCancellationCount);
+        Assert.Equal(0, diagnostics.DrainTimeoutCount);
+    }
+
     private static HostApplicationBuilder CreateBuilder(
         HttpMessageHandler handler,
         IServiceMantleLokiAuthorizationHeaderResolver? resolver)
