@@ -18,6 +18,17 @@ once the registry marks the environment as required, an unavailable service cann
 The same test-support project provides the fixed credential-injection contract and the bounded,
 in-process `TwoActorBarrier` used by provider concurrency fixtures.
 
+Every registered test project has a 10-minute Microsoft.Testing.Platform global timeout. The
+real-database discovery preflight has a separate 2-minute timeout. Each invocation enables
+synchronous MTP diagnostic logging under
+`artifacts/test-diagnostics/<repository-relative-project-path>/test` or `list-tests`, so a runner
+that hangs during execution or process exit fails before the CI job timeout while retaining the
+diagnostic output already written. CI uploads that directory when the test job fails or is
+cancelled; a run that fails before creating diagnostics does not turn the upload step into another
+failure. Download the `test-diagnostics-<run-id>-<attempt>` artifact from the workflow run to inspect
+the `.diag` files. The directory and artifact names are derived only from registered project paths
+and GitHub run metadata, never from registered test environment values.
+
 SQL Server real-database registrations also declare their Docker daemon requirements in
 `packages.json`. Before the first such test project starts, the release tool queries the actual
 daemon once and requires `OSType=linux`, an `amd64`/`x86_64` architecture, and at least

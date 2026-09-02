@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -9,6 +8,7 @@ internal static class Program
 {
     private const string ManifestPath = "eng/packages.json";
     private static readonly StringComparer IdComparer = StringComparer.OrdinalIgnoreCase;
+    private static readonly DotnetProcessRunner Dotnet = new();
 
     public static async Task<int> Main(string[] args)
     {
@@ -71,15 +71,13 @@ internal static class Program
                     throw new ReleaseToolException("The requested release-tool command is unknown.");
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception)
         {
-            Console.Error.WriteLine("Package pipeline cancelled.");
-            return 130;
+            return ReportFailure(exception, Console.Error);
         }
         catch (ReleaseToolException exception)
         {
-            Console.Error.WriteLine(exception.Message);
-            return 1;
+            return ReportFailure(exception, Console.Error);
         }
     }
 
@@ -131,7 +129,7 @@ internal static class Program
         var runner = new RegisteredTestRunner(
             cancellation => dockerDaemonInspector.InspectAsync(root, cancellation),
             (arguments, environment, cancellation) =>
-                RunDotnetAsync(root, arguments, environment, cancellation));
+                Dotnet.RunAsync(root, arguments, environment, cancellation));
         await runner.RunAsync(registry, cancellationToken);
     }
 
@@ -175,48 +173,25 @@ internal static class Program
             .Concat(registry.Packages.SelectMany(package => package.Tests).Select(test => test.Project))
             .Distinct(StringComparer.OrdinalIgnoreCase);
 
-    private static async Task RunDotnetAsync(
+    private static Task RunDotnetAsync(
         string root,
         IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string>? environment,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        Dotnet.RunAsync(root, arguments, environment, cancellationToken);
+
+    internal static int ReportFailure(Exception exception, TextWriter error)
     {
-        var startInfo = new ProcessStartInfo("dotnet")
+        switch (exception)
         {
-            WorkingDirectory = root,
-            UseShellExecute = false,
-        };
-
-        foreach (var argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
-
-        if (environment is not null)
-        {
-            foreach (var variable in environment)
-            {
-                startInfo.Environment[variable.Key] = variable.Value;
-            }
-        }
-
-        using var process = Process.Start(startInfo) ??
-            throw new ReleaseToolException("The dotnet process could not be started.");
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync(CancellationToken.None);
-            throw;
-        }
-
-        if (process.ExitCode != 0)
-        {
-            throw new ReleaseToolException(
-                $"dotnet {arguments[0]} failed for a registered project with exit code {process.ExitCode}.");
+            case OperationCanceledException:
+                error.WriteLine("Package pipeline cancelled.");
+                return 130;
+            case ReleaseToolException releaseToolException:
+                error.WriteLine(releaseToolException.Message);
+                return 1;
+            default:
+                throw new ArgumentException("The package pipeline failure type is unsupported.", nameof(exception));
         }
     }
 
