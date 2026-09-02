@@ -82,32 +82,67 @@ public sealed class OracleMigrationLockRealDatabaseTests
             var bootstrap = CreateBootstrap(admin, user);
             var serviceId = ServiceId.Parse($"oracle-cancel-{Guid.NewGuid():N}");
             var holderProvider = new OracleMigrationLockProvider();
-            await using var holder = await holderProvider.AcquireAsync(
+            var holder = await holderProvider.AcquireAsync(
                 serviceId,
                 bootstrap,
                 TimeSpan.FromSeconds(10),
                 TestContext.Current.CancellationToken);
-            var requestStarted = new TaskCompletionSource(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            var contenderProvider = new OracleMigrationLockProvider(
-                new RequestSignallingOperations(new OracleMigrationLockOperations(), requestStarted));
-            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                TestContext.Current.CancellationToken);
-            var contender = contenderProvider.AcquireAsync(
+            try
+            {
+                for (var attempt = 0; attempt < 5; attempt++)
+                {
+                    var requestPending = new TaskCompletionSource<long>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    var contenderProvider = new OracleMigrationLockProvider(
+                        new RequestSignallingOperations(
+                            new OracleMigrationLockOperations(),
+                            requestPending));
+                    using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                        TestContext.Current.CancellationToken);
+                    var contender = contenderProvider.AcquireAsync(
+                        serviceId,
+                        bootstrap,
+                        TimeSpan.FromSeconds(30),
+                        cancellation.Token).AsTask();
+                    var contenderSessionId = await requestPending.Task.WaitAsync(
+                        TimeSpan.FromSeconds(10),
+                        TestContext.Current.CancellationToken);
+                    Assert.False(contender.IsCompleted);
+                    Assert.False(holder.LeaseLost.IsCancellationRequested);
+
+                    var cancellationElapsed = Stopwatch.StartNew();
+                    var exception = await CancelAndObserveAsync(cancellation, contender).WaitAsync(
+                        TimeSpan.FromSeconds(10),
+                        TestContext.Current.CancellationToken);
+                    cancellationElapsed.Stop();
+
+                    Assert.True(cancellationElapsed.Elapsed <= TimeSpan.FromSeconds(10));
+                    Assert.Equal(cancellation.Token, exception.CancellationToken);
+                    AssertSafeText(exception, bootstrap, user, serviceId);
+                    await WaitForSessionToCloseAsync(admin, user, contenderSessionId);
+                    Assert.False(holder.LeaseLost.IsCancellationRequested);
+
+                    var timeout = await Assert.ThrowsAsync<DatabaseMigrationLockException>(async () =>
+                        await new OracleMigrationLockProvider().AcquireAsync(
+                            serviceId,
+                            bootstrap,
+                            TimeSpan.FromSeconds(1),
+                            TestContext.Current.CancellationToken));
+                    Assert.Equal(WellKnownMigrationErrorCodes.LockTimeout, timeout.ErrorCode);
+                    AssertSafeText(timeout, bootstrap, user, serviceId);
+                }
+            }
+            finally
+            {
+                await holder.DisposeAsync();
+            }
+
+            await using var reacquired = await new OracleMigrationLockProvider().AcquireAsync(
                 serviceId,
                 bootstrap,
-                TimeSpan.FromSeconds(30),
-                cancellation.Token).AsTask();
-            await requestStarted.Task.WaitAsync(
-                TimeSpan.FromSeconds(10),
+                TimeSpan.FromSeconds(5),
                 TestContext.Current.CancellationToken);
-
-            await cancellation.CancelAsync();
-
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-                await contender.WaitAsync(
-                    TimeSpan.FromSeconds(10),
-                    TestContext.Current.CancellationToken));
+            Assert.False(reacquired.LeaseLost.IsCancellationRequested);
         }
         finally
         {
@@ -254,7 +289,7 @@ public sealed class OracleMigrationLockRealDatabaseTests
                 TaskCreationOptions.RunContinuationsAsynchronously);
             var allowExecution = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously);
-            var secondRequestStarted = new TaskCompletionSource(
+            var secondRequestStarted = new TaskCompletionSource<long>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             var firstProvider = new OracleMigrationLockProvider();
             var secondProvider = new OracleMigrationLockProvider(
@@ -327,6 +362,28 @@ public sealed class OracleMigrationLockRealDatabaseTests
             new DatabaseMigrationLockProviderRegistry(
                 [provider],
                 DatabaseProviderIdResolver.Empty));
+
+    private static async Task<OperationCanceledException> CancelAndObserveAsync(
+        CancellationTokenSource cancellation,
+        Task<IDatabaseMigrationLock> contender)
+    {
+        await cancellation.CancelAsync();
+        return await Assert.ThrowsAnyAsync<OperationCanceledException>(() => contender);
+    }
+
+    private static void AssertSafeText(
+        Exception exception,
+        BootstrapDatabaseConfiguration bootstrap,
+        string user,
+        ServiceId serviceId)
+    {
+        var text = exception.ToString();
+        Assert.DoesNotContain(bootstrap.ConnectionString, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(user, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(TargetPassword, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(OracleMigrationLockName.Derive(serviceId), text, StringComparison.Ordinal);
+        Assert.DoesNotContain("DBMS_LOCK.REQUEST", text, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string RequireAdminConnectionString()
     {
@@ -663,25 +720,26 @@ public sealed class OracleMigrationLockRealDatabaseTests
         }
     }
 
-    private sealed class RequestSignallingOperations(
-        IOracleMigrationLockOperations inner,
-        TaskCompletionSource requestStarted) : IOracleMigrationLockOperations
-    {
-        public async ValueTask<IOracleMigrationLockSession> OpenSessionAsync(
-            OracleConnectionStringBuilder connectionString,
-            string expectedUserName,
-            CancellationToken cancellationToken) =>
-            new RequestSignallingSession(
-                await inner.OpenSessionAsync(
-                    connectionString,
-                    expectedUserName,
-                    cancellationToken),
-                requestStarted);
-    }
+}
+
+internal sealed class RequestSignallingOperations(
+    IOracleMigrationLockOperations inner,
+    TaskCompletionSource<long> requestPending) : IOracleMigrationLockOperations
+{
+    public async ValueTask<IOracleMigrationLockSession> OpenSessionAsync(
+        OracleConnectionStringBuilder connectionString,
+        string expectedUserName,
+        CancellationToken cancellationToken) =>
+        new RequestSignallingSession(
+            await inner.OpenSessionAsync(
+                connectionString,
+                expectedUserName,
+                cancellationToken),
+            requestPending);
 
     private sealed class RequestSignallingSession(
         IOracleMigrationLockSession inner,
-        TaskCompletionSource requestStarted) : IOracleMigrationLockSession
+        TaskCompletionSource<long> requestPending) : IOracleMigrationLockSession
     {
         public long SessionId => inner.SessionId;
 
@@ -690,13 +748,20 @@ public sealed class OracleMigrationLockRealDatabaseTests
             CancellationToken cancellationToken) =>
             inner.AllocateLockHandleAsync(lockName, cancellationToken);
 
-        public ValueTask<int> RequestLockAsync(
+        public async ValueTask<int> RequestLockAsync(
             string lockHandle,
             int timeoutSeconds,
             CancellationToken cancellationToken)
         {
-            requestStarted.TrySetResult();
-            return inner.RequestLockAsync(lockHandle, timeoutSeconds, cancellationToken);
+            var request = inner.RequestLockAsync(lockHandle, timeoutSeconds, cancellationToken);
+            if (request.IsCompleted)
+            {
+                throw new InvalidOperationException(
+                    "The lock request completed before the waiting-state signal could be emitted.");
+            }
+
+            requestPending.TrySetResult(SessionId);
+            return await request;
         }
 
         public ValueTask ProbeLeaseAsync(CancellationToken cancellationToken) =>
