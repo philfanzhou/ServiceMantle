@@ -411,7 +411,12 @@ builder.Services.AddSingleton<IServiceHealthSnapshotSource, MyHealthSnapshotSour
 builder.Services
     .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
     .AddServiceMantleHealthEndpoints(options =>
-        options.ProbeTimeout = TimeSpan.FromSeconds(3));
+    {
+        options.ProbeTimeout = TimeSpan.FromSeconds(3);
+        options.ContributorTimeout = TimeSpan.FromSeconds(2);
+    })
+    .AddServiceReadinessContributor<QueueReadinessContributor>()
+    .AddServiceReadinessContributor<DependencyReadinessContributor>();
 
 var app = builder.Build();
 app.MapServiceMantleHealthEndpoints();
@@ -424,12 +429,30 @@ probe timeout is five seconds; valid values are 100 milliseconds through 30 seco
 and source failure map to `health.probe_timeout` and `health.probe_failed`; caller request cancellation
 propagates.
 
+When the base snapshot is ready, registered `IServiceReadinessContributor` implementations receive
+that exact immutable snapshot and run sequentially by unique ascending `Order`. Repeating
+`AddServiceReadinessContributor<TContributor>()` for the same implementation type is idempotent;
+null contributors, unreadable or duplicate orders, and conflicting health registrations fail safely
+when the host starts. No contributors is equivalent to approval. Rejections and implementation
+failures do not short-circuit later contributors, and the lowest-order failure deterministically wins.
+All contributors in one request share one total budget, which defaults to five seconds and accepts
+100 milliseconds through 30 seconds. A null result or implementation exception maps to
+`health.contributor_failed`; exhausting the total budget maps to `health.contributor_timeout`.
+Caller request cancellation remains distinct and propagates its original token.
+
 Ready responses use `application/json` and contain only `status`, `phase`, `migrationStatus`,
 `databaseStatus`, and `errorCode`. Probe failures use null state fields and a stable error code. The
 source is responsible for read-only, cancellation-aware sampling and for keeping its optional error
 code free of connection, exception, SQL, migration-name, or other sensitive values. The result is a
 single-process sample, not a freshness, transport-availability, or cross-instance consistency
 guarantee.
+
+Contributors are also consumer-owned and must be read-only: ServiceMantle does not prevent a third
+party implementation from performing writes or encoding semantically sensitive material in an
+otherwise valid error code, and it cannot force a non-cooperative implementation to stop after the
+budget token is cancelled. Contributors do not add background polling, caching, persistence, parallel
+execution, cross-instance aggregation, or product metrics. They are never invoked for a base
+not-ready snapshot, and the live endpoint neither resolves nor invokes them during a request.
 
 ## Management identity and authorization
 

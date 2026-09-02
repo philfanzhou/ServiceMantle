@@ -96,16 +96,66 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         }
 
         var evaluation = ServiceHealthEvaluator.Evaluate(snapshot);
+        if (!evaluation.IsReady)
+        {
+            return Results.Json(
+                HealthResponse.FromSnapshot(isReady: false, snapshot),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        ServiceReadinessContributorCombiner combiner;
+        try
+        {
+            combiner = context.RequestServices
+                .GetRequiredService<ServiceReadinessContributorCombiner>();
+        }
+        catch
+        {
+            requestAborted.ThrowIfCancellationRequested();
+            return ContributorNotReady(
+                snapshot,
+                WellKnownServiceHealthErrorCodes.ContributorFailed);
+        }
+
+        ServiceReadinessContributorResult contribution;
+        try
+        {
+            contribution = await combiner
+                .EvaluateAsync(snapshot, registration.ContributorTimeout, requestAborted)
+                .ConfigureAwait(false);
+            requestAborted.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (requestAborted.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(requestAborted);
+        }
+        catch
+        {
+            requestAborted.ThrowIfCancellationRequested();
+            return ContributorNotReady(
+                snapshot,
+                WellKnownServiceHealthErrorCodes.ContributorFailed);
+        }
+
+        if (!contribution.IsReady)
+        {
+            return ContributorNotReady(snapshot, contribution.ErrorCode!);
+        }
+
         return Results.Json(
-            HealthResponse.FromSnapshot(evaluation.IsReady, snapshot),
-            statusCode: evaluation.IsReady
-                ? StatusCodes.Status200OK
-                : StatusCodes.Status503ServiceUnavailable);
+            HealthResponse.FromSnapshot(isReady: true, snapshot),
+            statusCode: StatusCodes.Status200OK);
     }
 
     private static IResult NotReady(string errorCode) => Results.Json(
         HealthResponse.ProbeFailure(errorCode),
         statusCode: StatusCodes.Status503ServiceUnavailable);
+
+    private static IResult ContributorNotReady(
+        ServiceHealthSnapshot snapshot,
+        string errorCode) => Results.Json(
+            HealthResponse.FromContributorFailure(snapshot, errorCode),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
 
     private sealed record LiveHealthResponse(string Status);
 
@@ -131,6 +181,15 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
             MigrationStatus: null,
             DatabaseStatus: null,
             errorCode);
+
+        internal static HealthResponse FromContributorFailure(
+            ServiceHealthSnapshot snapshot,
+            string errorCode) => new(
+                "not_ready",
+                ToWireValue(snapshot.Phase),
+                ToWireValue(snapshot.MigrationStatus),
+                ToWireValue(snapshot.DatabaseStatus),
+                errorCode);
 
         private static string ToWireValue(ServiceMantle.Installation.ServiceStartupPhase phase) => phase switch
         {

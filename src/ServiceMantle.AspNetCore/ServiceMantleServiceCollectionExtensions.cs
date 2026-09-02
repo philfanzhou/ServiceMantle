@@ -10,6 +10,7 @@ using ServiceMantle.AspNetCore;
 using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Http;
+using ServiceMantle.Health;
 using ServiceMantle.Logging;
 using ServiceMantle.Management;
 using ServiceMantle.Migration;
@@ -198,10 +199,32 @@ public static class ServiceMantleServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(builder);
         var options = new ServiceMantleHealthOptions();
         configure?.Invoke(options);
-        builder.Services.AddSingleton(new ServiceMantleHealthRegistration(options.ProbeTimeout));
+        builder.Services.AddSingleton(new ServiceMantleHealthRegistration(
+            options.ProbeTimeout,
+            options.ContributorTimeout));
+        builder.Services.TryAddSingleton<ServiceReadinessContributorCombiner>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
             ServiceMantleHealthStartupValidator>());
+        return builder;
+    }
+
+    /// <summary>Adds one ordered, read-only business readiness contributor.</summary>
+    /// <typeparam name="TContributor">The contributor implementation type.</typeparam>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// Repeating the same implementation type is idempotent. Null contributors, order access
+    /// failures, and duplicate orders fail when the host starts.
+    /// </remarks>
+    public static ServiceMantleBuilder AddServiceReadinessContributor<TContributor>(
+        this ServiceMantleBuilder builder)
+        where TContributor : class, IServiceReadinessContributor
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IServiceReadinessContributor,
+            TContributor>());
         return builder;
     }
 
