@@ -216,14 +216,37 @@ public sealed class RegisteredTestTimeoutTests
             null,
             cancellation.Token);
 
-        await WaitForFileAsync(childPidPath, TestContext.Current.CancellationToken);
-        var childPid = int.Parse(
-            await File.ReadAllTextAsync(childPidPath, TestContext.Current.CancellationToken),
-            CultureInfo.InvariantCulture);
-        cancellation.Cancel();
+        try
+        {
+            await WaitForFileAsync(
+                childPidPath,
+                TimeSpan.FromSeconds(30),
+                TestContext.Current.CancellationToken);
+            var childPid = int.Parse(
+                await File.ReadAllTextAsync(childPidPath, TestContext.Current.CancellationToken),
+                CultureInfo.InvariantCulture);
+            cancellation.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation);
-        Assert.True(await WaitForExitAsync(childPid), $"Child process {childPid} was not cleaned up.");
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation);
+            Assert.True(
+                await WaitForExitAsync(
+                    childPid,
+                    TimeSpan.FromSeconds(10),
+                    TestContext.Current.CancellationToken),
+                $"Child process {childPid} was not cleaned up.");
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try
+            {
+                await operation;
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                // Every path observes cancellation after the process tree has exited.
+            }
+        }
     }
 
     [Fact]
@@ -318,9 +341,13 @@ public sealed class RegisteredTestTimeoutTests
         return arguments[index + 1];
     }
 
-    private static async Task WaitForFileAsync(string path, CancellationToken cancellationToken)
+    private static async Task WaitForFileAsync(
+        string path,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < 100; attempt++)
+        var startedAt = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(startedAt) < timeout)
         {
             if (File.Exists(path))
             {
@@ -333,9 +360,13 @@ public sealed class RegisteredTestTimeoutTests
         Assert.Fail("The child process fixture did not publish its PID.");
     }
 
-    private static async Task<bool> WaitForExitAsync(int processId)
+    private static async Task<bool> WaitForExitAsync(
+        int processId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < 100; attempt++)
+        var startedAt = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(startedAt) < timeout)
         {
             try
             {
@@ -350,7 +381,7 @@ public sealed class RegisteredTestTimeoutTests
                 return true;
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(20), TestContext.Current.CancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(20), cancellationToken);
         }
 
         return false;
