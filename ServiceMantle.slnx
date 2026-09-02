@@ -29,6 +29,7 @@
     <Project Path="tests/ServiceMantle.OpenTelemetry.Otlp.Tests/ServiceMantle.OpenTelemetry.Otlp.Tests.csproj" />
     <Project Path="tests/ServiceMantle.OpenTelemetry.Prometheus.Tests/ServiceMantle.OpenTelemetry.Prometheus.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj" />
+    <Project Path="tests/ServiceMantle.ReleaseTool.Tests/ServiceMantle.ReleaseTool.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Serilog.GrafanaLoki.Tests/ServiceMantle.Serilog.GrafanaLoki.Tests.csproj" />
   </Folder>

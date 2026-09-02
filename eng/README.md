@@ -18,6 +18,19 @@ once the registry marks the environment as required, an unavailable service cann
 The same test-support project provides the fixed credential-injection contract and the bounded,
 in-process `TwoActorBarrier` used by provider concurrency fixtures.
 
+SQL Server real-database registrations also declare their Docker daemon requirements in
+`packages.json`. Before the first such test project starts, the release tool queries the actual
+daemon once and requires `OSType=linux`, an `amd64`/`x86_64` architecture, and at least
+`2147483648` bytes of memory. Later SQL Server projects reuse that immutable result. A missing or
+unreachable daemon, malformed output, or an unsupported daemon fails the test stage before any SQL
+Server test process or container starts; diagnostics include only the observed OS, architecture,
+and total memory.
+
+On Apple Silicon, connect Docker to a Linux x86-64 VM or remote daemon with at least 2 GiB of
+memory. Running the SQL Server Linux image through QEMU or another architecture translation layer
+is outside the supported path; the client machine and its .NET process may remain arm64 because the
+preflight evaluates the daemon rather than the client.
+
 The local equivalents of the workflow stages are:
 
 ```bash
