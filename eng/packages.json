@@ -13,6 +13,10 @@
         {
           "project": "tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj",
           "environment": {}
+        },
+        {
+          "project": "tests/ServiceMantle.ReleaseTool.Tests/ServiceMantle.ReleaseTool.Tests.csproj",
+          "environment": {}
         }
       ]
     },
@@ -100,6 +104,14 @@
         {
           "project": "tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj",
           "realDatabase": true,
+          "dockerDaemon": {
+            "osType": "linux",
+            "architectures": [
+              "amd64",
+              "x86_64"
+            ],
+            "minimumMemoryBytes": 2147483648
+          },
           "environment": {
             "RUN_SERVICEMANTLE_SQLSERVER_TESTS": "true"
           }
@@ -241,6 +253,14 @@
         {
           "project": "tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj",
           "realDatabase": true,
+          "dockerDaemon": {
+            "osType": "linux",
+            "architectures": [
+              "amd64",
+              "x86_64"
+            ],
+            "minimumMemoryBytes": 2147483648
+          },
           "environment": {
             "RUN_SERVICEMANTLE_SQLSERVER_TESTS": "true"
           }

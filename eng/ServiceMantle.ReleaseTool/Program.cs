@@ -127,53 +127,12 @@ internal static class Program
         PackageRegistry registry,
         CancellationToken cancellationToken)
     {
-        foreach (var test in registry.Packages.SelectMany(package => package.Tests))
-        {
-            if (test.RealDatabase)
-            {
-                await RunDotnetAsync(
-                    root,
-                    [
-                        "test",
-                        "--project",
-                        test.Project,
-                        "--configuration",
-                        "Release",
-                        "--no-build",
-                        "--no-restore",
-                        "--list-tests",
-                        "--filter-trait",
-                        "Category=RealDatabase",
-                        "--minimum-expected-tests",
-                        "1",
-                    ],
-                    null,
-                    cancellationToken);
-            }
-
-            var arguments = new List<string>
-            {
-                "test",
-                "--project",
-                test.Project,
-                "--configuration",
-                "Release",
-                "--no-build",
-                "--no-restore",
-                "--minimum-expected-tests",
-                "1",
-            };
-            if (test.RealDatabase)
-            {
-                arguments.AddRange(["--zero-tests-policy", "strict", "--fail-skips", "on"]);
-            }
-
-            await RunDotnetAsync(
-                root,
-                arguments,
-                test.Environment,
-                cancellationToken);
-        }
+        var dockerDaemonInspector = new DockerDaemonInspector();
+        var runner = new RegisteredTestRunner(
+            cancellation => dockerDaemonInspector.InspectAsync(root, cancellation),
+            (arguments, environment, cancellation) =>
+                RunDotnetAsync(root, arguments, environment, cancellation));
+        await runner.RunAsync(registry, cancellationToken);
     }
 
     private static async Task PackAsync(
@@ -374,6 +333,17 @@ internal sealed class RegisteredTest
     public bool RealDatabase { get; init; }
 
     public Dictionary<string, string> Environment { get; init; } = [];
+
+    public RegisteredDockerDaemonRequirement? DockerDaemon { get; init; }
+}
+
+internal sealed class RegisteredDockerDaemonRequirement
+{
+    public string OsType { get; init; } = string.Empty;
+
+    public List<string> Architectures { get; init; } = [];
+
+    public long MinimumMemoryBytes { get; init; }
 }
 
 internal static class RegistryValidator
@@ -491,6 +461,43 @@ internal static class RegistryValidator
         {
             throw new ReleaseToolException(
                 "A registered real-database test must declare a required RUN_SERVICEMANTLE_*_TESTS environment variable.");
+        }
+
+        var requiresSqlServer = test.Environment.Any(variable =>
+            string.Equals(variable.Key, "RUN_SERVICEMANTLE_SQLSERVER_TESTS", StringComparison.Ordinal) &&
+            string.Equals(variable.Value, "true", StringComparison.OrdinalIgnoreCase));
+        if (requiresSqlServer && test.DockerDaemon is null)
+        {
+            throw new ReleaseToolException(
+                "A registered SQL Server test must declare Docker daemon requirements.");
+        }
+
+        if (test.DockerDaemon is not null)
+        {
+            ValidateDockerDaemonRequirement(test.DockerDaemon);
+        }
+    }
+
+    private static void ValidateDockerDaemonRequirement(
+        RegisteredDockerDaemonRequirement requirement)
+    {
+        ValidateIdentifier(requirement.OsType, "Docker daemon OS type");
+        if (requirement.Architectures.Count == 0)
+        {
+            throw new ReleaseToolException(
+                "A registered Docker daemon requirement must declare at least one architecture.");
+        }
+
+        EnsureUnique(requirement.Architectures, "Docker daemon architecture");
+        foreach (var architecture in requirement.Architectures)
+        {
+            ValidateIdentifier(architecture, "Docker daemon architecture");
+        }
+
+        if (requirement.MinimumMemoryBytes <= 0)
+        {
+            throw new ReleaseToolException(
+                "A registered Docker daemon minimum memory requirement is invalid.");
         }
     }
 
