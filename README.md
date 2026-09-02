@@ -614,8 +614,9 @@ the exception never retains provider diagnostics, connection strings, credential
 ## Typed setting snapshots
 
 `AddServiceMantleSettingSnapshots()` registers the provider-independent snapshot loader, immutable
-definition registry, store adapter, and process-local current-snapshot accessor. Register product
-definitions and an `IServiceSettingStore`; catalogs containing sensitive definitions must also
+definition registry, store adapter, process-local current-snapshot accessor, and safe read-only query
+service. Register product definitions and an `IServiceSettingStore`; catalogs containing sensitive
+definitions must also
 register an `IServiceSettingRootKeySource` backed by the instance's Bootstrap root key.
 
 ```csharp
@@ -634,6 +635,15 @@ if (result.Succeeded &&
 {
     var enabled = snapshot!.Values["product.enabled"].GetBoolean();
 }
+
+var queries = serviceProvider.GetRequiredService<ServiceSettingQueryService>();
+var definitions = queries.GetDefinitions();
+var current = await queries.GetCurrentAsync(cancellationToken);
+if (current.Succeeded)
+{
+    var enabled = current.Values.Single(value => value.Key == "product.enabled");
+    Console.WriteLine($"Version {current.Version}: {enabled.Value} ({enabled.Source})");
+}
 ```
 
 Every refresh reads one complete service-level version, verifies registered keys and persisted
@@ -645,6 +655,16 @@ complete snapshot or the new complete snapshot. A failed or cancelled refresh pr
 previous reference. Older versions fail with `configuration.snapshot_stale`; equal normalized
 content is idempotent, while different content at the same version fails with
 `configuration.snapshot_conflict`.
+
+The read-only query service is independent of HTTP and authorization. Definition projections expose
+only `Key`, `ValueType`, `IsRequired`, `IsSensitive`, `HasDefault`, and `RequiresRestart`; they do not
+expose default material or constraint implementations. Each current-value query performs exactly one
+complete refresh and projects only that refresh's successful snapshot version. Non-sensitive strings,
+numbers, Booleans, and JSON use stable invariant text, while sensitive values always have a null
+projected value and expose only whether persisted material is present. Failed refreshes return the
+existing closed snapshot error classifications with no partial or previous values. The query service
+does not update settings, authorize callers, add caching or background refresh, or bypass the complete
+snapshot validation path.
 
 This atomicity is process-local. The source must provide a complete read and is responsible for any
 storage snapshot isolation. The loader does not write settings, assign versions, rotate keys, poll

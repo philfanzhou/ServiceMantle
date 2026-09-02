@@ -9,7 +9,8 @@ public static class ServiceSettingSnapshotServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the immutable definition registry, snapshot source adapter, current accessor,
-    /// and serialized loader. Consumers provide <see cref="IServiceSettingStore"/> and register
+    /// serialized loader, and safe query service. Consumers provide
+    /// <see cref="IServiceSettingStore"/> and register
     /// <see cref="IServiceSettingRootKeySource"/> when the catalog contains sensitive settings.
     /// </summary>
     public static IServiceCollection AddServiceMantleSettingSnapshots(this IServiceCollection services)
@@ -28,6 +29,7 @@ public static class ServiceSettingSnapshotServiceCollectionExtensions
             serviceProvider.GetRequiredService<ServiceSettingDefinitionRegistry>(),
             serviceProvider.GetRequiredService<ServiceSettingCurrentSnapshotAccessor>(),
             serviceProvider.GetService<IServiceSettingRootKeySource>()));
+        services.TryAddSingleton<ServiceSettingQueryService>();
         return services;
     }
 }
