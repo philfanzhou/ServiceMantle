@@ -21,8 +21,10 @@ internal static class OracleDatabaseTarget
             builder = new OracleConnectionStringBuilder(connectionString);
             return true;
         }
-        catch (ArgumentException)
+        catch (Exception exception) when (exception is ArgumentException or OracleException)
         {
+            // ODP.NET also reports rejected connection attributes as ORA-50008. Keep parser
+            // diagnostics inside this boundary: they can contain caller-supplied credentials.
             builder = null!;
             return false;
         }
