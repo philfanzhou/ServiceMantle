@@ -20,6 +20,39 @@ env:
   DOTNET_NOLOGO: true
 
 jobs:
+  release-tool-windows:
+    name: Verify ReleaseTool process isolation (Windows)
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.1.4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify process lifetime and cancellation
+        run: >-
+          dotnet test
+          --project tests/ServiceMantle.ReleaseTool.Tests/ServiceMantle.ReleaseTool.Tests.csproj
+          --configuration Release
+          --timeout 2m
+          --minimum-expected-tests 1
+          --diagnostic
+          --diagnostic-synchronous-write
+          --diagnostic-output-directory artifacts/test-diagnostics/release-tool-windows
+
+      - name: Upload test diagnostics
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-diagnostics-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/test-diagnostics
+          if-no-files-found: ignore
+          retention-days: 14
+
   build-test-pack:
     name: Build, test, and pack
     runs-on: ubuntu-24.04
@@ -123,6 +156,15 @@ jobs:
           --no-build
           --no-restore
           -- test
+
+      - name: Upload test diagnostics
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/test-diagnostics
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Pack registered projects
         run: >-
