@@ -21,7 +21,8 @@ public static class ServiceMantleCorrelationIdApplicationBuilderExtensions
     /// </exception>
     /// <remarks>
     /// Place this entry point where the pipeline needs Correlation ID enrichment to begin. Its
-    /// relative order against exception handling is fixed by the pipeline composition task, not here.
+    /// relative order against exception handling is fixed by UseServiceMantlePipeline when composing
+    /// the complete ServiceMantle HTTP pipeline.
     /// </remarks>
     public static IApplicationBuilder UseServiceMantleCorrelationId(this IApplicationBuilder app)
     {
@@ -37,6 +38,7 @@ public static class ServiceMantleCorrelationIdApplicationBuilderExtensions
                 "The ServiceMantle Correlation ID middleware requires AddServiceMantle to be called first.");
         }
 
+        ServiceMantlePipelineComposition.RecordUse(app);
         return app.UseMiddleware<ServiceMantleCorrelationIdMiddleware>();
     }
 }
