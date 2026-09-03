@@ -1433,6 +1433,22 @@ milliseconds with a one-second command timeout and exposes detected session loss
 Process suspension, severe thread-pool starvation, or an environment that prevents command timeout
 delivery is outside that bound; detection is not zero-latency.
 
+### Oracle Autonomous Database support boundary
+
+Autonomous Serverless and Autonomous Dedicated are unsupported for Bootstrap acceptance, successful
+target observation, target preparation and migration locking. Existing users, ADMIN privileges,
+walletless TLS or a callable DBMS_LOCK package do not enable these capabilities. The provider retains
+the self-managed single-instance PDB requirement and rejects proven cloud topology before preparation
+DDL or lock allocation. Proven unsupported topology maps to target `invalid_target` and
+`migration.lock_not_supported`; authentication and transport failures before topology is known retain
+their existing classifications and do not prove target absence.
+
+See the [Autonomous decision](docs/decisions/0006-oracle-autonomous-database.md) for the Serverless/
+Dedicated distinctions, exact Bootstrap/observation/preparation/lock error matrix, the existing parser
+limitation tracked separately by [#274](https://github.com/philfanzhou/ServiceMantle/issues/274), and the
+real-cloud evidence required before support can be reconsidered. No real Autonomous support evidence
+is claimed, no wallet/cloud credential management is added, and Oracle Free CI is not Autonomous CI.
+
 ### Oracle DBMS_LOCK
 
 `ServiceMantle.Database.Oracle.Migration.OracleMigrationLockProvider` derives a stable name as
