@@ -634,6 +634,55 @@ of `ServiceSettingDefinitionRegistry`; this persistence layer stores the caller-
 Read failures expose only a stable `ServiceSettingStoreException` classification and safe message;
 the exception never retains provider diagnostics, connection strings, credentials, or setting values.
 
+## Transactional setting batches
+
+`ServiceSettingUpdateService` validates the complete candidate, encrypts changed sensitive values,
+and writes one key-only audit per changed key through `IServiceSettingUpdateTransaction`.
+`ServiceSettingUpdateCommand` contains one to 32 changes and an expected service version; null removes
+an explicit value so catalog defaults apply. Unknown input keys are not echoed in errors. Registered
+keys, validation codes and operator identifiers must be non-secret product metadata. Raw commands,
+root keys, decrypted candidates and EF sensitive-data logging must stay out of logs and responses.
+
+For EF Core, map both `AddServiceMantleSettings()` and `AddServiceMantleManagementAudit(dialect)` in the
+consumer's context. Register its existing scoped context, `ServiceId`, the definition registry and,
+for sensitive settings, `IServiceSettingRootKeySource`, then add:
+
+```csharp
+services.AddScoped<IServiceSettingUpdateTransaction,
+    EfCoreServiceSettingUpdateTransaction<ApplicationDbContext>>();
+services.AddScoped<ServiceSettingUpdateService>();
+
+await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+var result = await updateService.UpdateAsync(
+    new ServiceSettingUpdateCommand(expectedVersion,
+        new Dictionary<string, string?> { ["smtp.password"] = newPassword },
+        validatedOperator), cancellationToken);
+if (!result.Succeeded)
+{
+    await transaction.RollbackAsync(CancellationToken.None);
+    return result;
+}
+await transaction.CommitAsync(cancellationToken);
+return result;
+```
+
+The adapter requires an existing transaction with savepoint support and a context without pending
+changes or tracked setting aggregates. It explicitly saves only the batch and its audits, including
+when automatic change detection is disabled, but never commits the caller's outer transaction.
+`Applied` means saved within that transaction. Caller rollback removes the batch and audits together.
+Save failures or cancellation restore the savepoint and detach only entries owned by this operation;
+if the connection or rollback fails, discard the whole outer transaction. A failed outer commit has
+its normal provider-specific uncertainty; the result does not prove a commit occurred. SQL Server
+MARS transactions without savepoint support are rejected.
+
+`VersionConflict` covers stale versions and detected concurrent inserts/updates; retry only after
+rolling back, opening a fresh transaction and reloading. No automatic merge or retry is performed.
+Caller cancellation throws a safe `OperationCanceledException`; other failures return closed status
+values without underlying exceptions or setting values. Validators and root-key sources remain
+trusted product code with no execution-time or memory bound. This entry point does not authorize
+operators or activate runtime snapshots. The existing raw `IServiceSettingStore` keeps its separate
+persistence contract. Do not use one update service/context concurrently.
+
 ## Typed setting snapshots
 
 `AddServiceMantleSettingSnapshots()` registers the provider-independent snapshot loader, immutable
