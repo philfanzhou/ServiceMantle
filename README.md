@@ -1223,6 +1223,67 @@ Oracle migration locking is a separately registered capability. The target user 
 `EXECUTE ON SYS.DBMS_LOCK` grant; target preparation deliberately does not grant it. The provider
 uses an unpooled, non-enlisted target-user session and never commits the consumer's work unit.
 
+## Explicit database deployment mode
+
+`DatabaseDeploymentMode` is a consumer-supplied choice: `Unspecified`, `SingleInstance`, or
+`MultiInstance`. It is not inferred from a connection string, an absent lock provider, or the number
+of observed processes, and it is not persisted in Bootstrap connection information. Deployment
+capabilities are independent of bootstrap, preparation, and lock registrations.
+
+A provider implements `IDatabaseDeploymentCapabilityProvider`, publishes an immutable
+`DatabaseDeploymentCapability` (`SingleInstanceOnly` or `SingleAndMultiInstance`), and supplies a
+read-only canonical target identity. `DatabaseDeploymentCapabilityRegistry` captures declarations
+using the same provider-id resolver snapshot as the other registries. Equivalent target identities
+must be ordinally equal despite credential changes or connection-string spelling; different targets
+must remain distinct. The core does not parse paths, hash complete connection strings as target
+identities, or provide filesystem identity rules.
+
+`DatabaseDeploymentValidator.Validate(providerId, mode)` reads only the captured declarations. It
+performs no I/O and never calls the provider. Missing capability, `Unspecified`, undefined modes, and
+`SingleInstanceOnly` with `MultiInstance` fail closed. The result exposes
+`PreparationErrorCode = database_target_preparation.capability_not_supported` and
+`MigrationErrorCode = migration.lock_not_supported` on rejection. Consumers must call this same
+validator before preparation, Setup, or other startup side effects.
+
+```csharp
+var deployments = new DatabaseDeploymentCapabilityRegistry(
+    deploymentCapabilityProviders, bootstrapProviders.ProviderIdResolver);
+var deployment = new DatabaseDeploymentValidator(deployments)
+    .Validate(bootstrap.Provider, deploymentMode);
+if (!deployment.IsSupported)
+{
+    logger.LogError("Deployment is not supported: {ErrorCode}", deployment.PreparationErrorCode);
+    return; // No preparation or other side effects before this check.
+}
+
+var orchestrator = new DatabaseMigrationOrchestrator(executor, lockProviders, deployments);
+var migration = await orchestrator.OrchestrateMigrationAsync(
+    serviceId, bootstrap, deploymentMode, TimeSpan.FromSeconds(30), cancellationToken);
+```
+
+The original migration overload always requires a real distributed lease. The new overload also
+requires a real lease for `MultiInstance`; neither missing locks nor deployment declarations provide
+an implicit fallback. `SingleInstance` instead resolves the provider's target and serializes calls
+for the same canonical provider/target across orchestrator and registry instances in this process,
+including calls with different service IDs or passwords. It does not construct an
+`IDatabaseMigrationLock`. The next caller re-inspects after acquiring its turn; an already compatible
+target skips execution, otherwise only Empty/PendingMigration execute once and require a compatible
+final inspection. Failure and cancellation release the process-local turn.
+
+For `SingleInstance`, the acquisition timeout cancels identity resolution and bounds the queue wait;
+identity providers must cooperate with cancellation. Once acquired, execution observes only caller
+cancellation. Internal cancellation becomes the corresponding safe stage failure; caller cancellation
+preserves the original token without a raw inner exception. The existing real-lock path retains its
+current contract; [#281](https://github.com/philfanzhou/ServiceMantle/issues/281) and
+[#282](https://github.com/philfanzhou/ServiceMantle/issues/282) track its separate cancellation and
+unknown-state follow-ups.
+
+This is process-local serialization, not a cross-process lock or proof of deployment topology.
+Two processes both configured as `SingleInstance` are not detected or coordinated. Providers own
+canonicalization; external file replacement, aliases, other processes, committed side-effect rollback,
+and forced termination are outside this contract. Existing provider packages do not implicitly gain
+a declaration; SQLite provider registration and file behavior remain separate follow-up work.
+
 ## Database target preparation
 
 Database target preparation is a separate, optional capability from bootstrap validation. A provider that implements `IBootstrapDatabaseProvider` does not automatically support preparing (creating) a missing target; a provider opts in only by also registering an `IDatabaseTargetPreparationProvider` implementation. Callers resolve this capability through `DatabaseTargetPreparationProviderRegistry` and must fail closed with `database_target_preparation.capability_not_supported` when no preparation provider is registered for a database provider id, rather than treating an unsupported provider as already prepared.
