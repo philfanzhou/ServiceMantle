@@ -1,0 +1,170 @@
+[
+  {
+    "name": "community_80",
+    "handshake": "8.0.36",
+    "version": "8.0.36",
+    "systemVersion": "8.0.36",
+    "comment": "MySQL Community Server - GPL",
+    "accept": true
+  },
+  {
+    "name": "community_84",
+    "handshake": "8.4.0",
+    "version": "8.4.0",
+    "systemVersion": "8.4.0",
+    "comment": "MySQL Community Server - GPL",
+    "accept": true
+  },
+  {
+    "name": "community_91",
+    "handshake": "9.1.0",
+    "version": "9.1.0",
+    "systemVersion": "9.1.0",
+    "comment": "MySQL Community Server - GPL",
+    "accept": true
+  },
+  {
+    "name": "enterprise",
+    "handshake": "8.4.0-commercial",
+    "version": "8.4.0-commercial",
+    "systemVersion": "8.4.0-commercial",
+    "comment": "MySQL Enterprise Server - Commercial",
+    "accept": false
+  },
+  {
+    "name": "heatwave",
+    "handshake": "8.4.0",
+    "version": "8.4.0",
+    "systemVersion": "8.4.0",
+    "comment": "MySQL HeatWave",
+    "accept": false
+  },
+  {
+    "name": "aurora",
+    "handshake": "8.0.mysql_aurora.3.05.2",
+    "version": "8.0.mysql_aurora.3.05.2",
+    "systemVersion": "8.0.mysql_aurora.3.05.2",
+    "comment": "Source distribution",
+    "accept": false
+  },
+  {
+    "name": "percona",
+    "handshake": "8.0.36-28",
+    "version": "8.0.36-28",
+    "systemVersion": "8.0.36-28",
+    "comment": "Percona Server (GPL)",
+    "accept": false
+  },
+  {
+    "name": "mariadb",
+    "handshake": "11.4.2-MariaDB",
+    "version": "11.4.2-MariaDB",
+    "systemVersion": "11.4.2-MariaDB",
+    "comment": "MariaDB Server",
+    "accept": false
+  },
+  {
+    "name": "tidb",
+    "handshake": "8.0.11-TiDB-v8.1.0",
+    "version": "8.0.11-TiDB-v8.1.0",
+    "systemVersion": "8.0.11-TiDB-v8.1.0",
+    "comment": "TiDB Server",
+    "accept": false
+  },
+  {
+    "name": "source_distribution",
+    "handshake": "8.4.0",
+    "version": "8.4.0",
+    "systemVersion": "8.4.0",
+    "comment": "Source distribution",
+    "accept": false
+  },
+  {
+    "name": "unknown",
+    "handshake": "8.4.0",
+    "version": "8.4.0",
+    "systemVersion": "8.4.0",
+    "comment": "compatible MySQL server",
+    "accept": false
+  },
+  {
+    "name": "null_comment",
+    "handshake": "8.4.0",
+    "version": "8.4.0",
+    "systemVersion": "8.4.0",
+    "comment": null,
+    "accept": false
+  },
+  {
+    "name": "empty_comment",
+    "handshake": "8.4.0",
+    "version": "8.4.0",
+    "systemVersion": "8.4.0",
+    "comment": "",
+    "accept": false
+  },
+  {
+    "name": "trailing_space",
+    "handshake": "8.4.0",
+    "version": "8.4.0",
+    "systemVersion": "8.4.0",
+    "comment": "MySQL Community Server - GPL ",
+    "accept": false
+  },
+  {
+    "name": "case_difference",
+    "handshake": "8.4.0",
+    "version": "8.4.0",
+    "systemVersion": "8.4.0",
+    "comment": "mysql community server - gpl",
+    "accept": false
+  },
+  {
+    "name": "handshake_mismatch",
+    "handshake": "8.0.36",
+    "version": "8.4.0",
+    "systemVersion": "8.4.0",
+    "comment": "MySQL Community Server - GPL",
+    "accept": false
+  },
+  {
+    "name": "sql_mismatch",
+    "handshake": "8.4.0",
+    "version": "8.4.0",
+    "systemVersion": "8.0.36",
+    "comment": "MySQL Community Server - GPL",
+    "accept": false
+  },
+  {
+    "name": "debug_suffix",
+    "handshake": "8.4.0-debug",
+    "version": "8.4.0-debug",
+    "systemVersion": "8.4.0-debug",
+    "comment": "MySQL Community Server - GPL",
+    "accept": false
+  },
+  {
+    "name": "unsupported_major",
+    "handshake": "10.0.0",
+    "version": "10.0.0",
+    "systemVersion": "10.0.0",
+    "comment": "MySQL Community Server - GPL",
+    "accept": false
+  },
+  {
+    "name": "leading_zero",
+    "handshake": "08.4.0",
+    "version": "08.4.0",
+    "systemVersion": "08.4.0",
+    "comment": "MySQL Community Server - GPL",
+    "accept": false
+  },
+  {
+    "name": "missing_patch",
+    "handshake": "8.4",
+    "version": "8.4",
+    "systemVersion": "8.4",
+    "comment": "MySQL Community Server - GPL",
+    "accept": false
+  }
+]
