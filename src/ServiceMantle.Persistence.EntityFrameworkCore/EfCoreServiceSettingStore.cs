@@ -250,7 +250,7 @@ public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
         return DeserializeValues(entity.ValuesJson);
     }
 
-    private static ServiceSettingStoreSnapshot ToSnapshot(
+    internal static ServiceSettingStoreSnapshot ToSnapshot(
         ServiceId serviceId,
         ServiceSettingEntity entity)
     {
@@ -286,7 +286,7 @@ public sealed class EfCoreServiceSettingStore<TDbContext> : IServiceSettingStore
         return false;
     }
 
-    private static ServiceSettingStoreSnapshot EmptySnapshot(ServiceId serviceId) =>
+    internal static ServiceSettingStoreSnapshot EmptySnapshot(ServiceId serviceId) =>
         new(
             serviceId,
             version: 0,
