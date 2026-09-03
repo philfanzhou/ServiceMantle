@@ -447,6 +447,53 @@ middleware logs nothing itself and never swallows a downstream exception or canc
 - No other headers or log fields are cleaned; structured value cleaning stays with the existing
   sanitizer.
 
+## Composed HTTP pipeline
+
+`UseServiceMantlePipeline()` fixes the relative order of the existing HTTP capabilities:
+configured Forwarded Headers → Correlation ID → Problem Details → Routing → Security Response
+Headers → Phase Gate → Authentication (when registered) → Rate Limiting → Authorization (when
+registered) → consumer middleware and endpoints.
+
+```csharp
+builder.Services.AddServiceMantle(serviceId, instanceId)
+    .AddSecurityResponseHeaders()
+    .AddSensitiveHeaders()
+    .AddRateLimiting()
+    .AddServiceMantlePhaseGate();
+// AddForwardedHeaders requires an explicit trusted-proxy configuration when needed.
+// Register the consuming service's authentication separately, if used.
+var app = builder.Build();
+app.UseServiceMantlePipeline();
+app.MapGet("/management/status", () => Results.Ok())
+    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Status)
+    .RequireServiceMantleSecurityResponseHeaders();
+```
+
+Call the composition once, before consumer handlers. Missing required registrations, repeated
+composition, or mixing it with individual ServiceMantle middleware on the same builder throws a
+fixed configuration exception. Forwarding remains disabled without its explicit trust registration;
+the minimal pipeline starts without authentication. The composition does not register a logging
+host, health endpoints, telemetry, authentication schemes, or database persistence. Endpoint security
+headers, named rate-limit policies, and authorization metadata remain explicit.
+
+Security headers run after routing and before the gate, authentication, and rate limiting, so marked
+endpoints receive the existing baseline on 2xx, validation failures, 401/403, 429, exceptions, and
+phase rejections while headers remain unsent. Correlation ID wraps exception logging. Forwarding and
+authentication run before rate-limit partition selection. The gate retains its existing route table
+and precedes authentication; inactive phases can therefore return the established 503 before an
+authentication challenge. Exceptions and 429 use Problem Details; phase rejections and management
+cookie 401/403 retain their existing safe JSON formats. Arbitrary consumer 4xx responses are not
+converted into Problem Details.
+
+Sensitive Header diagnostics still require explicit use of
+`ServiceMantleRequestHeaderDiagnosticProjector`; the same immutable registry applies before and
+after the gate. No request Header is automatically logged or rewritten. The integration tests lock
+the response matrix and demonstrate observable failures for critical inverted orders. The helper
+does not inspect arbitrary consumer/framework middleware, prevent an earlier handler from short
+circuiting, or extend guarantees to unmarked endpoints, already-started responses, transport errors,
+or logs that bypass the projector. Do not independently add routing, authentication, rate limiting,
+or authorization around the composed pipeline.
+
 ## Safe Problem Details and exception mapping
 
 `UseServiceMantleProblemDetails()` maps downstream exceptions to deterministic RFC 7807 JSON while
