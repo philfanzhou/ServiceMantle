@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.Versioning;
 using ServiceMantle.ReleaseTool;
 using Xunit;
 
@@ -193,10 +194,95 @@ public sealed class DockerDaemonPreflightTests
 
         using var temporaryDirectory = new TemporaryDirectory();
         var childPidPath = Path.Combine(temporaryDirectory.Path, "child.pid");
-        var scriptPath = Path.Combine(temporaryDirectory.Path, "docker-info-fixture.sh");
+        var startInfo = await CreateProcessFixtureAsync(temporaryDirectory.Path, childPidPath);
+
+        await RunProcessFixtureAsync(startInfo, async (cancellation, operation) =>
+        {
+            await WaitForFileAsync(
+                childPidPath,
+                TimeSpan.FromSeconds(30),
+                TestContext.Current.CancellationToken);
+            var childPid = int.Parse(
+                await File.ReadAllTextAsync(childPidPath, TestContext.Current.CancellationToken),
+                System.Globalization.CultureInfo.InvariantCulture);
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation);
+            Assert.True(
+                await WaitForExitAsync(childPid, TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken),
+                $"Child process {childPid} was not cleaned up.");
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Missing_pid_publication_cleans_up_the_process_on_timeout_or_wait_cancellation(bool cancelWait)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Skip("This process-tree fixture requires a POSIX shell.");
+            return;
+        }
+
+        using var temporaryDirectory = new TemporaryDirectory();
+        var childPidPath = Path.Combine(temporaryDirectory.Path, "child.pid");
+        // Publish only to an observation channel so the expected PID file never appears.
+        var observedPidPath = Path.Combine(temporaryDirectory.Path, "observed.pid");
+        var startInfo = await CreateProcessFixtureAsync(temporaryDirectory.Path, observedPidPath);
+        using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            TestContext.Current.CancellationToken);
+        Task<CapturedProcessResult>? observedOperation = null;
+        var childPid = 0;
+
+        var exception = await Record.ExceptionAsync(() => RunProcessFixtureAsync(
+            startInfo,
+            async (_, operation) =>
+            {
+                observedOperation = operation;
+                await WaitForFileAsync(
+                    observedPidPath,
+                    TimeSpan.FromSeconds(30),
+                    TestContext.Current.CancellationToken);
+                childPid = int.Parse(
+                    await File.ReadAllTextAsync(observedPidPath, TestContext.Current.CancellationToken),
+                    System.Globalization.CultureInfo.InvariantCulture);
+                var pidWait = WaitForFileAsync(
+                    childPidPath,
+                    cancelWait ? TimeSpan.FromSeconds(30) : TimeSpan.FromMilliseconds(100),
+                    waitCancellation.Token);
+                if (cancelWait)
+                {
+                    waitCancellation.Cancel();
+                }
+
+                await pidWait;
+            }));
+
+        if (cancelWait)
+        {
+            Assert.IsAssignableFrom<OperationCanceledException>(exception);
+        }
+        else
+        {
+            Assert.IsType<TimeoutException>(exception);
+        }
+
+        Assert.NotNull(observedOperation);
+        Assert.True(observedOperation.IsCanceled);
+        Assert.False(File.Exists(childPidPath));
+        Assert.True(
+            await WaitForExitAsync(childPid, TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken),
+            $"Child process {childPid} was not cleaned up after the PID wait failed.");
+    }
+
+    [UnsupportedOSPlatform("windows")]
+    private static async Task<ProcessStartInfo> CreateProcessFixtureAsync(string directory, string childPidPath)
+    {
+        var scriptPath = Path.Combine(directory, "docker-info-fixture.sh");
         await File.WriteAllTextAsync(
             scriptPath,
-            "#!/bin/sh\nsleep 300 &\nchild_pid=$!\nprintf '%s' \"$child_pid\" > \"$1\"\nwait \"$child_pid\"\n",
+            "#!/bin/sh\nsleep 300 &\nchild_pid=$!\nprintf '%s' \"$child_pid\" > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\nwait \"$child_pid\"\n",
             TestContext.Current.CancellationToken);
         File.SetUnixFileMode(
             scriptPath,
@@ -204,23 +290,40 @@ public sealed class DockerDaemonPreflightTests
 
         var startInfo = new ProcessStartInfo(scriptPath);
         startInfo.ArgumentList.Add(childPidPath);
+        return startInfo;
+    }
+
+    private static async Task RunProcessFixtureAsync(
+        ProcessStartInfo startInfo,
+        Func<CancellationTokenSource, Task<CapturedProcessResult>, Task> inspect)
+    {
         using var cancellation = new CancellationTokenSource();
         var operation = CapturedProcessRunner.RunAsync(startInfo, cancellation.Token);
 
-        await WaitForFileAsync(childPidPath, TestContext.Current.CancellationToken);
-        var childPid = int.Parse(
-            await File.ReadAllTextAsync(childPidPath, TestContext.Current.CancellationToken),
-            System.Globalization.CultureInfo.InvariantCulture);
-        cancellation.Cancel();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation);
-        Assert.True(await WaitForExitAsync(childPid), $"Child process {childPid} was not cleaned up.");
+        try
+        {
+            await inspect(cancellation, operation);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try
+            {
+                await operation;
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                // Observe cancellation only after the process and redirected streams have exited.
+            }
+        }
     }
 
-    private static async Task WaitForFileAsync(string path, CancellationToken cancellationToken)
+    private static async Task WaitForFileAsync(string path, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < 100; attempt++)
+        var startedAt = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(startedAt) < timeout)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (File.Exists(path))
             {
                 return;
@@ -229,13 +332,15 @@ public sealed class DockerDaemonPreflightTests
             await Task.Delay(TimeSpan.FromMilliseconds(20), cancellationToken);
         }
 
-        Assert.Fail("The child process fixture did not publish its PID.");
+        throw new TimeoutException("The child process fixture did not publish its PID.");
     }
 
-    private static async Task<bool> WaitForExitAsync(int processId)
+    private static async Task<bool> WaitForExitAsync(int processId, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < 100; attempt++)
+        var startedAt = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(startedAt) < timeout)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 using var process = Process.GetProcessById(processId);
@@ -249,7 +354,7 @@ public sealed class DockerDaemonPreflightTests
                 return true;
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(20), TestContext.Current.CancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(20), cancellationToken);
         }
 
         return false;
