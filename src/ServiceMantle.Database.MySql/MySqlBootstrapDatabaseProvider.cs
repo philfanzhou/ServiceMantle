@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using System.IO;
 using System.Net.Sockets;
@@ -38,7 +39,7 @@ public sealed class MySqlBootstrapDatabaseProvider : IBootstrapDatabaseProvider
         BootstrapServerVersionRequirement.Required);
 
     /// <summary>
-    /// Validates the declared MySQL version, connection settings, and target connectivity.
+    /// Validates the declared version, connection settings, supported Community product identity, and target connectivity.
     /// </summary>
     public async ValueTask<BootstrapValidationResult> ValidateAsync(
         BootstrapDatabaseConfiguration database,
@@ -154,6 +155,7 @@ internal interface IMySqlBootstrapProbe
 internal enum MySqlProbeOutcome
 {
     Success,
+    ServerProductMismatch,
     TargetIdentityMismatch,
     DatabaseNotFound,
     AuthenticationFailed,
@@ -164,6 +166,13 @@ internal enum MySqlProbeOutcome
 
 internal sealed class MySqlBootstrapProbe : IMySqlBootstrapProbe
 {
+    private readonly Func<MySqlConnectionStringBuilder, DbConnection> createConnection;
+
+    internal MySqlBootstrapProbe(Func<MySqlConnectionStringBuilder, DbConnection>? createConnection = null)
+    {
+        this.createConnection = createConnection ?? MySqlProbeConnection.Create;
+    }
+
     public async ValueTask<MySqlProbeOutcome> ProbeAsync(
         MySqlConnectionStringBuilder connectionString,
         int commandTimeoutSeconds,
@@ -171,37 +180,86 @@ internal sealed class MySqlBootstrapProbe : IMySqlBootstrapProbe
     {
         try
         {
-            await using var connection = new MySqlConnection(connectionString.ConnectionString);
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            var (outcome, openFailed) = await ProbeConnectionAsync(
+                connectionString, commandTimeoutSeconds, false, cancellationToken).ConfigureAwait(false);
+            if (!openFailed || outcome is not (MySqlProbeOutcome.DatabaseNotFound or MySqlProbeOutcome.TargetAccessDenied))
+            {
+                return outcome;
+            }
+
+            // One read-only fallback, with exactly the same credentials and connection options.
+            var serverSettings = new MySqlConnectionStringBuilder(connectionString.ConnectionString)
+            {
+                Database = string.Empty
+            };
+            cancellationToken.ThrowIfCancellationRequested();
+            var (serverOutcome, _) = await ProbeConnectionAsync(
+                serverSettings, commandTimeoutSeconds, true, cancellationToken).ConfigureAwait(false);
+            // A failed fallback never supplies evidence that the original target is missing.
+            return serverOutcome == MySqlProbeOutcome.Success ? outcome :
+                serverOutcome is MySqlProbeOutcome.DatabaseNotFound or MySqlProbeOutcome.TargetAccessDenied
+                    ? MySqlProbeOutcome.ServerProductMismatch : serverOutcome;
+        }
+        catch (Exception exception)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException("MySQL database probe was cancelled.", cancellationToken);
+            }
+
+            return MySqlProbeFailureClassifier.Classify(exception);
+        }
+    }
+
+    private async ValueTask<(MySqlProbeOutcome Outcome, bool OpenFailed)> ProbeConnectionAsync(
+        MySqlConnectionStringBuilder settings,
+        int commandTimeoutSeconds,
+        bool serverOnly,
+        CancellationToken cancellationToken)
+    {
+        DbConnection? connection = null;
+        try
+        {
+            connection = createConnection(settings);
+            try
+            {
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return (MySqlProbeFailureClassifier.Classify(exception), true);
+            }
+
+            var product = await MySqlProductIdentity.ProbeAsync(
+                connection, commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (product != MySqlProbeOutcome.Success || serverOnly)
+            {
+                return (product, false);
+            }
 
             await using var command = connection.CreateCommand();
             command.CommandText =
                 "SELECT @@lower_case_table_names, " +
                 "BINARY DATABASE() = BINARY @databaseName, " +
                 "LOWER(DATABASE()) = LOWER(@databaseName)";
-            command.Parameters.AddWithValue("@databaseName", connectionString.Database);
+            MySqlProbeConnection.AddParameter(command, "@databaseName", settings.Database);
             command.CommandTimeout = commandTimeoutSeconds;
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                return MySqlProbeOutcome.ValidationFailed;
+                return (MySqlProbeOutcome.ValidationFailed, false);
             }
 
             var lowerCaseTableNames = reader.GetInt32(0);
             var exactMatch = !reader.IsDBNull(1) && reader.GetBoolean(1);
             var caseFoldedMatch = !reader.IsDBNull(2) && reader.GetBoolean(2);
-            return ResolveTargetIdentityOutcome(exactMatch, caseFoldedMatch, lowerCaseTableNames);
+            return (ResolveTargetIdentityOutcome(exactMatch, caseFoldedMatch, lowerCaseTableNames), false);
         }
-        catch (Exception exception)
+        finally
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                throw new OperationCanceledException(
-                    "MySQL database probe was cancelled.",
-                    cancellationToken);
-            }
-
-            return MySqlProbeFailureClassifier.Classify(exception);
+            await MySqlProbeConnection.DisposeSafelyAsync(connection).ConfigureAwait(false);
         }
     }
 
