@@ -89,7 +89,7 @@ public static class ServiceMantleOpenTelemetryBuilderExtensions
         return builder;
     }
 
-    private static ResourceBuilder CreateResource(ServiceLogContext context) =>
+    internal static ResourceBuilder CreateResource(ServiceLogContext context) =>
         ResourceBuilder.CreateEmpty().AddService(
             serviceName: context.ServiceName,
             serviceVersion: context.ServiceVersion,
