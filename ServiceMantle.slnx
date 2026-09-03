@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/ServiceMantle.ReferenceService/ServiceMantle.ReferenceService.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/ServiceMantle/ServiceMantle.csproj" />
     <Project Path="src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" />
@@ -16,6 +19,7 @@
     <Project Path="src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ServiceMantle.ReferenceService.Tests/ServiceMantle.ReferenceService.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Testing/ServiceMantle.Testing.csproj" />
     <Project Path="tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj" />
     <Project Path="tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj" />

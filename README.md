@@ -40,6 +40,15 @@ using (context.BeginScope(logger, new Dictionary<string, object?>
 
 Extension fields are limited to 32, require non-null values and identifier-style names, and cannot duplicate or override the four protected identity fields `ServiceName`, `ServiceVersion`, `InstanceId`, and `CorrelationId` (matching is case-insensitive). Disposing the returned handle ends the scope; standard `ILogger` async scope semantics keep concurrent execution contexts isolated. This context does not sanitize extension values or configure a logging sink, so callers remain responsible for passing only values safe for their providers.
 
+## Consumer reference skeleton
+
+[`samples/ServiceMantle.ReferenceService`](samples/ServiceMantle.ReferenceService/README.md) is a
+minimal consumer-owned host with its own DbContext, migration, setting definitions and contributor
+implementations. It exposes only a skeleton root response and does not initialize a database,
+create administrators, or activate downstream capabilities at startup. Its external management
+identity provider remains explicitly unconfigured. See the sample README for ownership boundaries,
+smoke tests and the separate integration tasks; this is not a production template.
+
 ## Core OpenTelemetry instrumentation
 
 Install the optional `ServiceMantle.OpenTelemetry` package and opt in after the host identity is
