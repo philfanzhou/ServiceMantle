@@ -26,13 +26,16 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
 
         endpoints.MapGet(
             "/health/live",
-            static () => Results.Json(new LiveHealthResponse("live")));
+            static () => Results.Json(new LiveHealthResponse("live")))
+            .WithMetadata(new ServiceMantlePhaseHealthMetadata("/health/live"));
         endpoints.MapGet(
             "/health/ready",
-            (Func<HttpContext, Task<IResult>>)EvaluateReadinessAsync);
+            (Func<HttpContext, Task<IResult>>)EvaluateReadinessAsync)
+            .WithMetadata(new ServiceMantlePhaseHealthMetadata("/health/ready"));
         endpoints.MapGet(
             "/health",
-            (Func<HttpContext, Task<IResult>>)EvaluateReadinessAsync);
+            (Func<HttpContext, Task<IResult>>)EvaluateReadinessAsync)
+            .WithMetadata(new ServiceMantlePhaseHealthMetadata("/health"));
         return endpoints;
     }
 

@@ -244,6 +244,68 @@ semantics. This capability does not configure a proxy, firewall, Host Filtering 
 HTTPS redirection, and it cannot prevent consumers or environment variables from separately enabling
 the framework middleware.
 
+## Management paths and startup phase gate
+
+Opt in on the ServiceMantle builder, then put the gate after routing and before endpoint execution:
+
+```csharp
+serviceMantle.AddServiceMantlePhaseGate(options =>
+{
+    options.ManagementPathPrefix = "/management";
+    options.SnapshotTimeout = TimeSpan.FromSeconds(1);
+});
+// Register the consumer's read-only IServiceHealthSnapshotSource when state is available.
+var app = builder.Build();
+app.UseRouting();
+app.UseServiceMantlePhaseGate();
+var management = app.MapServiceMantleManagementGroup();
+management.MapGet("/status", GetSafeStatus)
+    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Status);
+management.MapPost("/bootstrap", ConfigureBootstrap)
+    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Bootstrap);
+management.MapPost("/setup", CompleteSetup)
+    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Setup);
+management.MapGet("/settings", ReadSettings)
+    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Management)
+    .RequireServiceMantleManagementAdmin();
+```
+
+The handlers are consumer-owned examples, not endpoints supplied by this capability. Authentication,
+authorization, rate limiting and response-header policies remain separately required where applicable;
+the phase gate does not choose their relative middleware order. Status must be read-only GET/HEAD
+and return a safe projection. The gate never bypasses endpoint authorization.
+
+Prefixes are trimmed, lowercased and stripped of one trailing slash. They must be non-root absolute
+paths of at most 128 ASCII characters with only letters, digits, `_` and `-` within nonempty segments.
+Encoding, dot segments, repeated separators, backslashes, query/fragment syntax and overlap with
+`/health` are rejected. Equivalent repeated registrations are idempotent. Invalid/conflicting options,
+missing/duplicate middleware use, mismatched surface metadata, unclassified literal management routes,
+dynamic first management children and duplicate management route text with overlapping methods fail
+at startup. Standard ASP.NET Core owns other route-constraint/custom-matcher ambiguity checks.
+
+| Observed state | Additional surfaces allowed |
+| --- | --- |
+| BootstrapConfiguration, migration NotStarted or Succeeded | Bootstrap |
+| PendingSetup, migration Succeeded, database Reachable | Setup |
+| Completed, migration Succeeded, database Reachable | Management and unmarked business endpoints |
+| Migration Running/Failed, all other combinations, absent/failed/timed-out source | None |
+
+The library's mapped live/readiness endpoints and read-only Status are available in every state.
+Live/Status do not resolve the state source; readiness retains its existing probe behavior. Only
+library health metadata enables this exception: arbitrary endpoints with health-looking paths do
+not bypass the gate. Bootstrap remains available with an unreachable database so initial
+configuration can be supplied. Unmarked routes within the management prefix are denied. Unmatched
+requests return 404; phase rejection returns 503 with only `service.phase.unavailable` and no-store.
+
+Each other request obtains one immutable `ServiceHealthSnapshot` from the existing consumer-owned
+`IServiceHealthSnapshotSource`. Concurrent phase changes do not rewrite that request's decision or
+revoke requests already admitted using an earlier snapshot. Source errors, internal cancellation and
+asynchronous timeouts fail closed; request cancellation propagates separately. Timeout is configurable
+from 50 ms to 30 seconds and bounds waiting after the source yields, not synchronous blocking or work
+that ignores cancellation. This capability does not validate source freshness, run setup/migration,
+or govern middleware that short-circuits before the gate. Runtime route reconfiguration is outside
+startup validation; per-request path/metadata checks still reject mismatches conservatively.
+
 ## Isolated setup and management rate limiting
 
 Rate limiting is opt-in and registers two named sliding-window policies without a global limiter:
