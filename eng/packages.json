@@ -34,6 +34,10 @@
         {
           "project": "tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj",
           "environment": {}
+        },
+        {
+          "project": "tests/ServiceMantle.ReferenceService.Tests/ServiceMantle.ReferenceService.Tests.csproj",
+          "environment": {}
         }
       ]
     },
