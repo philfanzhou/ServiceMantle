@@ -164,17 +164,37 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
         administrativeBuilder.Pooling = false;
         administrativeBuilder.Enlist = false;
 
+        if (targetBuilder.Host?.Contains(',') == true || administrativeBuilder.Host?.Contains(',') == true ||
+            targetBuilder.Multiplexing || administrativeBuilder.Multiplexing)
+        {
+            return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+        }
+
+        administrativeBuilder.Database = string.IsNullOrEmpty(administrativeBuilder.Database)
+            ? "postgres" : administrativeBuilder.Database;
+        administrativeBuilder.Timeout = ApplySafeConnectTimeout(administrativeBuilder.Timeout);
+        administrativeBuilder.CommandTimeout = CommandTimeoutSeconds;
+        targetBuilder.Database = administrativeBuilder.Database;
+        targetBuilder.Pooling = false;
+        targetBuilder.Enlist = false;
+        targetBuilder.Timeout = ApplySafeConnectTimeout(targetBuilder.Timeout);
+        targetBuilder.CommandTimeout = CommandTimeoutSeconds;
+
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
         try
         {
-            return await creationProbe.CreateIfMissingAsync(
+            var result = await creationProbe.CreateIfMissingAsync(
                     databaseName,
                     ownerName,
+                    targetBuilder,
                     administrativeBuilder,
                     linkedCts.Token)
                 .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            linkedCts.Token.ThrowIfCancellationRequested();
+            return result;
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -277,6 +297,7 @@ internal interface INpgsqlDatabaseCreationProbe
     ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
         string ownerName,
+        NpgsqlConnectionStringBuilder targetConnectionString,
         NpgsqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken);
 }
@@ -296,6 +317,7 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
     public async ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
         string ownerName,
+        NpgsqlConnectionStringBuilder targetConnectionString,
         NpgsqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken)
     {
@@ -304,6 +326,12 @@ internal sealed class NpgsqlDatabaseCreationProbe : INpgsqlDatabaseCreationProbe
         {
             connection = new NpgsqlConnection(administrativeConnectionString.ConnectionString);
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            if (!await PostgreSqlServerIdentity.VerifyAsync(connection, targetConnectionString, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+            }
 
             var serverEncoding = await GetServerEncodingAsync(connection, cancellationToken).ConfigureAwait(false);
 

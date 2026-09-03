@@ -7,6 +7,11 @@ namespace ServiceMantle.Bootstrap;
 /// <see cref="AdministrativeConnectionString"/> is used only for the duration of the preparation
 /// call. Providers must not persist it, write it into a Bootstrap projection or business database,
 /// log it, include it in diagnostics, or return it in any result.
+/// Server-database preparation verifies both endpoints using the target credentials and a
+/// provider-defined maintenance database. The caller must trust the endpoints under its
+/// authentication/TLS policy and use stable single-server routes independent of database or user.
+/// Unknown proxy routing, session migration, and transparent failover are outside this contract.
+/// Verification failure does not authorize falling back to administrative credentials on the target.
 /// </remarks>
 public sealed class DatabaseTargetPreparationRequest
 {

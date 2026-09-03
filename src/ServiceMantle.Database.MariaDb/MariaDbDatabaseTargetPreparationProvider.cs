@@ -156,6 +156,16 @@ public sealed class MariaDbDatabaseTargetPreparationProvider : IDatabaseTargetPr
         administrativeBuilder.AutoEnlist = false;
         MariaDbDatabaseTarget.ApplySafeTimeouts(administrativeBuilder);
 
+        if (targetBuilder.Server.Contains(',') || administrativeBuilder.Server.Contains(','))
+        {
+            return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+        }
+
+        targetBuilder.Database = string.Empty;
+        targetBuilder.Pooling = false;
+        targetBuilder.AutoEnlist = false;
+        MariaDbDatabaseTarget.ApplySafeTimeouts(targetBuilder);
+
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
@@ -163,11 +173,15 @@ public sealed class MariaDbDatabaseTargetPreparationProvider : IDatabaseTargetPr
 
         try
         {
-            return await creationProbe.CreateIfMissingAsync(
+            var result = await creationProbe.CreateIfMissingAsync(
                     databaseName,
+                    targetBuilder,
                     administrativeBuilder,
                     linkedCts.Token)
                 .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            linkedCts.Token.ThrowIfCancellationRequested();
+            return result;
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -202,6 +216,7 @@ internal interface IMariaDbDatabaseCreationProbe
 {
     ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
+        MySqlConnectionStringBuilder targetConnectionString,
         MySqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken);
 }
@@ -220,6 +235,7 @@ internal sealed class MariaDbDatabaseCreationProbe : IMariaDbDatabaseCreationPro
 
     public async ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
+        MySqlConnectionStringBuilder targetConnectionString,
         MySqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken)
     {
@@ -228,6 +244,12 @@ internal sealed class MariaDbDatabaseCreationProbe : IMariaDbDatabaseCreationPro
         {
             connection = new MySqlConnection(administrativeConnectionString.ConnectionString);
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            if (!await MariaDbServerIdentity.VerifyAsync(connection, targetConnectionString, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+            }
 
             if (!await IsMariaDbServerAsync(connection, cancellationToken).ConfigureAwait(false))
             {

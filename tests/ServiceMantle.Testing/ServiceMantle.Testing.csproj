@@ -9,4 +9,8 @@
     <PackageReference Include="xunit.v3.extensibility.core" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ServiceMantle\ServiceMantle.csproj" />
+  </ItemGroup>
+
 </Project>

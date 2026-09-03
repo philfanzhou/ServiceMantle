@@ -1239,6 +1239,26 @@ if (!preparedObservation.IsTargetConnectable)
 
 `DatabaseTargetPreparationResult.Outcome` reports `Created` or `AlreadyExists`. Implementations must never overwrite, drop, recreate, or otherwise destructively modify a target that already exists.
 
+### Server identity before creation
+
+PostgreSQL, MySQL, MariaDB, and SQL Server now require a live same-server proof before
+accepting or creating a database. A temporary random session-lock challenge on the
+administrative connection must be visible through the target endpoint and credentials.
+Creation then uses that same administrative session. Host names and connection strings need
+not match, so legitimate aliases are supported.
+
+The target login must be able to access the provider's maintenance namespace: the selected
+administrative database for PostgreSQL (default `postgres`), no selected database for
+MySQL/MariaDB, or `master` for SQL Server. A missing target does not prevent proof. Inability
+to authenticate or read the proof fails without creation; a negative proof returns
+`database_target_preparation.invalid_target`. This tightens earlier preparation behavior:
+invalid target credentials can no longer be bypassed using the administrator's credentials.
+
+Use authenticated stable single-server routes independent of database/user selection.
+Unknown proxy routing, session migration, transparent failover, and read-only routing are
+outside the supported boundary. See the [server identity contract](docs/contracts/server-database-identity.md)
+for evidence, privileges, cleanup, error mappings, and precise non-guarantees.
+
 ### PostgreSQL target preparation
 
 `ServiceMantle.Database.PostgreSql.PostgreSqlDatabaseTargetPreparationProvider` observes a PostgreSQL target with a single connection attempt. A structured "database does not exist" response (SQLSTATE `3D000`) proves the server is reachable and the target is missing. Authentication errors can occur before PostgreSQL checks the database name, so those observations report a reachable server with `TargetExists == null`; target-level `CONNECT` denial (`42501`) reports a known existing but unreachable target. `PrepareAsync` uses the caller-supplied administrative connection string with pooling forcibly disabled and outside any ambient transaction to check `pg_database` and, only when the target is absent, issue `CREATE DATABASE ... OWNER ...`; the owner is the target connection string's PostgreSQL username and must already exist as a role.
@@ -1349,8 +1369,8 @@ rules.
 
 These capabilities do not run EF Core migrations, create logins or users, grant permissions,
 configure server or storage settings, or claim equivalent behavior on Azure SQL and other managed
-services. The caller must ensure that the target and administrative connection strings address the
-same trusted server instance; cross-connection server identity verification is tracked separately.
+services. The same-server proof above applies before target metadata is accepted or a database
+is created; it does not expand the supported routing or managed-service boundary.
 
 ### Error codes
 
