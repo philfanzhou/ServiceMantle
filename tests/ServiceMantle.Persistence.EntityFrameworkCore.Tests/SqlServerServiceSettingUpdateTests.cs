@@ -46,7 +46,11 @@ public sealed class SqlServerServiceSettingUpdateTests
             await using var loser = Context(gate);
             await using var loserTransaction = await loser.Database.BeginTransactionAsync(token);
             var pending = Updater(loser).UpdateAsync(Command(initialVersion, ("count", "3")), token).AsTask();
-            await gate.Reached.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+            var firstCompletion = await Task.WhenAny(gate.Reached.Task, pending).WaitAsync(TimeSpan.FromSeconds(30), token);
+            if (firstCompletion == pending)
+            {
+                Assert.Fail($"The batch returned before reaching SaveChanges: {(await pending).Status}.");
+            }
             try
             {
                 await using var winner = Context();

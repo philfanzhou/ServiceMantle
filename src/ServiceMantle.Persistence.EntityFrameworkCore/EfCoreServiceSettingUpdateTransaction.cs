@@ -58,7 +58,8 @@ public sealed class EfCoreServiceSettingUpdateTransaction<TDbContext>(
             return Failure(ServiceSettingUpdateStatus.ContextNotClean);
         }
 
-        var savepoint = "sm_settings_" + Guid.NewGuid().ToString("N");
+        // SQL Server limits literal transaction/savepoint identifiers to 32 characters.
+        var savepoint = "sm_" + Guid.NewGuid().ToString("N")[..24];
         var owned = new List<object>();
         var saved = false;
         var createdSavepoint = false;
