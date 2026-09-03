@@ -467,9 +467,9 @@ public sealed class ServiceMantleGrafanaLokiTests
             TestContext.Current.CancellationToken);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        var lifecycle = cancelHost.Services.GetServices<IHostedService>()
-            .OfType<ServiceMantleGrafanaLokiLifecycle>()
-            .Single();
+        var lifecycle = Assert.IsType<ServiceMantleGrafanaLokiLifecycle>(Assert.Single(
+            cancelHost.Services.GetServices<IHostedService>(),
+            service => service is ServiceMantleGrafanaLokiLifecycle));
 
         await lifecycle.StopAsync(cancellation.Token);
 
@@ -500,9 +500,9 @@ public sealed class ServiceMantleGrafanaLokiTests
         await handler.Entered.Task.WaitAsync(
             TimeSpan.FromSeconds(2),
             TestContext.Current.CancellationToken);
-        var lifecycle = host.Services.GetServices<IHostedService>()
-            .OfType<ServiceMantleGrafanaLokiLifecycle>()
-            .Single();
+        var lifecycle = Assert.IsType<ServiceMantleGrafanaLokiLifecycle>(Assert.Single(
+            host.Services.GetServices<IHostedService>(),
+            service => service is ServiceMantleGrafanaLokiLifecycle));
         using var cancellation = new CancellationTokenSource();
         if (cancelFirstAttempt)
         {

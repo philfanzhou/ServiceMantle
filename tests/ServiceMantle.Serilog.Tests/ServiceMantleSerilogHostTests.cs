@@ -190,9 +190,9 @@ public sealed class ServiceMantleSerilogHostTests
         var sink = new TrackingSink();
         using var host = BuildHost(sink);
         await host.StartAsync(TestContext.Current.CancellationToken);
-        var lifecycle = host.Services.GetServices<IHostedService>()
-            .OfType<ServiceMantleSerilogLifecycle>()
-            .Single();
+        var lifecycle = Assert.IsType<ServiceMantleSerilogLifecycle>(Assert.Single(
+            host.Services.GetServices<IHostedService>(),
+            service => service is ServiceMantleSerilogLifecycle));
         var runtime = host.Services.GetRequiredService<ServiceMantleSerilogRuntime>();
 
         await Task.WhenAll(Enumerable.Range(0, 16).Select(_ =>
