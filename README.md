@@ -82,6 +82,45 @@ packages, not by the ServiceMantle resource whitelist. This package does not gua
 sensitivity or cardinality, export success, sampling behavior, or any mapping between W3C trace
 identity and the ServiceMantle Correlation ID.
 
+## Fixed service and installation metrics
+
+Opt in with `serviceMantle.AddServiceMantleMetrics()`. This creates a metrics provider and one
+host-owned `ServiceMantleMetrics` publisher; it is independent of
+`AddOpenTelemetryInstrumentation()` and adds no exporter, database polling or background work.
+Repeating the call is idempotent. Omitting it leaves these instruments unregistered.
+
+The meter is `ServiceMantle`, contract version `1.0.0`. Both observable gauges use unit `1`:
+
+| Instrument | Point tags | Values |
+| --- | --- | --- |
+| `servicemantle.service.info` | None | Always 1 |
+| `servicemantle.installation.phase` | `phase` only | Four 0/1 points: `unknown`, `bootstrap_configuration`, `pending_setup`, `completed` |
+
+Each phase collection is one-hot, initially `unknown`. Identity is carried only by the existing
+immutable resource fields `service.name`, `service.version`, and `service.instance.id`. The consumer
+publishes a phase after observing its authoritative state, and clears it when that state is unknown:
+
+```csharp
+var metrics = serviceProvider.GetRequiredService<ServiceMantleMetrics>();
+metrics.SetPhase(ServiceStartupPhase.PendingSetup);
+// After the consumer confirms committed setup completion:
+metrics.SetPhase(ServiceStartupPhase.Completed);
+// If the consumer can no longer determine the current phase:
+metrics.SetUnknown();
+```
+
+There is no request/user/credential/custom-tag or arbitrary phase-string API. Invalid enum values
+throw a safe exception without replacing the previous observation. Concurrent updates and collection
+preserve a complete one-hot phase set. The SDK view explicitly allows only the declared point tags
+and limits information/phase cardinality to 1/4 respectively; the publisher emits exactly five
+series per host resource. Different hosts in one process export only their own Meter objects;
+external same-name meters are dropped. Host disposal closes only that host's publisher.
+
+Identity fields must be non-secret deployment metadata. These bounds do not cover fleet size,
+historical identities, upstream runtime/HTTP metrics, consumer-added resources/views/meters or
+backend retention. This is the last explicitly published observation, not a fresh database read or
+proof of persistent installation status. The consumer controls its correctness and freshness.
+
 ## Optional OTLP exporter
 
 Install `ServiceMantle.OpenTelemetry.Otlp` to add the official
