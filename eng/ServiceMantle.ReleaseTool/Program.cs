@@ -14,6 +14,11 @@ internal static class Program
     {
         try
         {
+            if (args.Length >= 3 && args[0] == TestProcessHost.Command)
+            {
+                return await TestProcessHost.RunHostAsync(args);
+            }
+
             var root = FindRepositoryRoot();
             var registry = PackageRegistry.Load(Path.Combine(root, ManifestPath));
             RegistryValidator.Validate(root, registry);
@@ -126,10 +131,11 @@ internal static class Program
         CancellationToken cancellationToken)
     {
         var dockerDaemonInspector = new DockerDaemonInspector();
+        var testProcess = new DotnetProcessRunner(isolateProcessTree: true);
         var runner = new RegisteredTestRunner(
             cancellation => dockerDaemonInspector.InspectAsync(root, cancellation),
             (arguments, environment, cancellation) =>
-                Dotnet.RunAsync(root, arguments, environment, cancellation));
+                testProcess.RunAsync(root, arguments, environment, cancellation));
         await runner.RunAsync(registry, cancellationToken);
     }
 

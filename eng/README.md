@@ -29,6 +29,17 @@ failure. Download the `test-diagnostics-<run-id>-<attempt>` artifact from the wo
 the `.diag` files. The directory and artifact names are derived only from registered project paths
 and GitHub run metadata, never from registered test environment values.
 
+Registered test invocations run inside a dedicated POSIX process group or Windows job. A small
+ReleaseTool host establishes that scope before starting `dotnet`, reports the original runner exit
+code, and stays alive until ReleaseTool terminates the scope. This also removes ordinary descendants
+whose immediate parent has already exited, on success, internal MTP timeout, or caller cancellation.
+Internal timeout remains a pipeline failure; caller cancellation remains exit code 130. Host startup
+has a separate 30-second protocol deadline and fails before starting tests if isolation cannot be
+established. Test standard output/error and synchronous diagnostic files retain their existing paths.
+This is process lifetime management, not a sandbox: cleanup does not cover processes deliberately
+leaving the POSIX group, processes launched through external services, or Docker containers. It does
+not promise graceful child shutdown or cleanup after ReleaseTool itself is forcibly terminated.
+
 SQL Server real-database registrations also declare their Docker daemon requirements in
 `packages.json`. Before the first such test project starts, the release tool queries the actual
 daemon once and requires `OSType=linux`, an `amd64`/`x86_64` architecture, and at least

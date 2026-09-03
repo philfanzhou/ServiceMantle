@@ -136,6 +136,7 @@ public sealed class RegisteredTestTimeoutTests
         }
 
         using var temporaryDirectory = new TemporaryDirectory();
+        var childPidPath = Path.Combine(temporaryDirectory.Path, "child.pid");
         var diagnosticDirectory = Path.Combine(temporaryDirectory.Path, "diagnostics");
         var root = FindRepositoryRoot();
         var projectPath = Path.Combine(
@@ -143,49 +144,63 @@ public sealed class RegisteredTestTimeoutTests
             "tests",
             "ServiceMantle.ReleaseTool.Tests",
             "ServiceMantle.ReleaseTool.Tests.csproj");
-        var runner = new DotnetProcessRunner();
+        var runner = new DotnetProcessRunner(isolateProcessTree: true);
         var environment = new Dictionary<string, string>
         {
             [HangingProcessEnvironmentVariable] = "true",
+            ["SERVICEMANTLE_RELEASETOOL_CHILD_PID_PATH"] = childPidPath,
         };
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(
             TestContext.Current.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var stopwatch = Stopwatch.StartNew();
 
-        var exception = await Assert.ThrowsAsync<ReleaseToolException>(() => runner.RunAsync(
-            root,
-            [
-                "test",
-                "--project",
-                projectPath,
-                "--configuration",
-                "Release",
-                "--no-build",
-                "--no-restore",
-                "--filter-method",
-                $"{typeof(HangingProcessFixtureTests).FullName}.Completed_test_can_leave_a_foreground_thread",
-                "--minimum-expected-tests",
-                "1",
-                "--timeout",
-                "1s",
-                "--diagnostic",
-                "--diagnostic-synchronous-write",
-                "--diagnostic-output-directory",
-                diagnosticDirectory,
-                "--no-ansi",
-                "--progress",
-                "off",
-            ],
-            environment,
-            deadline.Token));
+        try
+        {
+            var exception = await Assert.ThrowsAsync<ReleaseToolException>(() => runner.RunAsync(
+                root,
+                [
+                    "test",
+                    "--project",
+                    projectPath,
+                    "--configuration",
+                    "Release",
+                    "--no-build",
+                    "--no-restore",
+                    "--filter-method",
+                    $"{typeof(HangingProcessFixtureTests).FullName}.Completed_test_can_leave_a_foreground_thread",
+                    "--minimum-expected-tests",
+                    "1",
+                    "--timeout",
+                    "1s",
+                    "--diagnostic",
+                    "--diagnostic-synchronous-write",
+                    "--diagnostic-output-directory",
+                    diagnosticDirectory,
+                    "--no-ansi",
+                    "--progress",
+                    "off",
+                ],
+                environment,
+                deadline.Token));
 
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(30));
-        Assert.Contains("exit code", exception.Message, StringComparison.Ordinal);
-        Assert.NotEmpty(Directory.EnumerateFiles(diagnosticDirectory, "*.diag", SearchOption.AllDirectories));
-        Assert.All(
-            Directory.EnumerateFiles(diagnosticDirectory, "*.diag", SearchOption.AllDirectories),
-            path => Assert.True(new FileInfo(path).Length > 0, $"Diagnostic file {path} was empty."));
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(30));
+            Assert.Contains("exit code", exception.Message, StringComparison.Ordinal);
+            Assert.NotEmpty(Directory.EnumerateFiles(diagnosticDirectory, "*.diag", SearchOption.AllDirectories));
+            Assert.All(
+                Directory.EnumerateFiles(diagnosticDirectory, "*.diag", SearchOption.AllDirectories),
+                path => Assert.True(new FileInfo(path).Length > 0, $"Diagnostic file {path} was empty."));
+            var childPid = int.Parse(
+                await File.ReadAllTextAsync(childPidPath, TestContext.Current.CancellationToken),
+                CultureInfo.InvariantCulture);
+            Assert.True(
+                await WaitForExitAsync(childPid, TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken),
+                $"Child process {childPid} survived the MTP timeout.");
+        }
+        finally
+        {
+            KillFixtureChild(childPidPath);
+        }
     }
 
     [Fact]
@@ -202,13 +217,13 @@ public sealed class RegisteredTestTimeoutTests
         var scriptPath = Path.Combine(temporaryDirectory.Path, "dotnet-fixture.sh");
         await File.WriteAllTextAsync(
             scriptPath,
-            "#!/bin/sh\nsleep 300 &\nchild_pid=$!\nprintf '%s' \"$child_pid\" > \"$1\"\nwait \"$child_pid\"\n",
+            "#!/bin/sh\nsleep 300 &\nchild_pid=$!\nprintf '%s' \"$child_pid\" > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\nwait \"$child_pid\"\n",
             TestContext.Current.CancellationToken);
         File.SetUnixFileMode(
             scriptPath,
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 
-        var runner = new DotnetProcessRunner(scriptPath);
+        var runner = new DotnetProcessRunner(scriptPath, isolateProcessTree: true);
         using var cancellation = new CancellationTokenSource();
         var operation = runner.RunAsync(
             temporaryDirectory.Path,
@@ -249,11 +264,13 @@ public sealed class RegisteredTestTimeoutTests
         }
     }
 
-    [Fact]
-    public async Task Nonzero_dotnet_exit_does_not_expose_test_environment_values()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Nonzero_dotnet_exit_does_not_expose_test_environment_values(bool isolateProcessTree)
     {
         const string sensitiveEnvironmentValue = "release-tool-environment-secret";
-        var runner = new DotnetProcessRunner();
+        var runner = new DotnetProcessRunner(isolateProcessTree: isolateProcessTree);
 
         var exception = await Assert.ThrowsAsync<ReleaseToolException>(() => runner.RunAsync(
             FindRepositoryRoot(),
@@ -286,6 +303,112 @@ public sealed class RegisteredTestTimeoutTests
         Assert.Equal("Package pipeline cancelled.", cancellationError.ToString().Trim());
         Assert.Equal("Registered test runner timed out.", runnerError.ToString().Trim());
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(42)]
+    public async Task Exited_test_parent_leaves_no_child_and_preserves_its_exit_code(int exitCode)
+    {
+        using var directory = new TemporaryDirectory();
+        var pidPath = Path.Combine(directory.Path, "child.pid");
+        var environment = FixtureEnvironment(pidPath);
+        environment["SERVICEMANTLE_RELEASETOOL_FIXTURE_EXIT_CODE"] = exitCode.ToString(CultureInfo.InvariantCulture);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        var runner = new DotnetProcessRunner(isolateProcessTree: true);
+        try
+        {
+            var operation = runner.RunAsync(FindRepositoryRoot(), FixtureArguments(), environment, deadline.Token);
+            if (exitCode == 0)
+            {
+                await operation;
+            }
+            else
+            {
+                var exception = await Assert.ThrowsAsync<ReleaseToolException>(() => operation);
+                Assert.Contains($"exit code {exitCode}.", exception.Message, StringComparison.Ordinal);
+            }
+
+            var childPid = int.Parse(await File.ReadAllTextAsync(pidPath, deadline.Token), CultureInfo.InvariantCulture);
+            Assert.True(await WaitForExitAsync(childPid, TimeSpan.FromSeconds(10), deadline.Token));
+        }
+        finally
+        {
+            KillFixtureChild(pidPath);
+        }
+    }
+
+    [Fact]
+    public async Task Cancelling_one_test_scope_does_not_terminate_another_scope()
+    {
+        using var directory = new TemporaryDirectory();
+        var firstPidPath = Path.Combine(directory.Path, "first.pid");
+        var secondPidPath = Path.Combine(directory.Path, "second.pid");
+        using var firstCancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        using var secondCancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var runner = new DotnetProcessRunner(isolateProcessTree: true);
+        var first = runner.RunAsync(FindRepositoryRoot(), FixtureArguments(), FixtureEnvironment(firstPidPath), firstCancellation.Token);
+        var second = runner.RunAsync(FindRepositoryRoot(), FixtureArguments(), FixtureEnvironment(secondPidPath), secondCancellation.Token);
+        try
+        {
+            await WaitForFileAsync(firstPidPath, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            await WaitForFileAsync(secondPidPath, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            var firstPid = int.Parse(await File.ReadAllTextAsync(firstPidPath, TestContext.Current.CancellationToken), CultureInfo.InvariantCulture);
+            var secondPid = int.Parse(await File.ReadAllTextAsync(secondPidPath, TestContext.Current.CancellationToken), CultureInfo.InvariantCulture);
+            firstCancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+            Assert.True(await WaitForExitAsync(firstPid, TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+            using var secondChild = Process.GetProcessById(secondPid);
+            Assert.False(secondChild.HasExited);
+            Assert.False(second.IsCompleted);
+            secondCancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second);
+            Assert.True(await WaitForExitAsync(secondPid, TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            firstCancellation.Cancel();
+            secondCancellation.Cancel();
+            try
+            {
+                await Task.WhenAll(first, second);
+            }
+            catch (OperationCanceledException)
+            {
+                // Observe both scopes before removing their fixture files.
+            }
+            finally
+            {
+                KillFixtureChild(firstPidPath);
+                KillFixtureChild(secondPidPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Test_host_start_failure_does_not_expose_environment_values()
+    {
+        const string secret = "test-host-start-failure-secret";
+        var runner = new DotnetProcessRunner("servicemantle-missing-test-executable", isolateProcessTree: true);
+        var exception = await Assert.ThrowsAsync<ReleaseToolException>(() => runner.RunAsync(
+            FindRepositoryRoot(), [], new Dictionary<string, string> { ["SENSITIVE_TEST_VALUE"] = secret },
+            TestContext.Current.CancellationToken));
+        Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
+        Assert.Contains("test process host", exception.Message, StringComparison.Ordinal);
+    }
+
+    private static string[] FixtureArguments() =>
+    [
+        typeof(HangingProcessFixtureTests).Assembly.Location,
+        "-method",
+        $"{typeof(HangingProcessFixtureTests).FullName}.Completed_test_can_leave_a_foreground_thread",
+    ];
+
+    private static Dictionary<string, string> FixtureEnvironment(string pidPath) => new()
+    {
+        [HangingProcessEnvironmentVariable] = "true",
+        ["SERVICEMANTLE_RELEASETOOL_CHILD_PID_PATH"] = pidPath,
+    };
 
     [Fact]
     public void Ci_uploads_only_the_fixed_diagnostic_root_after_failure_or_cancellation()
@@ -358,6 +481,29 @@ public sealed class RegisteredTestTimeoutTests
         }
 
         Assert.Fail("The child process fixture did not publish its PID.");
+    }
+
+    private static void KillFixtureChild(string childPidPath)
+    {
+        if (!File.Exists(childPidPath))
+        {
+            return;
+        }
+
+        var childPid = int.Parse(File.ReadAllText(childPidPath), CultureInfo.InvariantCulture);
+        try
+        {
+            using var child = Process.GetProcessById(childPid);
+            child.Kill(entireProcessTree: true);
+        }
+        catch (ArgumentException)
+        {
+            // The production cleanup already removed the fixture child.
+        }
+        catch (InvalidOperationException)
+        {
+            // The child exited between lookup and the fallback cleanup.
+        }
     }
 
     private static async Task<bool> WaitForExitAsync(
@@ -438,6 +584,25 @@ public sealed class HangingProcessFixtureTests
                 StringComparison.Ordinal))
         {
             return;
+        }
+
+        var childStartInfo = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo("ping.exe", ["-n", "301", "127.0.0.1"])
+            : new ProcessStartInfo("/bin/sleep", ["300"]);
+        childStartInfo.UseShellExecute = false;
+        childStartInfo.RedirectStandardOutput = true;
+        childStartInfo.RedirectStandardError = true;
+        using var child = Process.Start(childStartInfo)!;
+        var pidPath = Environment.GetEnvironmentVariable("SERVICEMANTLE_RELEASETOOL_CHILD_PID_PATH")!;
+        File.WriteAllText(pidPath + ".tmp", child.Id.ToString(CultureInfo.InvariantCulture));
+        File.Move(pidPath + ".tmp", pidPath);
+
+        if (int.TryParse(
+                Environment.GetEnvironmentVariable("SERVICEMANTLE_RELEASETOOL_FIXTURE_EXIT_CODE"),
+                CultureInfo.InvariantCulture,
+                out var exitCode))
+        {
+            Environment.Exit(exitCode);
         }
 
         var thread = new Thread(() => Thread.Sleep(Timeout.InfiniteTimeSpan))

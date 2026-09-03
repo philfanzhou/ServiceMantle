@@ -6,10 +6,12 @@ namespace ServiceMantle.ReleaseTool;
 internal sealed class DotnetProcessRunner
 {
     private readonly string executable;
+    private readonly bool isolateProcessTree;
 
-    internal DotnetProcessRunner(string executable = "dotnet")
+    internal DotnetProcessRunner(string executable = "dotnet", bool isolateProcessTree = false)
     {
         this.executable = executable;
+        this.isolateProcessTree = isolateProcessTree;
     }
 
     internal async Task RunAsync(
@@ -18,6 +20,7 @@ internal sealed class DotnetProcessRunner
         IReadOnlyDictionary<string, string>? environment,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var startInfo = new ProcessStartInfo(executable)
         {
             WorkingDirectory = root,
@@ -35,6 +38,13 @@ internal sealed class DotnetProcessRunner
             {
                 startInfo.Environment[variable.Key] = variable.Value;
             }
+        }
+
+        if (isolateProcessTree)
+        {
+            var exitCode = await TestProcessHost.RunAsync(startInfo, cancellationToken);
+            ThrowIfFailed(arguments, exitCode);
+            return;
         }
 
         Process process;
@@ -69,12 +79,17 @@ internal sealed class DotnetProcessRunner
                 throw;
             }
 
-            if (process.ExitCode != 0)
-            {
-                var operation = arguments.Count > 0 ? arguments[0] : "command";
-                throw new ReleaseToolException(
-                    $"dotnet {operation} failed for a registered project with exit code {process.ExitCode}.");
-            }
+            ThrowIfFailed(arguments, process.ExitCode);
+        }
+    }
+
+    private static void ThrowIfFailed(IReadOnlyList<string> arguments, int exitCode)
+    {
+        if (exitCode != 0)
+        {
+            var operation = arguments.Count > 0 ? arguments[0] : "command";
+            throw new ReleaseToolException(
+                $"dotnet {operation} failed for a registered project with exit code {exitCode}.");
         }
     }
 }
