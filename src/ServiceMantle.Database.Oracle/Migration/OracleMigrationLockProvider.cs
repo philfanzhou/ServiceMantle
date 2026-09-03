@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Diagnostics;
 using Oracle.ManagedDataAccess.Client;
 using ServiceMantle.Bootstrap;
@@ -36,6 +37,12 @@ public sealed class OracleMigrationLockProvider : IDatabaseMigrationLockProvider
     /// <c>DBMS_LOCK.REQUEST</c>. The target user must have a direct
     /// <c>EXECUTE ON SYS.DBMS_LOCK</c> grant.
     /// </summary>
+    /// <remarks>
+    /// Unsupported versions, password identities, runtime topologies, or missing topology/lock
+    /// privileges produce <c>migration.lock_not_supported</c>. Malformed configuration, connection
+    /// failures, session identity mismatches, and other SQL failures produce <c>migration.lock_failed</c>.
+    /// Null arguments and out-of-range timeouts retain their argument exceptions.
+    /// </remarks>
     public async ValueTask<IDatabaseMigrationLock> AcquireAsync(
         ServiceId serviceId,
         BootstrapDatabaseConfiguration bootstrap,
@@ -53,10 +60,12 @@ public sealed class OracleMigrationLockProvider : IDatabaseMigrationLockProvider
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (!TryBuildTarget(bootstrap, out var connectionString, out var targetUserName))
+        if (!TryBuildTarget(bootstrap, out var connectionString, out var targetUserName, out var failureKind))
         {
             throw Failure(
-                WellKnownMigrationErrorCodes.LockFailed,
+                failureKind == OracleMigrationLockFailureKind.NotSupported
+                    ? WellKnownMigrationErrorCodes.LockNotSupported
+                    : WellKnownMigrationErrorCodes.LockFailed,
                 "The Oracle migration lock target is invalid or unsupported.");
         }
 
@@ -125,7 +134,7 @@ public sealed class OracleMigrationLockProvider : IDatabaseMigrationLockProvider
             throw exception.Kind == OracleMigrationLockFailureKind.NotSupported
                 ? Failure(
                     WellKnownMigrationErrorCodes.LockNotSupported,
-                    "The Oracle target user cannot execute SYS.DBMS_LOCK directly.")
+                    "The Oracle migration lock capability is not supported for this target.")
                 : Failure(
                     WellKnownMigrationErrorCodes.LockFailed,
                     "Oracle migration lock acquisition failed.");
@@ -162,27 +171,53 @@ public sealed class OracleMigrationLockProvider : IDatabaseMigrationLockProvider
     private static bool TryBuildTarget(
         BootstrapDatabaseConfiguration bootstrap,
         out OracleConnectionStringBuilder connectionString,
-        out string targetUserName)
+        out string targetUserName,
+        out OracleMigrationLockFailureKind failureKind)
     {
         connectionString = null!;
         targetUserName = string.Empty;
+        failureKind = OracleMigrationLockFailureKind.Failed;
         if (!string.Equals(
                 bootstrap.Provider,
                 WellKnownDatabaseProviderIds.Oracle,
                 StringComparison.OrdinalIgnoreCase) ||
             !OracleDatabaseTarget.TryNormalizeServerVersion(
                 bootstrap.ServerVersion,
-                out var majorVersion) ||
-            majorVersion < OracleDatabaseTarget.MinimumSupportedServerMajorVersion ||
-            !OracleDatabaseTarget.TryBuildConnectionString(
-                bootstrap.ConnectionString,
-                out connectionString) ||
+                out var majorVersion))
+        {
+            return false;
+        }
+
+        try
+        {
+            // Recognize unsupported authentication even when this ODP.NET build rejects its keywords.
+            var input = new DbConnectionStringBuilder { ConnectionString = bootstrap.ConnectionString };
+            if (new[] { "DBA Privilege", "Proxy User Id", "Proxy Password", "Wallet Location", "Token Authentication" }
+                .Any(input.ContainsKey))
+            {
+                failureKind = OracleMigrationLockFailureKind.NotSupported;
+                return false;
+            }
+
+            if (!OracleDatabaseTarget.TryBuildConnectionString(bootstrap.ConnectionString, out connectionString) ||
+                string.IsNullOrWhiteSpace(connectionString.DataSource))
+            {
+                return false;
+            }
+        }
+        catch (Exception exception) when (exception is ArgumentException or OracleException)
+        {
+            return false;
+        }
+
+        if (majorVersion < OracleDatabaseTarget.MinimumSupportedServerMajorVersion ||
             !OracleDatabaseTarget.TryGetTargetIdentity(
                 connectionString,
                 out targetUserName,
                 out _,
                 out _))
         {
+            failureKind = OracleMigrationLockFailureKind.NotSupported;
             return false;
         }
 

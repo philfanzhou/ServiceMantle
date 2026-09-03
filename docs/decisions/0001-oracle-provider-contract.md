@@ -72,6 +72,13 @@ cannot be called, the provider cannot prove the supported topology: observation 
 `migration.lock_not_supported`. The uncovered shapes' decision issues are listed under
 [Follow-up decisions](#follow-up-decisions).
 
+Locking also rejects a declared version below 19c or a password/user shape outside the
+supported contract as `migration.lock_not_supported`. Malformed provider/version/connection
+configuration or a missing data source remains `migration.lock_failed`, as do actual
+connection/authentication failures, an unexpected session identity, and unknown SQL failures.
+Null arguments and invalid timeout values retain argument exceptions. Capability rejection
+does not imply that an unauthenticated target's hidden topology has been identified.
+
 Oracle documents that every user owns one same-named schema and distinguishes local
 PDB users from common users in its
 [multitenant administration guide](https://docs.oracle.com/en/database/oracle/oracle-database/21/multi/introduction-to-the-multitenant-architecture.html).
