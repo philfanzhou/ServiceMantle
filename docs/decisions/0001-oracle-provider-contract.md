@@ -387,7 +387,8 @@ capabilities stay in ServiceMantle.
 
 ## Follow-up decisions
 
-- [#201](https://github.com/philfanzhou/ServiceMantle/issues/201): Oracle RAC and connection failover.
+- [#201](https://github.com/philfanzhou/ServiceMantle/issues/201): Oracle RAC and connection failover;
+  [ADR 0005](0005-oracle-rac-and-failover.md) keeps these unsupported and defines re-opening evidence.
 - [#202](https://github.com/philfanzhou/ServiceMantle/issues/202): Autonomous Database.
 - [#203](https://github.com/philfanzhou/ServiceMantle/issues/203): CDB root and common users.
 - [#204](https://github.com/philfanzhou/ServiceMantle/issues/204): wallet, token, external, and proxy authentication.
