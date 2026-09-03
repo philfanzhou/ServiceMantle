@@ -62,11 +62,7 @@ internal sealed class OracleMigrationLockOperations : IOracleMigrationLockOperat
                     expectedUserName,
                     cancellationToken)
                 .ConfigureAwait(false);
-            if (topology != OracleTargetProbeOutcome.Success)
-            {
-                throw new OracleMigrationLockOperationException(
-                    OracleMigrationLockFailureKind.Failed);
-            }
+            EnsureSupportedTopology(topology, cancellationToken);
 
             var sessionId = await ReadSessionIdAsync(connection, cancellationToken)
                 .ConfigureAwait(false);
@@ -97,6 +93,22 @@ internal sealed class OracleMigrationLockOperations : IOracleMigrationLockOperat
                     // Cleanup cannot expose or replace the classified failure.
                 }
             }
+        }
+    }
+
+    internal static void EnsureSupportedTopology(
+        OracleTargetProbeOutcome topology,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (topology != OracleTargetProbeOutcome.Success)
+        {
+            throw new OracleMigrationLockOperationException(topology switch
+            {
+                OracleTargetProbeOutcome.UnsupportedTopology or
+                OracleTargetProbeOutcome.TopologyPermissionDenied => OracleMigrationLockFailureKind.NotSupported,
+                _ => OracleMigrationLockFailureKind.Failed
+            });
         }
     }
 

@@ -1440,8 +1440,13 @@ delivery is outside that bound; detection is not zero-latency.
 It obtains the same-name handle with `DBMS_LOCK.ALLOCATE_UNIQUE_AUTONOMOUS`, requests `X_MODE` with
 the remaining bounded acquisition timeout and `release_on_commit => FALSE`, then explicitly releases
 the handle before closing the dedicated session. Missing direct package access fails with
-`migration.lock_not_supported`; timeout, cancellation, and other Oracle failures retain their
-documented migration-lock semantics.
+`migration.lock_not_supported`. Unsupported declared versions or password identities, proven
+unsupported runtime topologies, and denied topology probes use the same code; these are rejected
+before lock allocation or request. Malformed configuration (provider/version/connection syntax or
+missing data source), session identity mismatches, authentication/transport failures, and unknown
+SQL failures remain `migration.lock_failed`. Null arguments and invalid acquisition timeouts retain
+argument exceptions. Caller cancellation takes precedence over classified operational failures.
+Errors contain no connection, identity, or underlying exception details.
 
 The lease probes its session every 250 milliseconds with a one-second command timeout and signals
 detected loss within the same conservative five-second running-process bound as the PostgreSQL

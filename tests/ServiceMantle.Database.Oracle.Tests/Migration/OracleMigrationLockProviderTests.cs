@@ -227,47 +227,111 @@ public sealed class OracleMigrationLockProviderTests
         Assert.Equal(1, operations.Session.ProbeCount);
     }
 
-    [Fact]
-    public async Task Invalid_target_fails_without_opening_a_session_or_exposing_secrets()
+    [Theory]
+    [InlineData("oracle", "18.0", "", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "User Id=C##COMMON", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "User Id=\"Quoted User\"", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "User Id=/", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "DBA Privilege=SYSDBA", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "Proxy User Id=PROXY", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "Proxy Password=Proxy-Secret", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "Wallet Location=/private/wallet", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "Token Authentication=OAUTH", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "Password=", WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData("oracle", "23", "Data Source=", WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData("oracle", "23", "UnknownOption=value", WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData("oracle", "invalid", "", WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData("oracle", null, "", WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData("postgresql", "23", "", WellKnownMigrationErrorCodes.LockFailed)]
+    public async Task Unsupported_identity_and_malformed_configuration_are_classified_before_open(
+        string provider, string? version, string suffix, string expectedCode)
     {
-        const string secret = "Super-Secret-Target-Password";
         var bootstrap = new BootstrapDatabaseConfiguration(
-            WellKnownDatabaseProviderIds.Oracle,
-            "18.0",
-            $"User Id=TARGET_USER;Password={secret};Data Source=oracle.internal/FREEPDB1");
+            provider, version, CreateBootstrap().ConnectionString + ";" + suffix);
         var operations = new FakeOperations();
 
         var exception = await Assert.ThrowsAsync<DatabaseMigrationLockException>(async () =>
             await new OracleMigrationLockProvider(operations).AcquireAsync(
-                ServiceId.Parse("catalog"),
-                bootstrap,
-                TimeSpan.FromSeconds(5),
+                ServiceId.Parse("catalog"), bootstrap, TimeSpan.FromSeconds(5),
                 TestContext.Current.CancellationToken));
 
-        Assert.Equal(WellKnownMigrationErrorCodes.LockFailed, exception.ErrorCode);
+        Assert.Equal(expectedCode, exception.ErrorCode);
         Assert.Null(operations.ConnectionString);
-        Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain("oracle.internal", exception.ToString(), StringComparison.Ordinal);
+        Assert.Null(operations.Session.LockName);
+        Assert.False(operations.Session.RequestStarted.Task.IsCompleted);
+        AssertSafeFailure(exception);
     }
 
-    [Fact]
-    public async Task Unsupported_runtime_topology_fails_closed()
+    [Theory]
+    [InlineData((int)OracleTargetProbeOutcome.UnsupportedTopology, WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData((int)OracleTargetProbeOutcome.TopologyPermissionDenied, WellKnownMigrationErrorCodes.LockNotSupported)]
+    [InlineData((int)OracleTargetProbeOutcome.IdentityMismatch, WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData((int)OracleTargetProbeOutcome.ConnectionFailed, WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData((int)OracleTargetProbeOutcome.ValidationFailed, WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData((int)OracleTargetProbeOutcome.InvalidCredentials, WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData((int)OracleTargetProbeOutcome.CreateSessionDenied, WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData((int)OracleTargetProbeOutcome.AccountLocked, WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData((int)OracleTargetProbeOutcome.PasswordExpired, WellKnownMigrationErrorCodes.LockFailed)]
+    [InlineData(int.MaxValue, WellKnownMigrationErrorCodes.LockFailed)]
+    public async Task Runtime_outcomes_are_classified_before_allocation_or_request(int outcome, string expectedCode)
     {
-        var operations = new FakeOperations
-        {
-            OpenFailure = new OracleMigrationLockOperationException(
-                OracleMigrationLockFailureKind.Failed)
-        };
+        var operations = new FakeOperations { Topology = (OracleTargetProbeOutcome)outcome };
 
         var exception = await Assert.ThrowsAsync<DatabaseMigrationLockException>(async () =>
             await new OracleMigrationLockProvider(operations).AcquireAsync(
-                ServiceId.Parse("catalog"),
-                CreateBootstrap(),
-                TimeSpan.FromSeconds(5),
+                ServiceId.Parse("catalog"), CreateBootstrap(), TimeSpan.FromSeconds(5),
                 TestContext.Current.CancellationToken));
 
-        Assert.Equal(WellKnownMigrationErrorCodes.LockFailed, exception.ErrorCode);
+        Assert.Equal(expectedCode, exception.ErrorCode);
         Assert.Null(operations.Session.LockName);
+        Assert.False(operations.Session.RequestStarted.Task.IsCompleted);
+        AssertSafeFailure(exception);
+    }
+
+    [Theory]
+    [InlineData((int)OracleTargetProbeOutcome.UnsupportedTopology)]
+    [InlineData((int)OracleTargetProbeOutcome.TopologyPermissionDenied)]
+    [InlineData((int)OracleTargetProbeOutcome.ValidationFailed)]
+    public async Task Caller_cancellation_precedes_topology_rejection(int outcome)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var operations = new FakeOperations
+        {
+            Topology = (OracleTargetProbeOutcome)outcome,
+            BeforeTopology = cancellation.Cancel
+        };
+
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await new OracleMigrationLockProvider(operations).AcquireAsync(
+                ServiceId.Parse("catalog"), CreateBootstrap(), TimeSpan.FromSeconds(5), cancellation.Token));
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+        Assert.Null(operations.Session.LockName);
+        Assert.False(operations.Session.RequestStarted.Task.IsCompleted);
+        AssertSafeFailure(exception);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(4294967295)]
+    public async Task Invalid_timeouts_keep_argument_validation(double milliseconds)
+    {
+        var operations = new FakeOperations();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+            await new OracleMigrationLockProvider(operations).AcquireAsync(
+                ServiceId.Parse("catalog"), CreateBootstrap(), TimeSpan.FromMilliseconds(milliseconds),
+                TestContext.Current.CancellationToken));
+        Assert.Null(operations.ConnectionString);
+    }
+
+    private static void AssertSafeFailure(Exception exception)
+    {
+        Assert.Null(exception.InnerException);
+        foreach (var secret in new[] { "TARGET_USER", "Target-Password-1", "oracle.internal", "FREEPDB1", "Proxy-Secret", "/private/wallet" })
+        {
+            Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -311,6 +375,10 @@ public sealed class OracleMigrationLockProviderTests
 
         internal Exception? OpenFailure { get; set; }
 
+        internal OracleTargetProbeOutcome Topology { get; set; } = OracleTargetProbeOutcome.Success;
+
+        internal Action? BeforeTopology { get; set; }
+
         internal OracleConnectionStringBuilder? ConnectionString { get; private set; }
 
         internal string? ExpectedUserName { get; private set; }
@@ -323,6 +391,8 @@ public sealed class OracleMigrationLockProviderTests
             cancellationToken.ThrowIfCancellationRequested();
             ConnectionString = new OracleConnectionStringBuilder(connectionString.ConnectionString);
             ExpectedUserName = expectedUserName;
+            BeforeTopology?.Invoke();
+            OracleMigrationLockOperations.EnsureSupportedTopology(Topology, cancellationToken);
             return OpenFailure is null
                 ? ValueTask.FromResult<IOracleMigrationLockSession>(Session)
                 : ValueTask.FromException<IOracleMigrationLockSession>(OpenFailure);
