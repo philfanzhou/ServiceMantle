@@ -215,6 +215,12 @@ public sealed class SqlServerDatabaseTargetPreparationProviderTests
             TestContext.Current.CancellationToken);
 
         Assert.Same(expected, result);
+        Assert.NotNull(probe.LastTargetConnectionString);
+        Assert.Equal("master", probe.LastTargetConnectionString.InitialCatalog);
+        Assert.Equal("app", probe.LastTargetConnectionString.UserID);
+        Assert.Equal("target-secret", probe.LastTargetConnectionString.Password);
+        Assert.False(probe.LastTargetConnectionString.Pooling);
+        Assert.False(probe.LastTargetConnectionString.Enlist);
         Assert.Equal("app]tenant", probe.LastDatabaseName);
         Assert.Equal("master", probe.LastConnectionString!.InitialCatalog);
         Assert.False(probe.LastConnectionString.Pooling);
@@ -402,6 +408,41 @@ public sealed class SqlServerDatabaseTargetPreparationProviderTests
         Assert.Equal("Latin1_General_100_CI_AS_SC_UTF8", SqlServerDatabaseCreationProbe.DatabaseCollation);
     }
 
+    [Theory]
+    [InlineData("ApplicationIntent=ReadOnly", true)]
+    [InlineData("ApplicationIntent=ReadOnly", false)]
+    [InlineData("Failover Partner=other", true)]
+    [InlineData("Failover Partner=other", false)]
+    public async Task Unstable_routing_is_rejected_before_creation(string setting, bool administrative)
+    {
+        var request = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(WellKnownDatabaseProviderIds.SqlServer, "16",
+                TargetConnectionString + (administrative ? "" : ";" + setting)),
+            AdministrativeConnectionString + (administrative ? ";" + setting : ""));
+        var probe = new FakeCreationProbe();
+        var result = await CreateProvider(creationProbe: probe).PrepareAsync(
+            request, TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+        Assert.Null(probe.LastDatabaseName);
+    }
+
+    [Fact]
+    public async Task Cancellation_precedes_a_returned_identity_rejection()
+    {
+        using var caller = new CancellationTokenSource();
+        var probe = new FakeCreationProbe((_, _, _) =>
+        {
+            caller.Cancel();
+            return ValueTask.FromResult(DatabaseTargetPreparationResult.Failure(
+                WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget));
+        });
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvider(creationProbe: probe).PrepareAsync(
+                CreateRequest(), TimeSpan.FromSeconds(5), caller.Token).AsTask());
+        Assert.Equal(caller.Token, exception.CancellationToken);
+        Assert.Null(exception.InnerException);
+    }
+
     private static SqlServerDatabaseTargetPreparationProvider CreateProvider(
         FakeObservationProbe? observationProbe = null,
         FakeCreationProbe? creationProbe = null) =>
@@ -439,15 +480,18 @@ public sealed class SqlServerDatabaseTargetPreparationProviderTests
         : ISqlServerDatabaseCreationProbe
     {
         internal int CallCount { get; private set; }
+        internal SqlConnectionStringBuilder? LastTargetConnectionString { get; private set; }
         internal string? LastDatabaseName { get; private set; }
         internal SqlConnectionStringBuilder? LastConnectionString { get; private set; }
 
         public ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
             string databaseName,
+            SqlConnectionStringBuilder targetConnectionString,
             SqlConnectionStringBuilder administrativeConnectionString,
             CancellationToken cancellationToken)
         {
             CallCount++;
+            LastTargetConnectionString = targetConnectionString;
             LastDatabaseName = databaseName;
             LastConnectionString = administrativeConnectionString;
             return handler?.Invoke(databaseName, administrativeConnectionString, cancellationToken) ??

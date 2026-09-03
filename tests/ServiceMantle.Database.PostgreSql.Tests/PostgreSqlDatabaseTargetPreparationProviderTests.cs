@@ -400,6 +400,12 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
         Assert.True(result.Succeeded);
         Assert.False(probe.LastAdministrativeConnectionString!.Pooling);
         Assert.False(probe.LastAdministrativeConnectionString.Enlist);
+        Assert.NotNull(probe.LastTargetConnectionString);
+        Assert.Equal("postgres", probe.LastTargetConnectionString.Database);
+        Assert.Equal("app", probe.LastTargetConnectionString.Username);
+        Assert.Equal("target-secret", probe.LastTargetConnectionString.Password);
+        Assert.False(probe.LastTargetConnectionString.Pooling);
+        Assert.False(probe.LastTargetConnectionString.Enlist);
     }
 
     [Fact]
@@ -533,6 +539,41 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied, errorCode);
     }
 
+    [Theory]
+    [InlineData("Host=first,second", true)]
+    [InlineData("Host=first,second", false)]
+    [InlineData("Multiplexing=true", true)]
+    [InlineData("Multiplexing=true", false)]
+    public async Task Unstable_routing_is_rejected_before_creation(string setting, bool administrative)
+    {
+        var request = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(WellKnownDatabaseProviderIds.PostgreSql, "16",
+                ValidTargetConnectionString + (administrative ? "" : ";" + setting)),
+            ValidAdministrativeConnectionString + (administrative ? ";" + setting : ""));
+        var probe = new FakeCreationProbe((_, _, _, _) => throw new InvalidOperationException("Unexpected creation"));
+        var result = await CreateProvider(creationProbe: probe).PrepareAsync(
+            request, TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+        Assert.Null(probe.LastDatabaseName);
+    }
+
+    [Fact]
+    public async Task Cancellation_precedes_a_returned_identity_rejection()
+    {
+        using var caller = new CancellationTokenSource();
+        var probe = new FakeCreationProbe((_, _, _, _) =>
+        {
+            caller.Cancel();
+            return ValueTask.FromResult(DatabaseTargetPreparationResult.Failure(
+                WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget));
+        });
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvider(creationProbe: probe).PrepareAsync(
+                CreateRequest(), TimeSpan.FromSeconds(5), caller.Token).AsTask());
+        Assert.Equal(caller.Token, exception.CancellationToken);
+        Assert.Null(exception.InnerException);
+    }
+
     private static PostgreSqlDatabaseTargetPreparationProvider CreateProvider(
         INpgsqlBootstrapProbe? observationProbe = null,
         INpgsqlDatabaseCreationProbe? creationProbe = null) =>
@@ -606,6 +647,8 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
             this.handler = handler;
         }
 
+        public NpgsqlConnectionStringBuilder? LastTargetConnectionString { get; private set; }
+
         public string? LastDatabaseName { get; private set; }
 
         public string? LastOwnerName { get; private set; }
@@ -615,9 +658,11 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
         public ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
             string databaseName,
             string ownerName,
+            NpgsqlConnectionStringBuilder targetConnectionString,
             NpgsqlConnectionStringBuilder administrativeConnectionString,
             CancellationToken cancellationToken)
         {
+            LastTargetConnectionString = targetConnectionString;
             LastDatabaseName = databaseName;
             LastOwnerName = ownerName;
             LastAdministrativeConnectionString = administrativeConnectionString;

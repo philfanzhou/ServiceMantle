@@ -134,7 +134,10 @@
       "tests": [
         {
           "project": "tests/ServiceMantle.Database.MySql.Tests/ServiceMantle.Database.MySql.Tests.csproj",
-          "environment": {}
+          "realDatabase": true,
+          "environment": {
+            "RUN_SERVICEMANTLE_MYSQL_TESTS": "true"
+          }
         }
       ]
     },

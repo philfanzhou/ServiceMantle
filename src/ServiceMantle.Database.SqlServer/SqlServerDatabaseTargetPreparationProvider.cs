@@ -170,6 +170,19 @@ public sealed class SqlServerDatabaseTargetPreparationProvider : IDatabaseTarget
         administrativeBuilder.Enlist = false;
         SqlServerDatabaseTarget.ApplySafeTimeouts(administrativeBuilder);
 
+        if (targetBuilder.ApplicationIntent != ApplicationIntent.ReadWrite ||
+            administrativeBuilder.ApplicationIntent != ApplicationIntent.ReadWrite ||
+            !string.IsNullOrEmpty(targetBuilder.FailoverPartner) ||
+            !string.IsNullOrEmpty(administrativeBuilder.FailoverPartner))
+        {
+            return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+        }
+
+        targetBuilder.InitialCatalog = "master";
+        targetBuilder.Pooling = false;
+        targetBuilder.Enlist = false;
+        SqlServerDatabaseTarget.ApplySafeTimeouts(targetBuilder);
+
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
@@ -177,11 +190,15 @@ public sealed class SqlServerDatabaseTargetPreparationProvider : IDatabaseTarget
 
         try
         {
-            return await creationProbe.CreateIfMissingAsync(
+            var result = await creationProbe.CreateIfMissingAsync(
                     databaseName,
+                    targetBuilder,
                     administrativeBuilder,
                     linkedCts.Token)
                 .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            linkedCts.Token.ThrowIfCancellationRequested();
+            return result;
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -216,6 +233,7 @@ internal interface ISqlServerDatabaseCreationProbe
 {
     ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
+        SqlConnectionStringBuilder targetConnectionString,
         SqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken);
 }
@@ -233,6 +251,7 @@ internal sealed class SqlServerDatabaseCreationProbe : ISqlServerDatabaseCreatio
 
     public async ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
+        SqlConnectionStringBuilder targetConnectionString,
         SqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken)
     {
@@ -241,6 +260,12 @@ internal sealed class SqlServerDatabaseCreationProbe : ISqlServerDatabaseCreatio
         {
             connection = new SqlConnection(administrativeConnectionString.ConnectionString);
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            if (!await SqlServerServerIdentity.VerifyAsync(connection, targetConnectionString, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+            }
 
             if (await GetServerMajorVersionAsync(connection, cancellationToken).ConfigureAwait(false) <
                 SqlServerDatabaseTarget.MinimumSupportedServerMajorVersion)
