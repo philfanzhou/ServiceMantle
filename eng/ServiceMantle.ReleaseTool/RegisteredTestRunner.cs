@@ -128,7 +128,7 @@ internal sealed class RegisteredTestRunner
             RegisteredTestExecution.RealDatabaseDiscovery => "list-tests",
             _ => throw new ArgumentOutOfRangeException(nameof(execution)),
         };
-        return Path.Combine([DiagnosticRoot, .. segments, executionDirectory]);
+        return Path.Combine([.. DiagnosticRoot.Split('/'), .. segments, executionDirectory]);
     }
 
     private static ReleaseToolException InvalidDiagnosticPath() =>
