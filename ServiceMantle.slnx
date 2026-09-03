@@ -3,6 +3,7 @@
     <Project Path="samples/ServiceMantle.ReferenceService/ServiceMantle.ReferenceService.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/ServiceMantle.Consul/ServiceMantle.Consul.csproj" />
     <Project Path="src/ServiceMantle/ServiceMantle.csproj" />
     <Project Path="src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" />
     <Project Path="src/ServiceMantle.Database.MariaDb/ServiceMantle.Database.MariaDb.csproj" />
@@ -19,6 +20,7 @@
     <Project Path="src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ServiceMantle.Consul.Tests/ServiceMantle.Consul.Tests.csproj" />
     <Project Path="tests/ServiceMantle.ReferenceService.Tests/ServiceMantle.ReferenceService.Tests.csproj" />
     <Project Path="tests/ServiceMantle.Testing/ServiceMantle.Testing.csproj" />
     <Project Path="tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj" />

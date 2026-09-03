@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, the optional bounded Grafana Loki sink, core OpenTelemetry instrumentation, the optional OTLP trace and metric exporter, the isolated authorized Prometheus endpoint, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, additional telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, the optional bounded Grafana Loki sink, core OpenTelemetry instrumentation, the optional OTLP trace and metric exporter, the isolated authorized Prometheus endpoint, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, additional telemetry exporters, automatic service discovery lifecycle, and broader observability capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -1612,6 +1612,75 @@ permanent delivery failures, drain timeouts, and caller-cancelled drains are exp
 content-free counters and stable error codes on `ServiceMantleGrafanaLokiDiagnostics`. The package
 does not add disk buffering, unbounded retries, dynamic reload, query APIs, or exactly-once delivery.
 
+## Optional Consul client boundary
+
+`ServiceMantle.Consul` contains the optional configuration catalog, immutable registration model,
+replaceable `IConsulClientFactory` / `IConsulClient`, and single-call HTTP adapter. It references only
+the core package and uses the platform HTTP stack; the core acquires no Consul SDK or ASP.NET Core
+reference. Automatic registration, readiness/phase gating, retry and shutdown deregistration remain
+tracked by [#49](https://github.com/philfanzhou/ServiceMantle/issues/49).
+
+Register `AddServiceMantleConsul()` before constructing the setting registry. Supply the existing
+`ServiceId`, `InstanceId`, setting store and root-key source, then use
+`AddServiceMantleSettingSnapshots()` and successfully activate a complete snapshot before creating
+a client. There is no `IConfiguration` or Bootstrap fallback. A missing snapshot or a snapshot for
+another service fails with a value-free `ConsulConfigurationException`.
+
+| Setting | Enabled configuration contract |
+| --- | --- |
+| `consul.enabled` | Boolean, default `false` |
+| `consul.endpoint` | Root HTTPS agent URI, or loopback HTTP; no credentials, query, fragment or subpath |
+| `consul.token` | Optional sensitive string, no default; 1–4096 printable ASCII characters without whitespace |
+| `consul.service-name` | 1–63 ASCII letters/digits/hyphens, starting and ending with a letter/digit |
+| `consul.address` | Advertised DNS name or IP address, at most 253 characters |
+| `consul.port` | Integer from 1 through 65535 |
+| `consul.health-path` | Root-relative path, at most 512 ASCII letters/digits, `/`, `-`, `_`; default `/health/ready`; no leading `//` |
+| `consul.health-scheme` | `http` or `https`, default `http` |
+
+All definitions require restart. The shared loader requires encrypted `sm:v1:` persisted tokens,
+using the stable setting key as protection purpose. The catalog validates enabled combinations
+before activation; client creation rechecks schema, token sensitivity and values at the consumer
+boundary. Disabled snapshots ignore enabled-only values and return `null` without resolving the
+client factory or constructing an HTTP client. Registration and provider resolution create no client,
+network request, hosted service or background lifecycle task.
+
+```csharp
+// After successful snapshot activation. Creating a client does not register the service.
+using var session = services.GetRequiredService<ConsulClientProvider>().CreateClient();
+if (session is not null)
+{
+    // The consumer must enforce installation and readiness requirements before this call.
+    ConsulClientResult result = await session.RegisterAsync(cancellationToken);
+    // DeregisterAsync is also explicit. Dispose releases resources without network calls.
+}
+```
+
+Each session captures one version and combines `service_id:instance_id` into its registration ID;
+malformed UTF-16 instance IDs are rejected before encoding can collapse distinct IDs. Later snapshots
+do not mutate existing sessions. The advertised address/port also define the health
+URL origin. The default adapter sends one PUT using the
+[Consul agent service API](https://developer.hashicorp.com/consul/api-docs/agent/service), with an HTTP
+health check (10-second interval, 2-second check timeout, initial `critical` status). Requests time out
+after 10 seconds, do not follow redirects, use normal TLS verification and send the optional ACL
+credential only in `X-Consul-Token`. No response body is read. The session maps HTTP rejection,
+transport failure and internal cancellation to finite results; caller cancellation throws a fresh
+value-free exception with the caller token. Cancellation does not roll back an already accepted
+remote operation. `Dispose` must run after in-flight calls complete.
+
+Register a replacement `IConsulClientFactory` before `AddServiceMantleConsul`, or replace its service
+descriptor afterwards. Factories explicitly access the credential through
+`ConsulClientConfiguration.GetToken()`; public configuration/session JSON and `ToString`, registration
+models, setting query projections, session errors, and default request URL/body omit the token.
+Raw `IConsulClient` implementations are transport extension points: use `ConsulClientSession` for
+sanitized calls. Trusted replacements must not log credentials or start their own lifecycle work.
+These guarantees do not cover deliberate credential access, external HTTP diagnostic listeners,
+custom serialization that invokes methods, debuggers or process memory. Do not place secrets in
+non-sensitive service names, addresses or identities. Enterprise namespaces/partitions, mTLS,
+certificate overrides, automatic reload and Consul KV are outside this boundary.
+
+Tests activate real typed snapshots, script HTTP requests, and exercise a loopback HTTP redirect;
+they do not certify a real Consul cluster or the future lifecycle implementation.
+
 ## Frontend note
 
 Frontend work is intentionally out of scope and will be implemented in a separate `ServiceMantle.Console` project.
@@ -1620,11 +1689,13 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 
 - `src/ServiceMantle/ServiceMantle.csproj`
 - `src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj`
+- `src/ServiceMantle.Consul/ServiceMantle.Consul.csproj`
 - `src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj`
 - `src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj`
 - `src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj`
 - `src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj`
 - `tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj`
+- `tests/ServiceMantle.Consul.Tests/ServiceMantle.Consul.Tests.csproj`
 - `tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj`
 - `tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj`
 - `tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj`
