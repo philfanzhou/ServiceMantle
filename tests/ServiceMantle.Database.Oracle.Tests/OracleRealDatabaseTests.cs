@@ -16,18 +16,29 @@ public sealed class OracleRealDatabaseTests
     [Fact]
     public async Task Real_database_environment_is_reachable()
     {
-        var admin = RequireAdminConnectionString();
+        var admin = Environment.GetEnvironmentVariable(AdminConnectionVariable);
+        RealDatabaseTestEnvironment.RequireAvailable(RealDatabaseProvider.Oracle, !string.IsNullOrWhiteSpace(admin));
 
-        await using var connection = new OracleConnection(admin);
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT 1 FROM DUAL";
+        await OracleListenerPreflight.VerifyAsync(async cancellationToken =>
+        {
+            var builder = new OracleConnectionStringBuilder(admin)
+            {
+                ConnectionTimeout = 8,
+                Pooling = false,
+                Enlist = "false"
+            };
+            await using var connection = new OracleConnection(builder.ConnectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandTimeout = 5;
+            command.CommandText = "SELECT 1 FROM DUAL";
 
-        Assert.Equal(
-            1M,
-            Convert.ToDecimal(
-                await command.ExecuteScalarAsync(TestContext.Current.CancellationToken),
-                System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Equal(
+                1M,
+                Convert.ToDecimal(
+                    await command.ExecuteScalarAsync(cancellationToken),
+                    System.Globalization.CultureInfo.InvariantCulture));
+        }, TestContext.Current.CancellationToken);
     }
 
     [Fact]

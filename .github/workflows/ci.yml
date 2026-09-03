@@ -114,22 +114,11 @@ jobs:
             exit 1
           fi
 
-          for attempt in $(seq 1 90); do
-            container_state="$(docker inspect --format '{{.State.Status}}' servicemantle-oracle)"
-            health_state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' servicemantle-oracle)"
-            if [[ "$container_state" == "exited" || "$container_state" == "dead" ]]; then
-              echo "Oracle container exited before becoming healthy." >&2
-              exit 1
-            fi
-            if [[ "$health_state" == "healthy" ]]; then
-              break
-            fi
-            if [[ "$attempt" == "90" ]]; then
-              echo "Oracle container did not become healthy within 15 minutes." >&2
-              exit 1
-            fi
-            sleep 10
-          done
+          bash eng/tests/oracle-readiness.sh
+          if ! timeout 15m bash eng/wait-oracle-ready.sh servicemantle-oracle; then
+            echo "Oracle readiness failed within its 15-minute budget." >&2
+            exit 1
+          fi
 
           admin_connection="User Id=system;Password=$oracle_password;Data Source=127.0.0.1:$oracle_port/FREEPDB1;Pooling=false;Enlist=false"
           echo "::add-mask::$admin_connection"
@@ -137,12 +126,14 @@ jobs:
           echo "SERVICEMANTLE_ORACLE_ADMIN_CONNECTION_STRING=$admin_connection" >> "$GITHUB_ENV"
 
       - name: Verify Oracle listener with ODP.NET
+        timeout-minutes: 1
         run: >-
           dotnet test
           --project tests/ServiceMantle.Database.Oracle.Tests/ServiceMantle.Database.Oracle.Tests.csproj
           --configuration Release
           --no-build
           --no-restore
+          --timeout 30s
           --filter-method ServiceMantle.Database.Oracle.Tests.OracleRealDatabaseTests.Real_database_environment_is_reachable
           --minimum-expected-tests 1
           --zero-tests-policy strict
