@@ -1290,6 +1290,13 @@ provider. That signal prevents orchestration from reporting success after Oracle
 because its session ended. It cannot undo consumer side effects performed before loss was detected,
 and it is not a fencing token.
 
+Oracle RAC and migration-lease transfer across session failover or transparent replay are
+unsupported. A recovered connection does not establish ownership of the original lock. Use a
+single-instance PDB with a dedicated session that cannot be transparently replaced; a failed
+migration must restart as a new orchestration call. See the
+[RAC and failover decision](docs/decisions/0005-oracle-rac-and-failover.md) for the support boundary
+and the evidence required before it can be expanded.
+
 ### MariaDB named lock
 
 `ServiceMantle.Database.MariaDb.Migration.MariaDbMigrationLockProvider` uses MariaDB `GET_LOCK` on
