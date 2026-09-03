@@ -101,3 +101,37 @@ dotnet test --project tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj
 `SignaCoreLegacyMigrationManifestTests` fails when a candidate loses evidence or a unique replacement, required gap data is dropped, a gap is marked ready, a candidate prerequisite is not enforced by its matching subsystem batch, post-deletion acceptance leaks into the deletion gate, a batch omits/duplicates a candidate, the order chain breaks or cycles, a tracking task is missing, a command is unused, or a retained product path or symbol overlaps a deletion scope.
 
 It additionally fails when a snapshot inventory symbol is unclassified, claimed twice, duplicated inside a snapshot list, or when the two snapshots disagree; when a snapshot path or prefix is duplicated or moves outside the retained migration paths; and when a boundary declares an unknown coverage mode, a `path-only` boundary carries symbols, or a `path-and-symbol` boundary carries none. Missing or misspelled inventory and coverage fields fail at deserialization.
+
+## Application provisioning boundary update (#237)
+
+The application pre-seed is the deployment-side entry point to the existing application domain, so
+`application-gateway-domain` now also retains `src/SignaCore.Host/Provisioning/**`,
+`src/SignaCore.Host/BootstrapAppsOptions.cs`, and the `BootstrapAppSeeder`, `BootstrapAppsOptions`,
+and `BootstrapAppEntry` symbols. It is not a new reusable migration subsystem.
+
+This narrow additive audit is pinned to
+[SignaCore `51a44bbf`](https://github.com/philfanzhou/SignaCore/tree/51a44bbf1a25f4c747be510119363a216fdf9806).
+At that commit, [Program.cs](https://github.com/philfanzhou/SignaCore/blob/51a44bbf1a25f4c747be510119363a216fdf9806/src/SignaCore.Host/Program.cs#L262)
+invokes `Provisioning/BootstrapAppSeeder.cs` directly after the bootstrap phase. SignaCore
+[#145](https://github.com/philfanzhou/SignaCore/issues/145) moved the seeder;
+[#157](https://github.com/philfanzhou/SignaCore/issues/157) subsequently removed the remaining
+`DatabaseInitializer.cs` refresh-token upgrade logic and documented the minimum upgrade baseline.
+`DatabaseInitializer.cs` therefore no longer exists at this newer commit. Its manifest legacy path
+remains part of the original deletion inventory; none of the migration candidate paths overlap the
+retained provisioning paths. Batch #128 must preserve the direct application-phase call in Program.cs.
+
+The manifest's `source`, `schemaVersion`, original CI evidence, other candidates, and other retained
+boundaries are unchanged. The provisioning test references are supplemental evidence from the fixed
+newer commit, not a claim that the original `23c2f666` CI run executed these later tests. This update
+does not authorize applying the entire historical deletion plan to the newer commit without the
+full re-audit required by decision rule 6.
+
+Batch #128 and the downstream #107 `bootstrap-app-provisioning` scenario must verify that
+`BootstrapApps:FilePath` still selects the mounted file and that the default remains
+`/app/data/bootstrap-apps.json`. A valid entry still creates the product application, existing
+applications remain unchanged, missing/unparseable files retain their documented behavior, and the
+optional OIDC section continues through `OidcClientConfigurationApplier`. Run the retained
+`BootstrapAppSeederTests` and the named `AdminOidcClientTests` alongside the full unit/integration
+commands after deletion. Their current assertions also preserve the existing password-hasher,
+audit/save, cancellation, and secret-output boundaries; this manifest change implements none of
+those product behaviors and makes no claim that the future deletion acceptance has already run.

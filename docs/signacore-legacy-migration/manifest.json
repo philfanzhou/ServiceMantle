@@ -839,7 +839,9 @@
         "src/SignaCore.Database/Entity/AppExchangeTrustEntity.cs",
         "src/SignaCore.Database/Repositories/AppRegistrationRepository.cs",
         "src/SignaCore.Domain/Services/GatewayValidationService.cs",
-        "src/SignaCore.Host/Controllers/GatewayController.cs"
+        "src/SignaCore.Host/Controllers/GatewayController.cs",
+        "src/SignaCore.Host/Provisioning/**",
+        "src/SignaCore.Host/BootstrapAppsOptions.cs"
       ],
       "coverage": "path-and-symbol",
       "preservedSymbols": [
@@ -847,7 +849,10 @@
         "SignaCore.Database.Entity.AppExchangeTrustEntity",
         "SignaCore.Database.Repositories.AppRegistrationRepository",
         "SignaCore.Domain.Services.GatewayValidationService",
-        "SignaCore.Host.Controllers.GatewayController"
+        "SignaCore.Host.Controllers.GatewayController",
+        "SignaCore.Host.Provisioning.BootstrapAppSeeder",
+        "SignaCore.Host.BootstrapAppsOptions",
+        "SignaCore.Host.BootstrapAppEntry"
       ],
       "tests": [
         {
@@ -857,9 +862,25 @@
         {
           "command": "integration",
           "test": "SignaCore.Tests.Integration.CrossApplicationExchangeTests"
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Provisioning.BootstrapAppSeederTests"
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Controllers.AdminOidcClientTests.TheSameConfiguration_LandsIdenticallyThroughBothPaths"
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Controllers.AdminOidcClientTests.ARejectedConfiguration_IsRejectedByTheBootstrapPathToo"
+        },
+        {
+          "command": "unit",
+          "test": "SignaCore.Tests.Host.Controllers.AdminOidcClientTests.ABootstrapFileWithoutTheInteractiveSection_KeepsItsPreviousBehaviour"
         }
       ],
-      "rationale": "Registered applications, gateway authentication and cross-application exchange are product APIs."
+      "rationale": "Registered applications, gateway authentication and cross-application exchange are product APIs. BootstrapApps:FilePath provisioning is the deployment-side entry point to this same application domain, so its paths and symbols extend this boundary rather than a separate subsystem. Provisioning evidence was rechecked at SignaCore 51a44bbf1a25f4c747be510119363a216fdf9806 after #145 and #157; the original source baseline and its CI evidence remain unchanged."
     },
     {
       "id": "sms-otp-domain",
