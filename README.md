@@ -1166,6 +1166,12 @@ grant quota or schema-object DDL privileges, repair an existing account, or supp
 root/common users, wallets, tokens, external authentication, proxy authentication, or non-CDB
 deployments. SQL Server and SQLite follow their own target semantics.
 
+Oracle connection-string syntax errors and rejected attributes (including authentication attributes
+not recognized by the pinned ODP.NET version) fail before connecting. Bootstrap returns
+`database.connection_string_invalid`; observation and preparation return
+`database_target_preparation.invalid_target`, including invalid administrative connection strings.
+Parser exceptions and their potentially sensitive messages are not included in these results.
+
 Oracle migration locking is a separately registered capability. The target user needs a direct
 `EXECUTE ON SYS.DBMS_LOCK` grant; target preparation deliberately does not grant it. The provider
 uses an unpooled, non-enlisted target-user session and never commits the consumer's work unit.
