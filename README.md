@@ -1188,7 +1188,8 @@ Current and planned provider packages are:
 
 - `ServiceMantle.Database.PostgreSql` validates PostgreSQL settings, performs a minimum read probe (`SELECT 1`) against the target database, and provides session-level advisory lock capability for multi-instance migration coordination (implementation complete, pending CI container verification).
 - `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
-- `ServiceMantle.Database.Sqlite` is a referenceable package skeleton; SQLite target preparation and
+- `ServiceMantle.Database.Sqlite` observes and explicitly prepares validated local SQLite file
+  targets and declares single-instance-only deployment support. Bootstrap candidate persistence and
   migration integration remain separate follow-up capabilities.
 - `ServiceMantle.Database.MySql` validates MySQL settings and supported Community product identity,
   observes server-database targets, explicitly creates a missing target without changing an existing
@@ -1312,8 +1313,9 @@ unknown-state follow-ups.
 This is process-local serialization, not a cross-process lock or proof of deployment topology.
 Two processes both configured as `SingleInstance` are not detected or coordinated. Providers own
 canonicalization; external file replacement, aliases, other processes, committed side-effect rollback,
-and forced termination are outside this contract. Existing provider packages do not implicitly gain
-a declaration; SQLite provider registration and file behavior remain separate follow-up work.
+and forced termination are outside this contract. Provider packages do not implicitly gain a
+declaration; SQLite supplies one only when its capability provider is explicitly added to the
+independently constructed deployment registry.
 
 ## Database target preparation
 
@@ -1399,6 +1401,52 @@ connection string or opening a connection. Request `ToString()` and default JSON
 not project either connection string.
 
 `DatabaseTargetPreparationResult.Outcome` reports `Created` or `AlreadyExists`. Implementations must never overwrite, drop, recreate, or otherwise destructively modify a target that already exists.
+
+### SQLite file target preparation
+
+`ServiceMantle.Database.Sqlite.SqliteDatabaseTargetPreparationProvider` implements both the optional
+file-target preparation SPI and the independent deployment capability SPI. ASP.NET Core registration
+uses the existing opt-in preparation extension; deployment capabilities remain an explicit consumer
+composition and are not inferred from preparation registration:
+
+```csharp
+services
+    .AddServiceMantle(serviceId, instanceId)
+    .AddDatabaseTargetPreparationProvider<SqliteDatabaseTargetPreparationProvider>();
+
+var sqlite = new SqliteDatabaseTargetPreparationProvider();
+var deployments = new DatabaseDeploymentCapabilityRegistry(
+    [sqlite],
+    providerIdResolver);
+```
+
+The provider accepts only fully qualified local ordinary-file paths on the current platform. It
+rejects relative paths, dot segments, repeated or trailing separators, `|DataDirectory|`, SQLite URI
+filenames, memory databases, UNC/device paths, Windows alternate data streams, symbolic links or
+reparse points in any existing component, hard-linked target files, read-only mode, shared cache,
+non-default VFS selection, and non-empty passwords. Existing component names use the spelling
+returned by the filesystem; a missing leaf keeps the caller's spelling. If regular-file type or link
+count cannot be established reliably, the provider fails with
+`database_target_preparation.capability_not_supported`.
+
+Observation performs no writability probe and reconstructs a minimal read-only, private-cache,
+non-pooled connection before reading `sqlite_schema`. It never inherits connection initialization
+options. A missing parent, inaccessible parent, missing file, unreadable file, and readable SQLite
+database remain distinct structured observations. Existing `-journal`, `-wal`, or `-shm` state fails
+closed as `database_target_preparation.target_conflict`; ServiceMantle does not attempt recovery.
+
+Preparation requires `DatabaseTargetPreparationRequest.ForFile`. A connectable existing file returns
+`AlreadyExists` without opening a write connection. A missing file is initialized under a unique name
+in the same directory, closed, and atomically published with the platform's no-replace rename/move
+primitive. A concurrent winner is preserved and re-observed. Cancellation or timeout before publication
+cleans only the current call's temporary names; publication is the commit point, so later cancellation
+may leave a complete target that a retry reports as `AlreadyExists`.
+
+The deployment declaration is `SingleInstanceOnly`. Its canonical target identity is a SHA-256
+digest of the validated canonical path, so it is independent of connection-string spelling and does
+not return the path. This provides process-local serialization only: no migration lock, cross-process
+exclusion, external replacement protection, network-filesystem guarantee, ACL repair, recovery, or
+forced-termination cleanup is provided.
 
 ### Server identity before creation
 
