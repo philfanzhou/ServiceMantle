@@ -6,7 +6,7 @@
     <AssemblyName>ServiceMantle.Database.MySql</AssemblyName>
     <PackageId>ServiceMantle.Database.MySql</PackageId>
     <PackageDescription>MySQL database capabilities for ServiceMantle.</PackageDescription>
-    <PackageTags>service-management;database;mysql;bootstrap;target-preparation</PackageTags>
+    <PackageTags>service-management;database;mysql;bootstrap;target-preparation;migration-lock</PackageTags>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
 
