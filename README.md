@@ -1190,8 +1190,9 @@ Current and planned provider packages are:
 - `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
 - `ServiceMantle.Database.Sqlite` is a referenceable package skeleton; SQLite target preparation and
   migration integration remain separate follow-up capabilities.
-- `ServiceMantle.Database.MySql` validates MySQL settings and supported Community product identity, observes server-database targets,
-  and explicitly creates a missing target without changing an existing database.
+- `ServiceMantle.Database.MySql` validates MySQL settings and supported Community product identity,
+  observes server-database targets, explicitly creates a missing target without changing an existing
+  database, and provides a dedicated-session `GET_LOCK` migration lease.
 - `ServiceMantle.Database.MariaDb` validates MariaDB 10.11+ settings and server identity, observes
   server-database targets, explicitly creates a missing target without changing an existing database,
   and provides a dedicated-session `GET_LOCK` migration lease.
@@ -1434,7 +1435,8 @@ Before creating anything, preparation verifies that the requested database and o
 services
     .AddServiceMantle(serviceId, instanceId)
     .AddBootstrapDatabaseProvider<MySqlBootstrapDatabaseProvider>()
-    .AddDatabaseTargetPreparationProvider<MySqlDatabaseTargetPreparationProvider>();
+    .AddDatabaseTargetPreparationProvider<MySqlDatabaseTargetPreparationProvider>()
+    .AddMigrationLockProvider<MySqlMigrationLockProvider>();
 ```
 
 The provider accepts numeric MySQL 8+ server versions and database identifiers that fit MySQL's
@@ -1450,9 +1452,9 @@ MySQL returns `DatabaseAccessDenied` for both existing and missing database name
 cannot see either target, so that observation reports `PermissionDenied` with
 `TargetExists == null` instead of guessing that the target exists.
 
-This capability does not provide a migration lock, run EF Core migrations, claim MariaDB
-compatibility, create database users, grant database permissions, or equate behavior across managed
-MySQL services. Those remain independently registered capabilities and deployment concerns.
+The package does not run EF Core migrations, claim MariaDB compatibility, create database users,
+grant database permissions, or equate behavior across managed MySQL services. Those remain
+independently registered capabilities and deployment concerns.
 
 ### MariaDB target preparation
 
@@ -1656,6 +1658,25 @@ single-instance PDB with a dedicated session that cannot be transparently replac
 migration must restart as a new orchestration call. See the
 [RAC and failover decision](docs/decisions/0005-oracle-rac-and-failover.md) for the support boundary
 and the evidence required before it can be expanded.
+
+### MySQL named lock
+
+`ServiceMantle.Database.MySql.Migration.MySqlMigrationLockProvider` uses MySQL `GET_LOCK` on an
+unpooled, non-enlisted target-database session. Its exact 64-byte ASCII name is `sm:migration:`
+followed by the first 51 lowercase hexadecimal characters of the normalized `ServiceId` SHA-256
+digest. Connection, Community product and database-identity validation, and the parameterized
+`GET_LOCK` call share one positive bounded acquisition timeout. Timeout maps to
+`migration.lock_timeout`; SQL, unsupported product, target identity, null-result, and internal
+cancellation failures map to the safe `migration.lock_failed` classification when the caller token
+remains active.
+
+The lease rechecks product, database, and connection identity on the same session every 250
+milliseconds with a one-second command timeout and permanently signals `LeaseLost` within the
+conservative five-second running-process bound. Disposal attempts `RELEASE_LOCK` once, then closes
+the dedicated session as the authoritative fallback. The lock is server-process/session scoped,
+not a fencing token, and does not transfer across transparent reconnects or servers. The real test
+matrix covers official MySQL Community 8.0/8.4 and rejects MariaDB 10.11/11.4; it does not establish
+support for other MySQL-compatible products or managed services.
 
 ### MariaDB named lock
 

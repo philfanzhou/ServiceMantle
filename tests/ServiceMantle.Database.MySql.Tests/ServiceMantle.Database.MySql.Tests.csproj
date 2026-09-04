@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Testcontainers.MariaDb" />
     <PackageReference Include="Testcontainers.MySql" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
   </ItemGroup>
