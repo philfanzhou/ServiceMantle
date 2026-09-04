@@ -15,6 +15,9 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
 
     private readonly Exception? acquireException;
     private readonly bool returnNullLease;
+    private readonly Func<CancellationToken, Task>? acquireDelay;
+    private readonly bool ignoreCancellationAfterAcquireDelay;
+    private readonly Exception? disposeException;
     private CancellationTokenSource? activeLeaseLoss;
     private int leaseDisposeCount;
 
@@ -33,11 +36,17 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
     public FakeMigrationLockProvider(
         string providerId = "PostgreSQL",
         Exception? acquireException = null,
-        bool returnNullLease = false)
+        bool returnNullLease = false,
+        Func<CancellationToken, Task>? acquireDelay = null,
+        bool ignoreCancellationAfterAcquireDelay = false,
+        Exception? disposeException = null)
     {
         ProviderId = providerId ?? throw new ArgumentNullException(nameof(providerId));
         this.acquireException = acquireException;
         this.returnNullLease = returnNullLease;
+        this.acquireDelay = acquireDelay;
+        this.ignoreCancellationAfterAcquireDelay = ignoreCancellationAfterAcquireDelay;
+        this.disposeException = disposeException;
     }
 
     public async ValueTask<IDatabaseMigrationLock> AcquireAsync(
@@ -48,6 +57,11 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
     {
         AcquireAttempts++;
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (acquireDelay is not null)
+        {
+            await acquireDelay(cancellationToken).ConfigureAwait(false);
+        }
 
         if (acquireException is not null)
         {
@@ -74,7 +88,9 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
 
         // Wait for lock with timeout
         using var cts = new CancellationTokenSource(acquireTimeout);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token);
+        using var linkedCts = ignoreCancellationAfterAcquireDelay
+            ? CancellationTokenSource.CreateLinkedTokenSource(cts.Token)
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token);
 
         try
         {
@@ -97,7 +113,8 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
             ProviderId,
             semaphore,
             activeLeaseLoss.Token,
-            () => Interlocked.Increment(ref leaseDisposeCount));
+            () => Interlocked.Increment(ref leaseDisposeCount),
+            disposeException);
         return fakeLock;
     }
 
@@ -107,6 +124,7 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
         private readonly SemaphoreSlim? semaphore;
         private readonly CancellationToken leaseLost;
         private readonly Action? onFirstDispose;
+        private readonly Exception? disposeException;
 
         public string ProviderId { get; }
 
@@ -114,12 +132,14 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
             string providerId,
             SemaphoreSlim? semaphore,
             CancellationToken leaseLost,
-            Action? onFirstDispose)
+            Action? onFirstDispose,
+            Exception? disposeException)
         {
             ProviderId = providerId;
             this.semaphore = semaphore;
             this.leaseLost = leaseLost;
             this.onFirstDispose = onFirstDispose;
+            this.disposeException = disposeException;
         }
 
         public CancellationToken LeaseLost => leaseLost;
@@ -131,6 +151,10 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
             {
                 onFirstDispose?.Invoke();
                 semaphore?.Release();
+                if (disposeException is not null)
+                {
+                    throw disposeException;
+                }
             }
 
             return ValueTask.CompletedTask;

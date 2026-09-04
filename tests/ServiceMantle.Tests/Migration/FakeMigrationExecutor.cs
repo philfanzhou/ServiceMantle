@@ -16,6 +16,7 @@ internal sealed class FakeMigrationExecutor : IDatabaseMigrationExecutor
     private readonly int inspectExceptionCallNumber;
     private readonly Func<CancellationToken, Task>? executeDelay;
     private readonly Func<int, CancellationToken, Task>? inspectDelay;
+    private readonly bool ignoreCancellationAfterExecuteDelay;
     private int inspectCallIndex;
 
     public int InspectCallCount { get; private set; }
@@ -29,13 +30,15 @@ internal sealed class FakeMigrationExecutor : IDatabaseMigrationExecutor
         Exception? inspectException = null,
         Exception? executeException = null,
         Func<CancellationToken, Task>? executeDelay = null,
-        Func<int, CancellationToken, Task>? inspectDelay = null)
+        Func<int, CancellationToken, Task>? inspectDelay = null,
+        bool ignoreCancellationAfterExecuteDelay = false)
     {
         this.singleState = singleState;
         this.inspectException = inspectException;
         this.executeException = executeException;
         this.executeDelay = executeDelay;
         this.inspectDelay = inspectDelay;
+        this.ignoreCancellationAfterExecuteDelay = ignoreCancellationAfterExecuteDelay;
     }
 
     /// <summary>
@@ -55,7 +58,8 @@ internal sealed class FakeMigrationExecutor : IDatabaseMigrationExecutor
         Func<CancellationToken, Task>? executeDelay = null,
         Exception? inspectExceptionAtCall = null,
         int inspectExceptionCallNumber = 0,
-        Func<int, CancellationToken, Task>? inspectDelay = null)
+        Func<int, CancellationToken, Task>? inspectDelay = null,
+        bool ignoreCancellationAfterExecuteDelay = false)
     {
         ArgumentNullException.ThrowIfNull(sequentialStates);
         if (sequentialStates.Length == 0)
@@ -70,6 +74,7 @@ internal sealed class FakeMigrationExecutor : IDatabaseMigrationExecutor
         this.inspectExceptionAtCall = inspectExceptionAtCall;
         this.inspectExceptionCallNumber = inspectExceptionCallNumber;
         this.inspectDelay = inspectDelay;
+        this.ignoreCancellationAfterExecuteDelay = ignoreCancellationAfterExecuteDelay;
     }
 
     public async ValueTask<MigrationObservationState> InspectAsync(CancellationToken cancellationToken = default)
@@ -125,7 +130,10 @@ internal sealed class FakeMigrationExecutor : IDatabaseMigrationExecutor
             await executeDelay(cancellationToken).ConfigureAwait(false);
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
+        if (!ignoreCancellationAfterExecuteDelay)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
 
         if (executeException is not null)
         {

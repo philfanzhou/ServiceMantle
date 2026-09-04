@@ -80,7 +80,8 @@ public sealed class DatabaseMigrationOrchestrator
     /// Acquires the provider lock, inspects under that authority, executes at most once when
     /// required, and succeeds only after a compatible final inspection. Caller cancellation takes
     /// precedence over detected lease loss; lease loss fails closed with
-    /// <c>migration.lock_failed</c> and prevents any later stage from starting.
+    /// <c>migration.lock_failed</c> and prevents any later stage from starting. Provider or executor
+    /// cancellation while the caller token remains active is classified as a safe stage failure.
     /// </summary>
     /// <param name="serviceId">The service identifier for which to orchestrate migration.</param>
     /// <param name="bootstrap">The bootstrap configuration for lock acquisition.</param>
@@ -103,7 +104,7 @@ public sealed class DatabaseMigrationOrchestrator
                 nameof(lockAcquireTimeout));
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfCallerCancellationRequested(cancellationToken);
         if (!lockProviderRegistry.TryGetProvider(bootstrap.Provider, out var lockProvider))
         {
             return MigrationExecutionResult.Failure(
@@ -129,22 +130,24 @@ public sealed class DatabaseMigrationOrchestrator
                     lockAcquireTimeout,
                     cancellationToken).ConfigureAwait(false);
             }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                throw SafeCallerCancellation(cancellationToken);
+            }
             catch (DatabaseMigrationLockException lockException)
             {
                 return MigrationExecutionResult.Failure(
                     lockException.ErrorCode,
                     lockException.Message);
             }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
+            catch (Exception)
             {
                 return MigrationExecutionResult.Failure(
                     WellKnownMigrationErrorCodes.LockFailed,
-                    $"Unexpected error during lock acquisition: {ex.GetType().Name}");
+                    "Migration lock acquisition failed.");
             }
+
+            ThrowIfCallerCancellationRequested(cancellationToken);
 
             if (lock_ is null)
             {
@@ -169,14 +172,9 @@ public sealed class DatabaseMigrationOrchestrator
             {
                 initialState = await executor.InspectAsync(authorityToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (lock_.LeaseLost.IsCancellationRequested)
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                return LeaseLostFailure(executorWasCalled: false);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
+                throw SafeCallerCancellation(cancellationToken);
             }
             catch (Exception)
             {
@@ -215,14 +213,9 @@ public sealed class DatabaseMigrationOrchestrator
             {
                 await executor.ExecuteAsync(authorityToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (lock_.LeaseLost.IsCancellationRequested)
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                return LeaseLostFailure(executorWasCalled: true);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
+                throw SafeCallerCancellation(cancellationToken);
             }
             catch (Exception)
             {
@@ -244,14 +237,9 @@ public sealed class DatabaseMigrationOrchestrator
             {
                 finalState = await executor.InspectAsync(authorityToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (lock_.LeaseLost.IsCancellationRequested)
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                return LeaseLostFailure(executorWasCalled: true);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
+                throw SafeCallerCancellation(cancellationToken);
             }
             catch (Exception)
             {
@@ -296,11 +284,22 @@ public sealed class DatabaseMigrationOrchestrator
         CancellationToken cancellationToken,
         bool executorWasCalled)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfCallerCancellationRequested(cancellationToken);
         return lock_.LeaseLost.IsCancellationRequested
             ? LeaseLostFailure(executorWasCalled)
             : null;
     }
+
+    private static void ThrowIfCallerCancellationRequested(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            throw SafeCallerCancellation(cancellationToken);
+        }
+    }
+
+    private static OperationCanceledException SafeCallerCancellation(CancellationToken cancellationToken) =>
+        new("Migration orchestration was cancelled by the caller.", cancellationToken);
 
     private static MigrationExecutionResult LeaseLostFailure(bool executorWasCalled) =>
         MigrationExecutionResult.Failure(
