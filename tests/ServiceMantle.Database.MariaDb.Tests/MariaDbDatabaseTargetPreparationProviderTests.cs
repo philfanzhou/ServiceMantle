@@ -173,6 +173,12 @@ public sealed class MariaDbDatabaseTargetPreparationProviderTests
             TestContext.Current.CancellationToken);
 
         Assert.Same(expected, result);
+        Assert.NotNull(probe.LastTargetConnectionString);
+        Assert.Equal("", probe.LastTargetConnectionString.Database);
+        Assert.Equal("app", probe.LastTargetConnectionString.UserID);
+        Assert.Equal("target-secret", probe.LastTargetConnectionString.Password);
+        Assert.False(probe.LastTargetConnectionString.Pooling);
+        Assert.False(probe.LastTargetConnectionString.AutoEnlist);
         Assert.Equal("app`tenant", probe.LastDatabaseName);
         Assert.Equal(string.Empty, probe.LastConnectionString!.Database);
         Assert.False(probe.LastConnectionString.Pooling);
@@ -328,6 +334,39 @@ public sealed class MariaDbDatabaseTargetPreparationProviderTests
                 lowerCaseTableNames));
     }
 
+    [Theory]
+    [InlineData("Server=first,second", true)]
+    [InlineData("Server=first,second", false)]
+    public async Task Unstable_routing_is_rejected_before_creation(string setting, bool administrative)
+    {
+        var request = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(WellKnownDatabaseProviderIds.MariaDb, "16",
+                TargetConnectionString + (administrative ? "" : ";" + setting)),
+            AdministrativeConnectionString + (administrative ? ";" + setting : ""));
+        var probe = new FakeCreationProbe();
+        var result = await CreateProvider(creationProbe: probe).PrepareAsync(
+            request, TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+        Assert.Null(probe.LastDatabaseName);
+    }
+
+    [Fact]
+    public async Task Cancellation_precedes_a_returned_identity_rejection()
+    {
+        using var caller = new CancellationTokenSource();
+        var probe = new FakeCreationProbe((_, _, _) =>
+        {
+            caller.Cancel();
+            return ValueTask.FromResult(DatabaseTargetPreparationResult.Failure(
+                WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget));
+        });
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvider(creationProbe: probe).PrepareAsync(
+                CreateRequest(), TimeSpan.FromSeconds(5), caller.Token).AsTask());
+        Assert.Equal(caller.Token, exception.CancellationToken);
+        Assert.Null(exception.InnerException);
+    }
+
     private static MariaDbDatabaseTargetPreparationProvider CreateProvider(
         FakeObservationProbe? observationProbe = null,
         FakeCreationProbe? creationProbe = null) =>
@@ -365,15 +404,18 @@ public sealed class MariaDbDatabaseTargetPreparationProviderTests
         : IMariaDbDatabaseCreationProbe
     {
         internal int CallCount { get; private set; }
+        internal MySqlConnectionStringBuilder? LastTargetConnectionString { get; private set; }
         internal string? LastDatabaseName { get; private set; }
         internal MySqlConnectionStringBuilder? LastConnectionString { get; private set; }
 
         public ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
             string databaseName,
+            MySqlConnectionStringBuilder targetConnectionString,
             MySqlConnectionStringBuilder administrativeConnectionString,
             CancellationToken cancellationToken)
         {
             CallCount++;
+            LastTargetConnectionString = targetConnectionString;
             LastDatabaseName = databaseName;
             LastConnectionString = administrativeConnectionString;
             return handler?.Invoke(databaseName, administrativeConnectionString, cancellationToken) ??

@@ -42,6 +42,21 @@
       ]
     },
     {
+      "id": "ServiceMantle.Consul",
+      "project": "src/ServiceMantle.Consul/ServiceMantle.Consul.csproj",
+      "optional": true,
+      "dependencies": [
+        "ServiceMantle"
+      ],
+      "frameworkReferences": [],
+      "tests": [
+        {
+          "project": "tests/ServiceMantle.Consul.Tests/ServiceMantle.Consul.Tests.csproj",
+          "environment": {}
+        }
+      ]
+    },
+    {
       "id": "ServiceMantle.Database.PostgreSql",
       "project": "src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj",
       "optional": true,
@@ -134,7 +149,10 @@
       "tests": [
         {
           "project": "tests/ServiceMantle.Database.MySql.Tests/ServiceMantle.Database.MySql.Tests.csproj",
-          "environment": {}
+          "realDatabase": true,
+          "environment": {
+            "RUN_SERVICEMANTLE_MYSQL_TESTS": "true"
+          }
         }
       ]
     },

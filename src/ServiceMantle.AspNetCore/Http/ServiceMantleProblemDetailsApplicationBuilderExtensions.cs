@@ -34,6 +34,7 @@ public static class ServiceMantleProblemDetailsApplicationBuilderExtensions
                 "The ServiceMantle Problem Details middleware requires AddServiceMantle to be called first.");
         }
 
+        ServiceMantlePipelineComposition.RecordUse(app);
         return app.UseMiddleware<ServiceMantleProblemDetailsMiddleware>();
     }
 }

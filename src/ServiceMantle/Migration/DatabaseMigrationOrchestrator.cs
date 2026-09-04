@@ -1,3 +1,5 @@
+using ServiceMantle.Bootstrap;
+
 namespace ServiceMantle.Migration;
 
 /// <summary>
@@ -7,6 +9,7 @@ public sealed class DatabaseMigrationOrchestrator
 {
     private readonly IDatabaseMigrationExecutor executor;
     private readonly DatabaseMigrationLockProviderRegistry lockProviderRegistry;
+    private readonly DatabaseDeploymentCapabilityRegistry? deploymentCapabilities;
 
     /// <summary>Initializes a migration orchestrator.</summary>
     public DatabaseMigrationOrchestrator(
@@ -16,6 +19,61 @@ public sealed class DatabaseMigrationOrchestrator
         this.executor = executor ?? throw new ArgumentNullException(nameof(executor));
         this.lockProviderRegistry = lockProviderRegistry ??
             throw new ArgumentNullException(nameof(lockProviderRegistry));
+    }
+
+    /// <summary>Initializes an orchestrator with explicit deployment capabilities.</summary>
+    public DatabaseMigrationOrchestrator(
+        IDatabaseMigrationExecutor executor,
+        DatabaseMigrationLockProviderRegistry lockProviderRegistry,
+        DatabaseDeploymentCapabilityRegistry deploymentCapabilities)
+        : this(executor, lockProviderRegistry)
+    {
+        ArgumentNullException.ThrowIfNull(deploymentCapabilities);
+        this.deploymentCapabilities = deploymentCapabilities;
+    }
+
+    /// <summary>
+    /// Validates the explicit deployment mode before I/O. SingleInstance serializes the provider's
+    /// canonical target within this process without constructing a distributed lease. MultiInstance
+    /// retains the existing real-lock orchestration contract.
+    /// </summary>
+    /// <remarks>
+    /// For SingleInstance, the timeout cancels target-identity resolution and bounds the wait for
+    /// the process-local turn; identity providers must honor cancellation. For MultiInstance it
+    /// bounds lock acquisition. It does not time-limit execution.
+    /// SingleInstance callers must own the deployment assumption; no cross-process exclusion,
+    /// rollback, or protection from external target replacement is provided. The two-argument
+    /// constructor registers no deployment capability, so this overload fails closed when used
+    /// with it. The original overload always requires a real lock regardless of declarations.
+    /// </remarks>
+    public async ValueTask<MigrationExecutionResult> OrchestrateMigrationAsync(
+        ServiceId serviceId,
+        BootstrapDatabaseConfiguration bootstrap,
+        DatabaseDeploymentMode deploymentMode,
+        TimeSpan lockAcquireTimeout,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(serviceId);
+        ArgumentNullException.ThrowIfNull(bootstrap);
+        if (lockAcquireTimeout <= TimeSpan.Zero)
+            throw new ArgumentException("Lock acquire timeout must be positive.", nameof(lockAcquireTimeout));
+        cancellationToken.ThrowIfCancellationRequested();
+        if (deploymentCapabilities is null ||
+            !new DatabaseDeploymentValidator(deploymentCapabilities).Validate(bootstrap.Provider, deploymentMode).IsSupported)
+        {
+            return MigrationExecutionResult.Failure(WellKnownMigrationErrorCodes.LockNotSupported,
+                "The database deployment mode is unspecified or unsupported.");
+        }
+
+        if (deploymentMode == DatabaseDeploymentMode.MultiInstance)
+        {
+            return await OrchestrateMigrationAsync(serviceId, bootstrap, lockAcquireTimeout, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        deploymentCapabilities.TryGetRegistration(bootstrap.Provider, out var registration);
+        return await SingleInstanceMigrationOrchestration.RunAsync(
+            executor, registration!, bootstrap, lockAcquireTimeout, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

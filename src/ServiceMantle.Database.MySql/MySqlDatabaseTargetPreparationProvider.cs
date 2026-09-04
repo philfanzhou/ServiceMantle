@@ -157,6 +157,16 @@ public sealed class MySqlDatabaseTargetPreparationProvider : IDatabaseTargetPrep
         administrativeBuilder.AutoEnlist = false;
         MySqlDatabaseTarget.ApplySafeTimeouts(administrativeBuilder);
 
+        if (targetBuilder.Server.Contains(',') || administrativeBuilder.Server.Contains(','))
+        {
+            return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+        }
+
+        targetBuilder.Database = string.Empty;
+        targetBuilder.Pooling = false;
+        targetBuilder.AutoEnlist = false;
+        MySqlDatabaseTarget.ApplySafeTimeouts(targetBuilder);
+
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
@@ -166,11 +176,12 @@ public sealed class MySqlDatabaseTargetPreparationProvider : IDatabaseTargetPrep
         {
             var result = await creationProbe.CreateIfMissingAsync(
                     databaseName,
+                    targetBuilder,
                     administrativeBuilder,
                     linkedCts.Token)
                 .ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            timeoutCts.Token.ThrowIfCancellationRequested();
+            linkedCts.Token.ThrowIfCancellationRequested();
             return result;
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
@@ -206,6 +217,7 @@ internal interface IMySqlDatabaseCreationProbe
 {
     ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
+        MySqlConnectionStringBuilder targetConnectionString,
         MySqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken);
 }
@@ -227,6 +239,7 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
 
     public async ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
         string databaseName,
+        MySqlConnectionStringBuilder targetConnectionString,
         MySqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken)
     {
@@ -247,6 +260,16 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
                     MySqlProbeOutcome.ConnectionFailed => WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed,
                     _ => WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed
                 });
+            }
+
+            if (!await MySqlServerIdentity.VerifyAsync(
+                    connection,
+                    targetConnectionString,
+                    createConnection,
+                    cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
             }
 
             var lowerCaseTableNames = await GetLowerCaseTableNamesAsync(

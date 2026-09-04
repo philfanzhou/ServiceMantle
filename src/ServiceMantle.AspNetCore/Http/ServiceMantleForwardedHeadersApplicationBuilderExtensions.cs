@@ -19,6 +19,7 @@ public static class ServiceMantleForwardedHeadersApplicationBuilderExtensions
                 "The ServiceMantle forwarded-header middleware requires AddForwardedHeaders.");
         }
 
+        ServiceMantlePipelineComposition.RecordUse(app);
         return app.UseMiddleware<ServiceMantleForwardedHeadersMiddleware>();
     }
 }

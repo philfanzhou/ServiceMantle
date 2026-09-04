@@ -16,6 +16,7 @@ public static class ServiceMantlePhaseGateApplicationBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
         var state = app.Services.GetService<ServiceMantlePhaseGateState>() ?? throw ServiceMantlePhaseGateState.Failure();
+        ServiceMantlePipelineComposition.RecordUse(app);
         state.RecordUse(app);
         app.UseMiddleware<ServiceMantlePhaseGateMiddleware>();
         return app;

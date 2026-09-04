@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>ServiceMantle.Consul</RootNamespace>
+    <AssemblyName>ServiceMantle.Consul</AssemblyName>
+    <PackageId>ServiceMantle.Consul</PackageId>
+    <PackageDescription>Optional snapshot-bound Consul client and registration contracts for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;consul;service-discovery</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ServiceMantle/ServiceMantle.csproj" />
+    <InternalsVisibleTo Include="ServiceMantle.Consul.Tests" />
+  </ItemGroup>
+</Project>

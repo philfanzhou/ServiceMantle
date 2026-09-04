@@ -64,7 +64,8 @@ public sealed class MySqlProductIdentityTests
             Assert.DoesNotContain(session.Commands, command => command.StartsWith("CREATE", StringComparison.Ordinal));
         }
 
-        Assert.Equal(factory.IsFallback ? 2 : 1, factory.Settings.Count);
+        var preparesSupportedProduct = accept && path.StartsWith("prepare", StringComparison.Ordinal);
+        Assert.Equal(factory.IsFallback || preparesSupportedProduct ? 2 : 1, factory.Settings.Count);
         if (factory.IsFallback)
         {
             var original = new MySqlConnectionStringBuilder(factory.Settings[0]) { Database = string.Empty };
@@ -77,6 +78,15 @@ public sealed class MySqlProductIdentityTests
             Assert.False(settings.Pooling);
             Assert.False(settings.AutoEnlist);
             Assert.Empty(settings.Database);
+            if (accept)
+            {
+                Assert.NotNull(factory.IdentityPeer);
+                Assert.True(factory.IdentityPeer.WasDisposed);
+                Assert.Single(factory.IdentityPeer.Commands);
+                Assert.Contains("IS_USED_LOCK", factory.IdentityPeer.Commands[0], StringComparison.Ordinal);
+                Assert.True(session.Commands.IndexOf(MySqlProductIdentity.Query) <
+                    session.Commands.FindIndex(command => command.Contains("GET_LOCK", StringComparison.Ordinal)));
+            }
         }
 
         AssertSafe(result);
@@ -229,6 +239,8 @@ public sealed class MySqlProductIdentityTests
         Execute = (sql, _) => Task.FromResult<object?>(sql switch
         {
             MySqlProductIdentity.Query => ScriptedMySqlConnection.Rows([version, systemVersion, comment]),
+            _ when sql.Contains("GET_LOCK", StringComparison.Ordinal) => 1,
+            "SELECT CONNECTION_ID()" => 42L,
             "SELECT @@lower_case_table_names" => 0,
             _ when sql.Contains("BINARY DATABASE()", StringComparison.Ordinal) => ScriptedMySqlConnection.Rows([0, true, true]),
             _ when sql.Contains("INFORMATION_SCHEMA", StringComparison.Ordinal) => path == "prepare-existing" ? "app" : null,
@@ -301,6 +313,7 @@ public sealed class MySqlProductIdentityTests
     {
         internal List<string> Settings { get; } = [];
         internal ScriptedMySqlConnection? FailedSession { get; private set; }
+        internal ScriptedMySqlConnection? IdentityPeer { get; private set; }
         internal bool IsFallback => path.EndsWith("-missing", StringComparison.Ordinal) || path.EndsWith("-denied", StringComparison.Ordinal);
         internal DbConnection Create(MySqlConnectionStringBuilder settings)
         {
@@ -314,6 +327,17 @@ public sealed class MySqlProductIdentityTests
                         ? MySqlErrorCode.UnknownDatabase : MySqlErrorCode.DatabaseAccessDenied))
                 };
                 return FailedSession;
+            }
+            if (path.StartsWith("prepare", StringComparison.Ordinal) && Settings.Count == 2)
+            {
+                IdentityPeer = new ScriptedMySqlConnection
+                {
+                    Execute = (sql, _) => Task.FromResult<object?>(
+                        sql.Contains("IS_USED_LOCK", StringComparison.Ordinal)
+                            ? 42L
+                            : throw new InvalidOperationException("Unexpected SQL."))
+                };
+                return IdentityPeer;
             }
             return session;
         }
