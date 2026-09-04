@@ -243,6 +243,52 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
     }
 
     [Fact]
+    public async Task PrepareAsync_rejects_file_request_before_connection_parsing_or_creation_probe()
+    {
+        var probe = new FakeCreationProbe(
+            (_, _, _, _) => ValueTask.FromResult(
+                DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)));
+        var request = DatabaseTargetPreparationRequest.ForFile(CreateTarget());
+
+        var result = await CreateProvider(creationProbe: probe).PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+        Assert.Equal(0, probe.CallCount);
+        Assert.Null(probe.LastDatabaseName);
+        Assert.Null(probe.LastTargetConnectionString);
+        Assert.Null(probe.LastAdministrativeConnectionString);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_file_request_preserves_cancellation_timeout_and_provider_priority()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+        var request = DatabaseTargetPreparationRequest.ForFile(CreateTarget());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvider().PrepareAsync(request, TimeSpan.Zero, source.Token).AsTask());
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            CreateProvider().PrepareAsync(request, TimeSpan.Zero, CancellationToken.None).AsTask());
+
+        var mismatch = DatabaseTargetPreparationRequest.ForFile(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.MySql,
+                "8.4",
+                "not-a-connection-string"));
+        var result = await CreateProvider().PrepareAsync(
+            mismatch,
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.ProviderMismatch, result.ErrorCode);
+    }
+
+    [Fact]
     public async Task PrepareAsync_rejects_provider_mismatch()
     {
         var provider = CreateProvider();
@@ -655,6 +701,8 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
 
         public NpgsqlConnectionStringBuilder? LastAdministrativeConnectionString { get; private set; }
 
+        public int CallCount { get; private set; }
+
         public ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
             string databaseName,
             string ownerName,
@@ -662,6 +710,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProviderTests
             NpgsqlConnectionStringBuilder administrativeConnectionString,
             CancellationToken cancellationToken)
         {
+            CallCount++;
             LastTargetConnectionString = targetConnectionString;
             LastDatabaseName = databaseName;
             LastOwnerName = ownerName;

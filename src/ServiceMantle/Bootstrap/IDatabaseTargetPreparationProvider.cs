@@ -51,8 +51,9 @@ public interface IDatabaseTargetPreparationProvider
     /// Providers document the maintenance database, required privileges, and supported routing scope.
     /// </remarks>
     /// <param name="request">
-    /// The target to prepare and the administrative connection information to prepare it with. The
-    /// administrative connection information must be used only for the duration of this call.
+    /// The target to prepare and optional administrative connection information to prepare it with.
+    /// File requests carry no administrative connection information. When present, the information
+    /// must be used only for the duration of this call.
     /// </param>
     /// <param name="timeout">The maximum time to spend preparing the target. Cannot be infinite.</param>
     /// <param name="cancellationToken">Cancellation token. Cancellation takes precedence over timeout.</param>
