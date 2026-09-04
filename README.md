@@ -1190,7 +1190,7 @@ Current and planned provider packages are:
 - `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
 - `ServiceMantle.Database.Sqlite` is a referenceable package skeleton; SQLite target preparation and
   migration integration remain separate follow-up capabilities.
-- `ServiceMantle.Database.MySql` validates MySQL 8+ settings, observes server-database targets,
+- `ServiceMantle.Database.MySql` validates MySQL settings and supported Community product identity, observes server-database targets,
   and explicitly creates a missing target without changing an existing database.
 - `ServiceMantle.Database.MariaDb` validates MariaDB 10.11+ settings and server identity, observes
   server-database targets, explicitly creates a missing target without changing an existing database,
@@ -1206,6 +1206,36 @@ Current and planned provider packages are:
 The PostgreSQL provider validates configuration and target connectivity. It also provides session-level advisory lock capability for safe multi-instance migration coordination.
 
 MySQL and MariaDB keep independent provider IDs even if they can share lower-level behavior.
+
+MySQL product validation accepts only official Oracle MySQL Community binary distributions that
+present the exact supported tuple: the public driver handshake version, `VERSION()`, and `@@version`
+are ordinally equal ASCII three-part versions (major 8 or 9, each part 1–3 digits without leading
+zeros), and `@@version_comment` is exactly `MySQL Community Server - GPL`. Signals are neither trimmed
+nor case-folded. Empty, conflicting, oversized, malformed, or unrecognized signals fail closed.
+Enterprise, HeatWave, Aurora, Percona, MariaDB, TiDB, NDB, and custom source/marked proxy products are
+outside this set. A custom build or proxy that copies the allowed tuple exactly is indistinguishable;
+these read-only signals are not cryptographic evidence of distribution provenance.
+
+Bootstrap and observation query the product before checking the connected database identity. Only
+an initial missing-database or database-access-denied connection error allows one server-level
+fallback, with the same credentials and options and only `Database` cleared. Product evidence is
+required before preserving the missing-target or permission classification. Authentication and
+transport failures do not trigger fallback. Preparation verifies the same administrative session
+before any existence check or creation, including adoption of an existing target. Product mismatch
+or denied product queries return `database.provider_validation_failed` in bootstrap and
+`database_target_preparation.invalid_target` in observation/preparation, without raw signals or
+connection diagnostics. Product-query transport failures retain the existing transport categories;
+caller cancellation and the preparation deadline take precedence.
+
+The automated product matrix currently uses synthetic signals and scripted sessions, including
+Community 8.0/8.4/9.x tuples and rejected product markers. Real Community 8.0/8.4 versus MariaDB
+10.11/11.4 cross-product testing is tracked in [#62](https://github.com/philfanzhou/ServiceMantle/issues/62);
+these synthetic tests do not certify commercial or cloud services or every matching release.
+Product identity does not by itself prove that target and administrative connections reach the
+same server instance. Preparation separately enforces the
+[server-database identity contract](docs/contracts/server-database-identity.md) before accepting or
+creating the target.
+
 Oracle uses a `ServerSchema` target: the canonical local PDB user and its same-named schema are one
 identity. Preparation requires an unpooled administrator connection to the same `Data Source` and
 direct `CREATE USER`, `DROP USER`, and `CREATE SESSION WITH ADMIN OPTION` privileges. It does not

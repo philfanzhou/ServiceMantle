@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using System.Security.Cryptography;
 using MySqlConnector;
@@ -9,17 +10,18 @@ namespace ServiceMantle.Database.MySql;
 internal static class MySqlServerIdentity
 {
     internal static async ValueTask<bool> VerifyAsync(
-        MySqlConnection administrative,
+        DbConnection administrative,
         MySqlConnectionStringBuilder target,
+        Func<MySqlConnectionStringBuilder, DbConnection> createConnection,
         CancellationToken cancellationToken)
     {
-        await using var peer = new MySqlConnection(target.ConnectionString);
+        await using var peer = createConnection(target);
         await peer.OpenAsync(cancellationToken).ConfigureAwait(false);
         var name = "ServiceMantle.Identity." + Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         await using var acquire = administrative.CreateCommand();
         acquire.CommandTimeout = 5;
         acquire.CommandText = "SELECT IF(@@read_only = 0, GET_LOCK(@name, 0), 0)";
-        acquire.Parameters.AddWithValue("name", name);
+        MySqlProbeConnection.AddParameter(acquire, "name", name);
         if (Convert.ToInt32(await acquire.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
                 CultureInfo.InvariantCulture) != 1)
         {
@@ -34,7 +36,7 @@ internal static class MySqlServerIdentity
         await using var proof = peer.CreateCommand();
         proof.CommandTimeout = 5;
         proof.CommandText = "SELECT IF(@@read_only = 0, IS_USED_LOCK(@name), NULL)";
-        proof.Parameters.AddWithValue("name", name);
+        MySqlProbeConnection.AddParameter(proof, "name", name);
         var observed = await proof.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return observed is not null and not DBNull &&

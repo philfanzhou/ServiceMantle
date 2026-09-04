@@ -1,3 +1,4 @@
+using System.Data.Common;
 using MySqlConnector;
 using ServiceMantle.Bootstrap;
 
@@ -82,6 +83,7 @@ public sealed class MySqlDatabaseTargetPreparationProvider : IDatabaseTargetPrep
             return outcome switch
             {
                 MySqlProbeOutcome.Success => DatabaseTargetObservation.TargetConnectable(),
+                MySqlProbeOutcome.ServerProductMismatch or
                 MySqlProbeOutcome.TargetIdentityMismatch => DatabaseTargetObservation.TargetUnreachable(
                     WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget),
                 MySqlProbeOutcome.DatabaseNotFound => DatabaseTargetObservation.TargetMissing(),
@@ -107,7 +109,8 @@ public sealed class MySqlDatabaseTargetPreparationProvider : IDatabaseTargetPrep
     }
 
     /// <summary>
-    /// Creates the requested database only when it is missing. Administrative connection
+    /// Creates the requested database only after verifying the supported Community product identity
+    /// and finding the database missing. Administrative connection
     /// information is isolated from pooling and ambient transactions and is never retained.
     /// </summary>
     public async ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
@@ -224,11 +227,14 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
     private const string DatabaseCharacterSet = "utf8mb4";
     private const string DatabaseCollation = "utf8mb4_0900_ai_ci";
     private readonly Func<CancellationToken, ValueTask>? afterMissingTargetObserved;
+    private readonly Func<MySqlConnectionStringBuilder, DbConnection> createConnection;
 
     internal MySqlDatabaseCreationProbe(
-        Func<CancellationToken, ValueTask>? afterMissingTargetObserved = null)
+        Func<CancellationToken, ValueTask>? afterMissingTargetObserved = null,
+        Func<MySqlConnectionStringBuilder, DbConnection>? createConnection = null)
     {
         this.afterMissingTargetObserved = afterMissingTargetObserved;
+        this.createConnection = createConnection ?? MySqlProbeConnection.Create;
     }
 
     public async ValueTask<DatabaseTargetPreparationResult> CreateIfMissingAsync(
@@ -237,13 +243,30 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
         MySqlConnectionStringBuilder administrativeConnectionString,
         CancellationToken cancellationToken)
     {
-        MySqlConnection? connection = null;
+        DbConnection? connection = null;
         try
         {
-            connection = new MySqlConnection(administrativeConnectionString.ConnectionString);
+            connection = createConnection(administrativeConnectionString);
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-            if (!await MySqlServerIdentity.VerifyAsync(connection, targetConnectionString, cancellationToken)
+            var product = await MySqlProductIdentity.ProbeAsync(
+                connection, (int)MySqlDatabaseTarget.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (product != MySqlProbeOutcome.Success)
+            {
+                return DatabaseTargetPreparationResult.Failure(product switch
+                {
+                    MySqlProbeOutcome.ServerProductMismatch => WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget,
+                    MySqlProbeOutcome.ConnectionFailed => WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed,
+                    _ => WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed
+                });
+            }
+
+            if (!await MySqlServerIdentity.VerifyAsync(
+                    connection,
+                    targetConnectionString,
+                    createConnection,
+                    cancellationToken)
                     .ConfigureAwait(false))
             {
                 return DatabaseTargetPreparationResult.Failure(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
@@ -393,7 +416,7 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
     }
 
     private static async ValueTask<int> GetLowerCaseTableNamesAsync(
-        MySqlConnection connection,
+        DbConnection connection,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -404,7 +427,7 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
     }
 
     private static async ValueTask<ExistingDatabaseMatch> FindExistingDatabaseAsync(
-        MySqlConnection connection,
+        DbConnection connection,
         string databaseName,
         int lowerCaseTableNames,
         CancellationToken cancellationToken)
@@ -413,7 +436,7 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
         exactCommand.CommandText =
             "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA " +
             "WHERE BINARY SCHEMA_NAME = BINARY @name LIMIT 1";
-        exactCommand.Parameters.AddWithValue("@name", databaseName);
+        MySqlProbeConnection.AddParameter(exactCommand, "@name", databaseName);
         var exact = await exactCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         if (exact is not null)
         {
@@ -432,7 +455,7 @@ internal sealed class MySqlDatabaseCreationProbe : IMySqlDatabaseCreationProbe
         foldedCommand.CommandText =
             "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA " +
             "WHERE LOWER(SCHEMA_NAME) = LOWER(@name) LIMIT 1";
-        foldedCommand.Parameters.AddWithValue("@name", databaseName);
+        MySqlProbeConnection.AddParameter(foldedCommand, "@name", databaseName);
         var folded = await foldedCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return ResolveExistingDatabaseMatch(
             exactMatch: false,
