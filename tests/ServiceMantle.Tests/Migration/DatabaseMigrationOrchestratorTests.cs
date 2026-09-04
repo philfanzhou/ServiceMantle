@@ -168,6 +168,167 @@ public class DatabaseMigrationOrchestratorTests
         Assert.Equal(1, lockProvider.LeaseDisposeCount);
     }
 
+    [Theory]
+    [InlineData(OrchestrationStage.LockAcquisition, WellKnownMigrationErrorCodes.LockFailed, false, 0, 0, 0)]
+    [InlineData(OrchestrationStage.InitialInspection, WellKnownMigrationErrorCodes.InspectionFailed, false, 1, 0, 1)]
+    [InlineData(OrchestrationStage.Execution, WellKnownMigrationErrorCodes.ExecutionFailed, true, 1, 1, 1)]
+    [InlineData(OrchestrationStage.FinalInspection, WellKnownMigrationErrorCodes.InspectionFailed, true, 2, 1, 1)]
+    public async Task Internal_cancellation_is_mapped_to_the_safe_stage_result(
+        OrchestrationStage stage,
+        string expectedErrorCode,
+        bool expectedExecutorWasCalled,
+        int expectedInspectCalls,
+        int expectedExecuteCalls,
+        int expectedDisposeCalls)
+    {
+        const string secret = "Host=private;Password=top-secret";
+        var internalCancellation = new OperationCanceledException(secret);
+        FakeMigrationExecutor executor;
+        FakeMigrationLockProvider lockProvider;
+
+        switch (stage)
+        {
+            case OrchestrationStage.LockAcquisition:
+                executor = new FakeMigrationExecutor();
+                lockProvider = new FakeMigrationLockProvider(acquireException: internalCancellation);
+                break;
+            case OrchestrationStage.InitialInspection:
+                executor = new FakeMigrationExecutor(
+                    MigrationObservationState.Empty,
+                    inspectException: internalCancellation);
+                lockProvider = new FakeMigrationLockProvider(
+                    disposeException: new InvalidOperationException("release secret"));
+                break;
+            case OrchestrationStage.Execution:
+                executor = new FakeMigrationExecutor(
+                    [MigrationObservationState.PendingMigration],
+                    executeException: internalCancellation);
+                lockProvider = new FakeMigrationLockProvider(
+                    disposeException: new InvalidOperationException("release secret"));
+                break;
+            case OrchestrationStage.FinalInspection:
+                executor = new FakeMigrationExecutor(
+                    [MigrationObservationState.PendingMigration],
+                    inspectExceptionAtCall: internalCancellation,
+                    inspectExceptionCallNumber: 2);
+                lockProvider = new FakeMigrationLockProvider(
+                    disposeException: new InvalidOperationException("release secret"));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(stage));
+        }
+
+        var registry = new DatabaseMigrationLockProviderRegistry(
+            [lockProvider],
+            DatabaseProviderIdResolver.Empty);
+        var result = await new DatabaseMigrationOrchestrator(executor, registry).OrchestrateMigrationAsync(
+            TestServiceId,
+            TestBootstrap,
+            DefaultLockTimeout,
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(expectedErrorCode, result.ErrorCode);
+        Assert.Equal(expectedExecutorWasCalled, result.ExecutorWasCalled);
+        Assert.DoesNotContain(secret, result.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(expectedInspectCalls, executor.InspectCallCount);
+        Assert.Equal(expectedExecuteCalls, executor.ExecuteCallCount);
+        Assert.Equal(expectedDisposeCalls, lockProvider.LeaseDisposeCount);
+    }
+
+    [Theory]
+    [InlineData(OrchestrationStage.LockAcquisition, StageCompletion.ThrowsCancellation)]
+    [InlineData(OrchestrationStage.LockAcquisition, StageCompletion.ThrowsFailure)]
+    [InlineData(OrchestrationStage.LockAcquisition, StageCompletion.Returns)]
+    [InlineData(OrchestrationStage.InitialInspection, StageCompletion.ThrowsCancellation)]
+    [InlineData(OrchestrationStage.InitialInspection, StageCompletion.ThrowsFailure)]
+    [InlineData(OrchestrationStage.InitialInspection, StageCompletion.Returns)]
+    [InlineData(OrchestrationStage.Execution, StageCompletion.ThrowsCancellation)]
+    [InlineData(OrchestrationStage.Execution, StageCompletion.ThrowsFailure)]
+    [InlineData(OrchestrationStage.Execution, StageCompletion.Returns)]
+    [InlineData(OrchestrationStage.FinalInspection, StageCompletion.ThrowsCancellation)]
+    [InlineData(OrchestrationStage.FinalInspection, StageCompletion.ThrowsFailure)]
+    [InlineData(OrchestrationStage.FinalInspection, StageCompletion.Returns)]
+    public async Task Caller_cancellation_has_priority_over_every_stage_outcome(
+        OrchestrationStage stage,
+        StageCompletion completion)
+    {
+        using var cancellation = new CancellationTokenSource();
+        Exception? stageException = completion switch
+        {
+            StageCompletion.ThrowsCancellation => new OperationCanceledException(
+                "Host=private;Password=top-secret"),
+            StageCompletion.ThrowsFailure => new InvalidOperationException(
+                "Host=private;Password=top-secret"),
+            StageCompletion.Returns => null,
+            _ => throw new ArgumentOutOfRangeException(nameof(completion))
+        };
+        Task CancelCaller()
+        {
+            cancellation.Cancel();
+            return Task.CompletedTask;
+        }
+
+        FakeMigrationExecutor executor;
+        FakeMigrationLockProvider lockProvider;
+        switch (stage)
+        {
+            case OrchestrationStage.LockAcquisition:
+                executor = new FakeMigrationExecutor();
+                lockProvider = new FakeMigrationLockProvider(
+                    acquireException: stageException,
+                    acquireDelay: _ => CancelCaller(),
+                    ignoreCancellationAfterAcquireDelay: completion == StageCompletion.Returns,
+                    disposeException: new InvalidOperationException("release secret"));
+                break;
+            case OrchestrationStage.InitialInspection:
+                executor = new FakeMigrationExecutor(
+                    MigrationObservationState.PendingMigration,
+                    inspectException: stageException,
+                    inspectDelay: (_, _) => CancelCaller());
+                lockProvider = new FakeMigrationLockProvider(
+                    disposeException: new InvalidOperationException("release secret"));
+                break;
+            case OrchestrationStage.Execution:
+                executor = new FakeMigrationExecutor(
+                    [MigrationObservationState.PendingMigration],
+                    executeException: stageException,
+                    executeDelay: _ => CancelCaller(),
+                    ignoreCancellationAfterExecuteDelay: true);
+                lockProvider = new FakeMigrationLockProvider(
+                    disposeException: new InvalidOperationException("release secret"));
+                break;
+            case OrchestrationStage.FinalInspection:
+                executor = new FakeMigrationExecutor(
+                    [MigrationObservationState.PendingMigration, MigrationObservationState.CurrentVersionCompatible],
+                    inspectExceptionAtCall: stageException,
+                    inspectExceptionCallNumber: 2,
+                    inspectDelay: (call, _) => call == 2 ? CancelCaller() : Task.CompletedTask);
+                lockProvider = new FakeMigrationLockProvider(
+                    disposeException: new InvalidOperationException("release secret"));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(stage));
+        }
+
+        var registry = new DatabaseMigrationLockProviderRegistry(
+            [lockProvider],
+            DatabaseProviderIdResolver.Empty);
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            new DatabaseMigrationOrchestrator(executor, registry).OrchestrateMigrationAsync(
+                TestServiceId,
+                TestBootstrap,
+                DefaultLockTimeout,
+                cancellation.Token).AsTask());
+
+        AssertSafeCallerCancellation(exception, cancellation.Token);
+        var expectedDisposeCalls = stage == OrchestrationStage.LockAcquisition &&
+            completion != StageCompletion.Returns
+                ? 0
+                : 1;
+        Assert.Equal(expectedDisposeCalls, lockProvider.LeaseDisposeCount);
+    }
+
     [Fact]
     public async Task OrchestrateMigration_WhenCancelledDuringExecute_ThrowsAndReleasesLeaseOnce()
     {
@@ -260,6 +421,69 @@ public class DatabaseMigrationOrchestratorTests
         Assert.Equal(1, lockProvider.LeaseDisposeCount);
     }
 
+    [Theory]
+    [InlineData(OrchestrationStage.InitialInspection, 1, 0)]
+    [InlineData(OrchestrationStage.Execution, 1, 1)]
+    [InlineData(OrchestrationStage.FinalInspection, 2, 1)]
+    public async Task Internal_cancellation_with_lease_loss_is_mapped_to_lock_failure(
+        OrchestrationStage stage,
+        int expectedInspectCalls,
+        int expectedExecuteCalls)
+    {
+        var lockProvider = new FakeMigrationLockProvider();
+        var internalCancellation = new OperationCanceledException(
+            "Host=private;Password=top-secret");
+        FakeMigrationExecutor executor = stage switch
+        {
+            OrchestrationStage.InitialInspection => new FakeMigrationExecutor(
+                MigrationObservationState.PendingMigration,
+                inspectException: internalCancellation,
+                inspectDelay: (_, _) =>
+                {
+                    lockProvider.LoseLease();
+                    return Task.CompletedTask;
+                }),
+            OrchestrationStage.Execution => new FakeMigrationExecutor(
+                [MigrationObservationState.PendingMigration],
+                executeException: internalCancellation,
+                executeDelay: _ =>
+                {
+                    lockProvider.LoseLease();
+                    return Task.CompletedTask;
+                }),
+            OrchestrationStage.FinalInspection => new FakeMigrationExecutor(
+                [MigrationObservationState.PendingMigration],
+                inspectExceptionAtCall: internalCancellation,
+                inspectExceptionCallNumber: 2,
+                inspectDelay: (call, _) =>
+                {
+                    if (call == 2)
+                    {
+                        lockProvider.LoseLease();
+                    }
+
+                    return Task.CompletedTask;
+                }),
+            _ => throw new ArgumentOutOfRangeException(nameof(stage))
+        };
+        var registry = new DatabaseMigrationLockProviderRegistry(
+            [lockProvider],
+            DatabaseProviderIdResolver.Empty);
+
+        var result = await new DatabaseMigrationOrchestrator(executor, registry).OrchestrateMigrationAsync(
+            TestServiceId,
+            TestBootstrap,
+            DefaultLockTimeout,
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownMigrationErrorCodes.LockFailed, result.ErrorCode);
+        Assert.Equal(expectedExecuteCalls != 0, result.ExecutorWasCalled);
+        Assert.Equal(expectedInspectCalls, executor.InspectCallCount);
+        Assert.Equal(expectedExecuteCalls, executor.ExecuteCallCount);
+        Assert.Equal(1, lockProvider.LeaseDisposeCount);
+    }
+
     [Fact]
     public async Task Caller_cancellation_takes_priority_when_it_races_with_lease_loss()
     {
@@ -290,7 +514,8 @@ public class DatabaseMigrationOrchestratorTests
         cancellation.Cancel();
         lockProvider.LoseLease();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => orchestration);
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() => orchestration);
+        AssertSafeCallerCancellation(exception, cancellation.Token);
         Assert.Equal(1, executor.InspectCallCount);
         Assert.Equal(1, executor.ExecuteCallCount);
         Assert.Equal(1, lockProvider.LeaseDisposeCount);
@@ -396,7 +621,8 @@ public class DatabaseMigrationOrchestratorTests
                 DefaultLockTimeout,
                 cts.Token).AsTask());
 
-        Assert.NotNull(ex);
+        AssertSafeCallerCancellation(ex, cts.Token);
+        Assert.Equal(0, lockProvider.AcquireAttempts);
     }
 
     private static CancellationToken GetTestCancellationToken()
@@ -409,6 +635,17 @@ public class DatabaseMigrationOrchestratorTests
         {
             return CancellationToken.None;
         }
+    }
+
+    private static void AssertSafeCallerCancellation(
+        OperationCanceledException exception,
+        CancellationToken callerToken)
+    {
+        Assert.Equal("Migration orchestration was cancelled by the caller.", exception.Message);
+        Assert.Equal(callerToken, exception.CancellationToken);
+        Assert.Null(exception.InnerException);
+        Assert.DoesNotContain("Host=", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Password", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -535,5 +772,20 @@ public class DatabaseMigrationOrchestratorTests
             await Task.Delay(100); // Simulate work
             sharedState.SetMigrationComplete();
         }
+    }
+
+    public enum OrchestrationStage
+    {
+        LockAcquisition,
+        InitialInspection,
+        Execution,
+        FinalInspection
+    }
+
+    public enum StageCompletion
+    {
+        ThrowsCancellation,
+        ThrowsFailure,
+        Returns
     }
 }
