@@ -118,7 +118,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
     /// <summary>
     /// Creates the target database only when it does not already exist. The administrative
     /// connection string is used only for the duration of this call and is never persisted,
-    /// logged, or returned.
+    /// logged, or returned. File-shaped requests are rejected before connection parsing or probes.
     /// </summary>
     public async ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
         DatabaseTargetPreparationRequest request,
@@ -143,6 +143,13 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
                 WellKnownDatabaseTargetPreparationErrorCodes.ProviderMismatch);
         }
 
+        var administrativeConnectionString = request.AdministrativeConnectionString;
+        if (administrativeConnectionString is null)
+        {
+            return DatabaseTargetPreparationResult.Failure(
+                WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+        }
+
         if (!TryBuildConnectionString(request.Target.ConnectionString, out var targetBuilder) ||
             !TryGetValidDatabaseName(targetBuilder, out var databaseName) ||
             !TryGetValidRoleName(targetBuilder, out var ownerName))
@@ -151,7 +158,7 @@ public sealed class PostgreSqlDatabaseTargetPreparationProvider : IDatabaseTarge
                 WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
         }
 
-        if (!TryBuildConnectionString(request.AdministrativeConnectionString, out var administrativeBuilder))
+        if (!TryBuildConnectionString(administrativeConnectionString, out var administrativeBuilder))
         {
             return DatabaseTargetPreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);

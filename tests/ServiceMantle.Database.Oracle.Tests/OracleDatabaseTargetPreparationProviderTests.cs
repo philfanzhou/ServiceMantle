@@ -91,6 +91,48 @@ public sealed class OracleDatabaseTargetPreparationProviderTests
                 TestContext.Current.CancellationToken).AsTask());
     }
 
+    [Fact]
+    public async Task Preparation_rejects_file_request_before_connection_parsing_or_database_operations()
+    {
+        var operations = new FakeOracleOperations();
+        var request = DatabaseTargetPreparationRequest.ForFile(CreateTarget());
+
+        var result = await new OracleDatabaseTargetPreparationProvider(operations).PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+        Assert.Equal(0, operations.OpenCount);
+        Assert.Equal(0, operations.ProbeCount);
+    }
+
+    [Fact]
+    public async Task Preparation_file_request_preserves_cancellation_timeout_and_provider_priority()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+        var provider = new OracleDatabaseTargetPreparationProvider(new FakeOracleOperations());
+        var request = DatabaseTargetPreparationRequest.ForFile(CreateTarget());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            provider.PrepareAsync(request, TimeSpan.Zero, source.Token).AsTask());
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            provider.PrepareAsync(request, TimeSpan.Zero, CancellationToken.None).AsTask());
+
+        var mismatch = DatabaseTargetPreparationRequest.ForFile(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                "not-a-connection-string"));
+        var result = await provider.PrepareAsync(
+            mismatch,
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.ProviderMismatch, result.ErrorCode);
+    }
+
     [Theory]
     [InlineData("Data Source=localhost/OTHER;User Id=system;Password=Admin-Secret-1")]
     [InlineData("Data Source=localhost/FREEPDB1;User Id=system;Password=Admin-Secret-1;DBA Privilege=SYSDBA")]

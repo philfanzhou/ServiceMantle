@@ -75,6 +75,7 @@ public sealed class OracleDatabaseTargetPreparationProvider : IDatabaseTargetPre
 
     /// <summary>
     /// Creates and grants <c>CREATE SESSION</c> only to a user proved absent in the target PDB.
+    /// File-shaped requests are rejected before connection parsing or database operations.
     /// </summary>
     public async ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
         DatabaseTargetPreparationRequest request,
@@ -97,9 +98,17 @@ public sealed class OracleDatabaseTargetPreparationProvider : IDatabaseTargetPre
                 WellKnownDatabaseTargetPreparationErrorCodes.ProviderMismatch);
         }
 
+        var administrativeConnectionString = request.AdministrativeConnectionString;
+        if (administrativeConnectionString is null)
+        {
+            return DatabaseTargetPreparationResult.Failure(
+                WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+        }
+
         if (!HasSupportedVersion(request.Target.ServerVersion) ||
             !TryBuildRequest(
                 request,
+                administrativeConnectionString,
                 out var targetBuilder,
                 out var administrativeBuilder,
                 out var targetUserName,
@@ -309,6 +318,7 @@ public sealed class OracleDatabaseTargetPreparationProvider : IDatabaseTargetPre
 
     private static bool TryBuildRequest(
         DatabaseTargetPreparationRequest request,
+        string administrativeConnectionString,
         out OracleConnectionStringBuilder targetBuilder,
         out OracleConnectionStringBuilder administrativeBuilder,
         out string targetUserName,
@@ -328,7 +338,7 @@ public sealed class OracleDatabaseTargetPreparationProvider : IDatabaseTargetPre
                 out targetPassword,
                 out var targetDataSource) ||
             !OracleDatabaseTarget.TryBuildConnectionString(
-                request.AdministrativeConnectionString,
+                administrativeConnectionString,
                 out administrativeBuilder) ||
             !OracleDatabaseTarget.TryGetAdministrativeIdentity(
                 administrativeBuilder,

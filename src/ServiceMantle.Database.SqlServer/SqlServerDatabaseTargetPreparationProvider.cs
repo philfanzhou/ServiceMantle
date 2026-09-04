@@ -123,7 +123,7 @@ public sealed class SqlServerDatabaseTargetPreparationProvider : IDatabaseTarget
     /// <summary>
     /// Creates the requested database only when it is missing. Administrative connection
     /// information is isolated from pooling, ambient transactions, and connection retries and is
-    /// never retained.
+    /// never retained. File-shaped requests are rejected before connection parsing or probes.
     /// </summary>
     public async ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
         DatabaseTargetPreparationRequest request,
@@ -147,6 +147,13 @@ public sealed class SqlServerDatabaseTargetPreparationProvider : IDatabaseTarget
                 WellKnownDatabaseTargetPreparationErrorCodes.ProviderMismatch);
         }
 
+        var administrativeConnectionString = request.AdministrativeConnectionString;
+        if (administrativeConnectionString is null)
+        {
+            return DatabaseTargetPreparationResult.Failure(
+                WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+        }
+
         if (!SqlServerDatabaseTarget.TryBuildConnectionString(
                 request.Target.ConnectionString,
                 out var targetBuilder) ||
@@ -157,7 +164,7 @@ public sealed class SqlServerDatabaseTargetPreparationProvider : IDatabaseTarget
         }
 
         if (!SqlServerDatabaseTarget.TryBuildConnectionString(
-                request.AdministrativeConnectionString,
+                administrativeConnectionString,
                 out var administrativeBuilder) ||
             !string.IsNullOrEmpty(administrativeBuilder.AttachDBFilename))
         {

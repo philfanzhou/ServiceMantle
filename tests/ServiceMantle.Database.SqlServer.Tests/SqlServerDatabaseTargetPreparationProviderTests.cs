@@ -167,6 +167,48 @@ public sealed class SqlServerDatabaseTargetPreparationProviderTests
     }
 
     [Fact]
+    public async Task PrepareAsync_rejects_file_request_before_connection_parsing_or_creation_probe()
+    {
+        var probe = new FakeCreationProbe();
+        var request = DatabaseTargetPreparationRequest.ForFile(CreateTarget());
+
+        var result = await CreateProvider(creationProbe: probe).PrepareAsync(
+            request,
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, result.ErrorCode);
+        Assert.Equal(0, probe.CallCount);
+        Assert.Null(probe.LastTargetConnectionString);
+        Assert.Null(probe.LastConnectionString);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_file_request_preserves_cancellation_timeout_and_provider_priority()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+        var request = DatabaseTargetPreparationRequest.ForFile(CreateTarget());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateProvider().PrepareAsync(request, TimeSpan.Zero, source.Token).AsTask());
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            CreateProvider().PrepareAsync(request, TimeSpan.Zero, CancellationToken.None).AsTask());
+
+        var mismatch = DatabaseTargetPreparationRequest.ForFile(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                "not-a-connection-string"));
+        var result = await CreateProvider().PrepareAsync(
+            mismatch,
+            TimeSpan.FromSeconds(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.ProviderMismatch, result.ErrorCode);
+    }
+
+    [Fact]
     public async Task PrepareAsync_rejects_provider_mismatch_and_invalid_names_without_creating()
     {
         var creationProbe = new FakeCreationProbe();

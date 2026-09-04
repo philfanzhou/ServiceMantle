@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ServiceMantle.Bootstrap;
 using Xunit;
 
@@ -154,6 +155,92 @@ public sealed class DatabaseTargetPreparationTests
             "Host=db;Database=app;Username=app;Password=app-secret");
 
         Assert.Throws<ArgumentException>(() => new DatabaseTargetPreparationRequest(target, "  "));
+    }
+
+    [Fact]
+    public void Preparation_request_requires_and_trims_administrative_connection_string()
+    {
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.PostgreSql,
+            "16",
+            "Host=db;Database=app;Username=app;Password=app-secret");
+
+        Assert.Throws<ArgumentNullException>(
+            () => new DatabaseTargetPreparationRequest(target, null!));
+
+        var request = new DatabaseTargetPreparationRequest(target, "  Host=admin  ");
+
+        Assert.Equal("Host=admin", request.AdministrativeConnectionString);
+        Assert.Same(target, request.Target);
+    }
+
+    [Fact]
+    public void File_preparation_request_requires_target_and_retains_only_the_same_target()
+    {
+        Assert.Throws<ArgumentNullException>(() => DatabaseTargetPreparationRequest.ForFile(null!));
+
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.Sqlite,
+            "3",
+            "Data Source=/srv/app/data.db;Password=file-secret");
+
+        var request = DatabaseTargetPreparationRequest.ForFile(target);
+
+        Assert.Same(target, request.Target);
+        Assert.Null(request.AdministrativeConnectionString);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void File_preparation_request_keeps_bootstrap_target_validation(string connectionString)
+    {
+        Assert.Throws<ArgumentException>(() => DatabaseTargetPreparationRequest.ForFile(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.Sqlite,
+                "3",
+                connectionString)));
+    }
+
+    [Fact]
+    public void File_preparation_request_text_and_default_json_never_project_connection_information()
+    {
+        const string targetSecret = "Password=file-secret";
+        var target = new BootstrapDatabaseConfiguration(
+            WellKnownDatabaseProviderIds.Sqlite,
+            "3",
+            $"Data Source=/srv/app/data.db;{targetSecret}");
+        var request = DatabaseTargetPreparationRequest.ForFile(target);
+
+        var text = request.ToString();
+        var json = JsonSerializer.Serialize(request);
+
+        Assert.Equal(
+            $"DatabaseTargetPreparationRequest(Provider={WellKnownDatabaseProviderIds.Sqlite})",
+            text);
+        Assert.Equal("{}", json);
+        Assert.DoesNotContain(targetSecret, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(targetSecret, json, StringComparison.Ordinal);
+        Assert.DoesNotContain(target.ConnectionString, json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Server_preparation_request_default_json_never_projects_connection_information()
+    {
+        const string targetSecret = "Password=target-secret";
+        const string administrativeSecret = "Password=admin-secret";
+        var request = new DatabaseTargetPreparationRequest(
+            new BootstrapDatabaseConfiguration(
+                WellKnownDatabaseProviderIds.PostgreSql,
+                "16",
+                $"Host=db;Database=app;{targetSecret}"),
+            $"Host=db;Database=postgres;{administrativeSecret}");
+
+        var json = JsonSerializer.Serialize(request);
+
+        Assert.Equal("{}", json);
+        Assert.DoesNotContain(targetSecret, json, StringComparison.Ordinal);
+        Assert.DoesNotContain(administrativeSecret, json, StringComparison.Ordinal);
     }
 
     [Fact]

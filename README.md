@@ -1381,6 +1381,22 @@ if (!preparedObservation.IsTargetConnectable)
 }
 ```
 
+File-target providers receive the same target without a second administrative connection:
+
+```csharp
+var fileRequest = DatabaseTargetPreparationRequest.ForFile(bootstrapDatabaseConfiguration);
+var fileResult = await fileProvider.PrepareAsync(
+    fileRequest,
+    timeout: TimeSpan.FromSeconds(30),
+    cancellationToken);
+```
+
+`ForFile` retains the supplied `Target` and sets `AdministrativeConnectionString` to `null`; it
+does not infer the target kind from the provider ID. Server-database and server-schema providers
+reject this request shape with `database_target_preparation.invalid_target` before parsing either
+connection string or opening a connection. Request `ToString()` and default JSON serialization do
+not project either connection string.
+
 `DatabaseTargetPreparationResult.Outcome` reports `Created` or `AlreadyExists`. Implementations must never overwrite, drop, recreate, or otherwise destructively modify a target that already exists.
 
 ### Server identity before creation

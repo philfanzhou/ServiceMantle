@@ -110,7 +110,8 @@ public sealed class MariaDbDatabaseTargetPreparationProvider : IDatabaseTargetPr
     /// <summary>
     /// Creates the requested database only when it is missing and the server identifies itself as
     /// MariaDB. Administrative connection information is isolated from pooling and ambient
-    /// transactions and is never retained.
+    /// transactions and is never retained. File-shaped requests are rejected before connection
+    /// parsing or probes.
     /// </summary>
     public async ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
         DatabaseTargetPreparationRequest request,
@@ -134,6 +135,13 @@ public sealed class MariaDbDatabaseTargetPreparationProvider : IDatabaseTargetPr
                 WellKnownDatabaseTargetPreparationErrorCodes.ProviderMismatch);
         }
 
+        var administrativeConnectionString = request.AdministrativeConnectionString;
+        if (administrativeConnectionString is null)
+        {
+            return DatabaseTargetPreparationResult.Failure(
+                WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+        }
+
         if (!MariaDbDatabaseTarget.TryBuildConnectionString(
                 request.Target.ConnectionString,
                 out var targetBuilder) ||
@@ -144,7 +152,7 @@ public sealed class MariaDbDatabaseTargetPreparationProvider : IDatabaseTargetPr
         }
 
         if (!MariaDbDatabaseTarget.TryBuildConnectionString(
-                request.AdministrativeConnectionString,
+                administrativeConnectionString,
                 out var administrativeBuilder))
         {
             return DatabaseTargetPreparationResult.Failure(

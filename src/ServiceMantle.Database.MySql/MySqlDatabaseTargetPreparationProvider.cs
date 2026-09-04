@@ -112,6 +112,7 @@ public sealed class MySqlDatabaseTargetPreparationProvider : IDatabaseTargetPrep
     /// Creates the requested database only after verifying the supported Community product identity
     /// and finding the database missing. Administrative connection
     /// information is isolated from pooling and ambient transactions and is never retained.
+    /// File-shaped requests are rejected before connection parsing or probes.
     /// </summary>
     public async ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
         DatabaseTargetPreparationRequest request,
@@ -135,6 +136,13 @@ public sealed class MySqlDatabaseTargetPreparationProvider : IDatabaseTargetPrep
                 WellKnownDatabaseTargetPreparationErrorCodes.ProviderMismatch);
         }
 
+        var administrativeConnectionString = request.AdministrativeConnectionString;
+        if (administrativeConnectionString is null)
+        {
+            return DatabaseTargetPreparationResult.Failure(
+                WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
+        }
+
         if (!MySqlDatabaseTarget.TryBuildConnectionString(
                 request.Target.ConnectionString,
                 out var targetBuilder) ||
@@ -145,7 +153,7 @@ public sealed class MySqlDatabaseTargetPreparationProvider : IDatabaseTargetPrep
         }
 
         if (!MySqlDatabaseTarget.TryBuildConnectionString(
-                request.AdministrativeConnectionString,
+                administrativeConnectionString,
                 out var administrativeBuilder))
         {
             return DatabaseTargetPreparationResult.Failure(
