@@ -220,6 +220,7 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         Assert.Equal("#107", acceptance.Issue);
         Assert.Equal("#106", acceptance.AfterWorkstream);
         Assert.NotEmpty(acceptance.Scenarios);
+        Assert.Contains("bootstrap-app-provisioning", acceptance.Scenarios);
         Assert.Matches(IssueReferencePattern(), acceptance.Issue);
         Assert.Matches(IssueReferencePattern(), acceptance.AfterWorkstream);
 

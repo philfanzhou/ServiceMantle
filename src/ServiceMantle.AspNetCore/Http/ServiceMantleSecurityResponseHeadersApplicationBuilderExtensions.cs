@@ -18,6 +18,7 @@ public static class ServiceMantleSecurityResponseHeadersApplicationBuilderExtens
                 "The ServiceMantle security response-header middleware requires AddSecurityResponseHeaders.");
         }
 
+        ServiceMantlePipelineComposition.RecordUse(app);
         return app.UseMiddleware<ServiceMantleSecurityResponseHeadersMiddleware>();
     }
 }

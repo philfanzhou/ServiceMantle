@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, the optional bounded Grafana Loki sink, core OpenTelemetry instrumentation, the optional OTLP trace and metric exporter, the isolated authorized Prometheus endpoint, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, additional telemetry exporters, service discovery, and broader observability capabilities are not yet implemented.
+Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, the optional bounded Grafana Loki sink, core OpenTelemetry instrumentation, the optional OTLP trace and metric exporter, the isolated authorized Prometheus endpoint, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). Management login and session flows, additional telemetry exporters, automatic service discovery lifecycle, and broader observability capabilities are not yet implemented.
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -446,6 +446,53 @@ middleware logs nothing itself and never swallows a downstream exception or canc
   nothing beyond that.
 - No other headers or log fields are cleaned; structured value cleaning stays with the existing
   sanitizer.
+
+## Composed HTTP pipeline
+
+`UseServiceMantlePipeline()` fixes the relative order of the existing HTTP capabilities:
+configured Forwarded Headers → Correlation ID → Problem Details → Routing → Security Response
+Headers → Phase Gate → Authentication (when registered) → Rate Limiting → Authorization (when
+registered) → consumer middleware and endpoints.
+
+```csharp
+builder.Services.AddServiceMantle(serviceId, instanceId)
+    .AddSecurityResponseHeaders()
+    .AddSensitiveHeaders()
+    .AddRateLimiting()
+    .AddServiceMantlePhaseGate();
+// AddForwardedHeaders requires an explicit trusted-proxy configuration when needed.
+// Register the consuming service's authentication separately, if used.
+var app = builder.Build();
+app.UseServiceMantlePipeline();
+app.MapGet("/management/status", () => Results.Ok())
+    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Status)
+    .RequireServiceMantleSecurityResponseHeaders();
+```
+
+Call the composition once, before consumer handlers. Missing required registrations, repeated
+composition, or mixing it with individual ServiceMantle middleware on the same builder throws a
+fixed configuration exception. Forwarding remains disabled without its explicit trust registration;
+the minimal pipeline starts without authentication. The composition does not register a logging
+host, health endpoints, telemetry, authentication schemes, or database persistence. Endpoint security
+headers, named rate-limit policies, and authorization metadata remain explicit.
+
+Security headers run after routing and before the gate, authentication, and rate limiting, so marked
+endpoints receive the existing baseline on 2xx, validation failures, 401/403, 429, exceptions, and
+phase rejections while headers remain unsent. Correlation ID wraps exception logging. Forwarding and
+authentication run before rate-limit partition selection. The gate retains its existing route table
+and precedes authentication; inactive phases can therefore return the established 503 before an
+authentication challenge. Exceptions and 429 use Problem Details; phase rejections and management
+cookie 401/403 retain their existing safe JSON formats. Arbitrary consumer 4xx responses are not
+converted into Problem Details.
+
+Sensitive Header diagnostics still require explicit use of
+`ServiceMantleRequestHeaderDiagnosticProjector`; the same immutable registry applies before and
+after the gate. No request Header is automatically logged or rewritten. The integration tests lock
+the response matrix and demonstrate observable failures for critical inverted orders. The helper
+does not inspect arbitrary consumer/framework middleware, prevent an earlier handler from short
+circuiting, or extend guarantees to unmarked endpoints, already-started responses, transport errors,
+or logs that bypass the projector. Do not independently add routing, authentication, rate limiting,
+or authorization around the composed pipeline.
 
 ## Safe Problem Details and exception mapping
 
@@ -1166,9 +1213,76 @@ grant quota or schema-object DDL privileges, repair an existing account, or supp
 root/common users, wallets, tokens, external authentication, proxy authentication, or non-CDB
 deployments. SQL Server and SQLite follow their own target semantics.
 
+Oracle connection-string syntax errors and rejected attributes (including authentication attributes
+not recognized by the pinned ODP.NET version) fail before connecting. Bootstrap returns
+`database.connection_string_invalid`; observation and preparation return
+`database_target_preparation.invalid_target`, including invalid administrative connection strings.
+Parser exceptions and their potentially sensitive messages are not included in these results.
+
 Oracle migration locking is a separately registered capability. The target user needs a direct
 `EXECUTE ON SYS.DBMS_LOCK` grant; target preparation deliberately does not grant it. The provider
 uses an unpooled, non-enlisted target-user session and never commits the consumer's work unit.
+
+## Explicit database deployment mode
+
+`DatabaseDeploymentMode` is a consumer-supplied choice: `Unspecified`, `SingleInstance`, or
+`MultiInstance`. It is not inferred from a connection string, an absent lock provider, or the number
+of observed processes, and it is not persisted in Bootstrap connection information. Deployment
+capabilities are independent of bootstrap, preparation, and lock registrations.
+
+A provider implements `IDatabaseDeploymentCapabilityProvider`, publishes an immutable
+`DatabaseDeploymentCapability` (`SingleInstanceOnly` or `SingleAndMultiInstance`), and supplies a
+read-only canonical target identity. `DatabaseDeploymentCapabilityRegistry` captures declarations
+using the same provider-id resolver snapshot as the other registries. Equivalent target identities
+must be ordinally equal despite credential changes or connection-string spelling; different targets
+must remain distinct. The core does not parse paths, hash complete connection strings as target
+identities, or provide filesystem identity rules.
+
+`DatabaseDeploymentValidator.Validate(providerId, mode)` reads only the captured declarations. It
+performs no I/O and never calls the provider. Missing capability, `Unspecified`, undefined modes, and
+`SingleInstanceOnly` with `MultiInstance` fail closed. The result exposes
+`PreparationErrorCode = database_target_preparation.capability_not_supported` and
+`MigrationErrorCode = migration.lock_not_supported` on rejection. Consumers must call this same
+validator before preparation, Setup, or other startup side effects.
+
+```csharp
+var deployments = new DatabaseDeploymentCapabilityRegistry(
+    deploymentCapabilityProviders, bootstrapProviders.ProviderIdResolver);
+var deployment = new DatabaseDeploymentValidator(deployments)
+    .Validate(bootstrap.Provider, deploymentMode);
+if (!deployment.IsSupported)
+{
+    logger.LogError("Deployment is not supported: {ErrorCode}", deployment.PreparationErrorCode);
+    return; // No preparation or other side effects before this check.
+}
+
+var orchestrator = new DatabaseMigrationOrchestrator(executor, lockProviders, deployments);
+var migration = await orchestrator.OrchestrateMigrationAsync(
+    serviceId, bootstrap, deploymentMode, TimeSpan.FromSeconds(30), cancellationToken);
+```
+
+The original migration overload always requires a real distributed lease. The new overload also
+requires a real lease for `MultiInstance`; neither missing locks nor deployment declarations provide
+an implicit fallback. `SingleInstance` instead resolves the provider's target and serializes calls
+for the same canonical provider/target across orchestrator and registry instances in this process,
+including calls with different service IDs or passwords. It does not construct an
+`IDatabaseMigrationLock`. The next caller re-inspects after acquiring its turn; an already compatible
+target skips execution, otherwise only Empty/PendingMigration execute once and require a compatible
+final inspection. Failure and cancellation release the process-local turn.
+
+For `SingleInstance`, the acquisition timeout cancels identity resolution and bounds the queue wait;
+identity providers must cooperate with cancellation. Once acquired, execution observes only caller
+cancellation. Internal cancellation becomes the corresponding safe stage failure; caller cancellation
+preserves the original token without a raw inner exception. The existing real-lock path retains its
+current contract; [#281](https://github.com/philfanzhou/ServiceMantle/issues/281) and
+[#282](https://github.com/philfanzhou/ServiceMantle/issues/282) track its separate cancellation and
+unknown-state follow-ups.
+
+This is process-local serialization, not a cross-process lock or proof of deployment topology.
+Two processes both configured as `SingleInstance` are not detected or coordinated. Providers own
+canonicalization; external file replacement, aliases, other processes, committed side-effect rollback,
+and forced termination are outside this contract. Existing provider packages do not implicitly gain
+a declaration; SQLite provider registration and file behavior remain separate follow-up work.
 
 ## Database target preparation
 
@@ -1238,6 +1352,26 @@ if (!preparedObservation.IsTargetConnectable)
 ```
 
 `DatabaseTargetPreparationResult.Outcome` reports `Created` or `AlreadyExists`. Implementations must never overwrite, drop, recreate, or otherwise destructively modify a target that already exists.
+
+### Server identity before creation
+
+PostgreSQL, MySQL, MariaDB, and SQL Server now require a live same-server proof before
+accepting or creating a database. A temporary random session-lock challenge on the
+administrative connection must be visible through the target endpoint and credentials.
+Creation then uses that same administrative session. Host names and connection strings need
+not match, so legitimate aliases are supported.
+
+The target login must be able to access the provider's maintenance namespace: the selected
+administrative database for PostgreSQL (default `postgres`), no selected database for
+MySQL/MariaDB, or `master` for SQL Server. A missing target does not prevent proof. Inability
+to authenticate or read the proof fails without creation; a negative proof returns
+`database_target_preparation.invalid_target`. This tightens earlier preparation behavior:
+invalid target credentials can no longer be bypassed using the administrator's credentials.
+
+Use authenticated stable single-server routes independent of database/user selection.
+Unknown proxy routing, session migration, transparent failover, and read-only routing are
+outside the supported boundary. See the [server identity contract](docs/contracts/server-database-identity.md)
+for evidence, privileges, cleanup, error mappings, and precise non-guarantees.
 
 ### PostgreSQL target preparation
 
@@ -1349,8 +1483,8 @@ rules.
 
 These capabilities do not run EF Core migrations, create logins or users, grant permissions,
 configure server or storage settings, or claim equivalent behavior on Azure SQL and other managed
-services. The caller must ensure that the target and administrative connection strings address the
-same trusted server instance; cross-connection server identity verification is tracked separately.
+services. The same-server proof above applies before target metadata is accepted or a database
+is created; it does not expand the supported routing or managed-service boundary.
 
 ### Error codes
 
@@ -1432,6 +1566,22 @@ milliseconds with a one-second command timeout and exposes detected session loss
 `LeaseLost`. The running-process detection bound is five seconds, including scheduling margin.
 Process suspension, severe thread-pool starvation, or an environment that prevents command timeout
 delivery is outside that bound; detection is not zero-latency.
+
+### Oracle Autonomous Database support boundary
+
+Autonomous Serverless and Autonomous Dedicated are unsupported for Bootstrap acceptance, successful
+target observation, target preparation and migration locking. Existing users, ADMIN privileges,
+walletless TLS or a callable DBMS_LOCK package do not enable these capabilities. The provider retains
+the self-managed single-instance PDB requirement and rejects proven cloud topology before preparation
+DDL or lock allocation. Proven unsupported topology maps to target `invalid_target` and
+`migration.lock_not_supported`; authentication and transport failures before topology is known retain
+their existing classifications and do not prove target absence.
+
+See the [Autonomous decision](docs/decisions/0006-oracle-autonomous-database.md) for the Serverless/
+Dedicated distinctions, exact Bootstrap/observation/preparation/lock error matrix, the existing parser
+limitation tracked separately by [#274](https://github.com/philfanzhou/ServiceMantle/issues/274), and the
+real-cloud evidence required before support can be reconsidered. No real Autonomous support evidence
+is claimed, no wallet/cloud credential management is added, and Oracle Free CI is not Autonomous CI.
 
 ### Oracle DBMS_LOCK
 
@@ -1612,6 +1762,75 @@ permanent delivery failures, drain timeouts, and caller-cancelled drains are exp
 content-free counters and stable error codes on `ServiceMantleGrafanaLokiDiagnostics`. The package
 does not add disk buffering, unbounded retries, dynamic reload, query APIs, or exactly-once delivery.
 
+## Optional Consul client boundary
+
+`ServiceMantle.Consul` contains the optional configuration catalog, immutable registration model,
+replaceable `IConsulClientFactory` / `IConsulClient`, and single-call HTTP adapter. It references only
+the core package and uses the platform HTTP stack; the core acquires no Consul SDK or ASP.NET Core
+reference. Automatic registration, readiness/phase gating, retry and shutdown deregistration remain
+tracked by [#49](https://github.com/philfanzhou/ServiceMantle/issues/49).
+
+Register `AddServiceMantleConsul()` before constructing the setting registry. Supply the existing
+`ServiceId`, `InstanceId`, setting store and root-key source, then use
+`AddServiceMantleSettingSnapshots()` and successfully activate a complete snapshot before creating
+a client. There is no `IConfiguration` or Bootstrap fallback. A missing snapshot or a snapshot for
+another service fails with a value-free `ConsulConfigurationException`.
+
+| Setting | Enabled configuration contract |
+| --- | --- |
+| `consul.enabled` | Boolean, default `false` |
+| `consul.endpoint` | Root HTTPS agent URI, or loopback HTTP; no credentials, query, fragment or subpath |
+| `consul.token` | Optional sensitive string, no default; 1–4096 printable ASCII characters without whitespace |
+| `consul.service-name` | 1–63 ASCII letters/digits/hyphens, starting and ending with a letter/digit |
+| `consul.address` | Advertised DNS name or IP address, at most 253 characters |
+| `consul.port` | Integer from 1 through 65535 |
+| `consul.health-path` | Root-relative path, at most 512 ASCII letters/digits, `/`, `-`, `_`; default `/health/ready`; no leading `//` |
+| `consul.health-scheme` | `http` or `https`, default `http` |
+
+All definitions require restart. The shared loader requires encrypted `sm:v1:` persisted tokens,
+using the stable setting key as protection purpose. The catalog validates enabled combinations
+before activation; client creation rechecks schema, token sensitivity and values at the consumer
+boundary. Disabled snapshots ignore enabled-only values and return `null` without resolving the
+client factory or constructing an HTTP client. Registration and provider resolution create no client,
+network request, hosted service or background lifecycle task.
+
+```csharp
+// After successful snapshot activation. Creating a client does not register the service.
+using var session = services.GetRequiredService<ConsulClientProvider>().CreateClient();
+if (session is not null)
+{
+    // The consumer must enforce installation and readiness requirements before this call.
+    ConsulClientResult result = await session.RegisterAsync(cancellationToken);
+    // DeregisterAsync is also explicit. Dispose releases resources without network calls.
+}
+```
+
+Each session captures one version and combines `service_id:instance_id` into its registration ID;
+malformed UTF-16 instance IDs are rejected before encoding can collapse distinct IDs. Later snapshots
+do not mutate existing sessions. The advertised address/port also define the health
+URL origin. The default adapter sends one PUT using the
+[Consul agent service API](https://developer.hashicorp.com/consul/api-docs/agent/service), with an HTTP
+health check (10-second interval, 2-second check timeout, initial `critical` status). Requests time out
+after 10 seconds, do not follow redirects, use normal TLS verification and send the optional ACL
+credential only in `X-Consul-Token`. No response body is read. The session maps HTTP rejection,
+transport failure and internal cancellation to finite results; caller cancellation throws a fresh
+value-free exception with the caller token. Cancellation does not roll back an already accepted
+remote operation. `Dispose` must run after in-flight calls complete.
+
+Register a replacement `IConsulClientFactory` before `AddServiceMantleConsul`, or replace its service
+descriptor afterwards. Factories explicitly access the credential through
+`ConsulClientConfiguration.GetToken()`; public configuration/session JSON and `ToString`, registration
+models, setting query projections, session errors, and default request URL/body omit the token.
+Raw `IConsulClient` implementations are transport extension points: use `ConsulClientSession` for
+sanitized calls. Trusted replacements must not log credentials or start their own lifecycle work.
+These guarantees do not cover deliberate credential access, external HTTP diagnostic listeners,
+custom serialization that invokes methods, debuggers or process memory. Do not place secrets in
+non-sensitive service names, addresses or identities. Enterprise namespaces/partitions, mTLS,
+certificate overrides, automatic reload and Consul KV are outside this boundary.
+
+Tests activate real typed snapshots, script HTTP requests, and exercise a loopback HTTP redirect;
+they do not certify a real Consul cluster or the future lifecycle implementation.
+
 ## Frontend note
 
 Frontend work is intentionally out of scope and will be implemented in a separate `ServiceMantle.Console` project.
@@ -1620,11 +1839,13 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 
 - `src/ServiceMantle/ServiceMantle.csproj`
 - `src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj`
+- `src/ServiceMantle.Consul/ServiceMantle.Consul.csproj`
 - `src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj`
 - `src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj`
 - `src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj`
 - `src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj`
 - `tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj`
+- `tests/ServiceMantle.Consul.Tests/ServiceMantle.Consul.Tests.csproj`
 - `tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj`
 - `tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj`
 - `tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj`

@@ -763,7 +763,13 @@
     {
       "issue": "#107",
       "afterWorkstream": "#106",
-      "scenarios": ["upgrade", "new-install", "failure-recovery", "multi-instance"]
+      "scenarios": [
+        "upgrade",
+        "new-install",
+        "failure-recovery",
+        "multi-instance",
+        "bootstrap-app-provisioning"
+      ]
     }
   ],
   "preservedBoundaries": [

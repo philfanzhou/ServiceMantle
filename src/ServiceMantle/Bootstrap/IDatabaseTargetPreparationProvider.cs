@@ -43,6 +43,13 @@ public interface IDatabaseTargetPreparationProvider
     /// recreate, or otherwise destructively modify a target that already exists; an existing target
     /// is reported as <see cref="DatabaseTargetPreparationOutcome.AlreadyExists"/>.
     /// </summary>
+    /// <remarks>
+    /// Server-database providers must prove that the target endpoint and the administrative session
+    /// reach the same trusted server before accepting or creating a target. Connection-string or
+    /// hostname equality is not proof. Verification must remain bound to the administrative session
+    /// that performs creation; inability to authenticate or verify must fail without creation.
+    /// Providers document the maintenance database, required privileges, and supported routing scope.
+    /// </remarks>
     /// <param name="request">
     /// The target to prepare and the administrative connection information to prepare it with. The
     /// administrative connection information must be used only for the duration of this call.
