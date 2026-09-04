@@ -1559,7 +1559,9 @@ The orchestration flow:
 2. Inspect the current database state while monitoring the acquired lease.
 3. Skip migration if the database is already at the current compatible version (allowing waiting instances to pass without re-executing).
 4. Fail closed if the database version is newer than the application supports.
-5. Execute the consuming service's complete migration workflow exactly once while monitoring the lease.
+5. Execute the consuming service's complete migration workflow exactly once only for `Empty` or
+   `PendingMigration`; `InspectionFailed` and undefined observation states fail closed with
+   `migration.inspection_failed`.
 6. Re-inspect the database state under the same monitored lease to ensure migration succeeded.
 7. Always release the lock, even on failure or cancellation.
 

@@ -82,6 +82,9 @@ public sealed class DatabaseMigrationOrchestrator
     /// precedence over detected lease loss; lease loss fails closed with
     /// <c>migration.lock_failed</c> and prevents any later stage from starting. Provider or executor
     /// cancellation while the caller token remains active is classified as a safe stage failure.
+    /// Only <see cref="MigrationObservationState.Empty"/> and
+    /// <see cref="MigrationObservationState.PendingMigration"/> permit execution after the initial
+    /// inspection; undefined states fail closed as an inspection failure.
     /// </summary>
     /// <param name="serviceId">The service identifier for which to orchestrate migration.</param>
     /// <param name="bootstrap">The bootstrap configuration for lock acquisition.</param>
@@ -203,6 +206,13 @@ public sealed class DatabaseMigrationOrchestrator
             }
 
             if (initialState == MigrationObservationState.InspectionFailed)
+            {
+                return MigrationExecutionResult.Failure(
+                    WellKnownMigrationErrorCodes.InspectionFailed,
+                    "Database state inspection failed.");
+            }
+
+            if (initialState is not (MigrationObservationState.Empty or MigrationObservationState.PendingMigration))
             {
                 return MigrationExecutionResult.Failure(
                     WellKnownMigrationErrorCodes.InspectionFailed,

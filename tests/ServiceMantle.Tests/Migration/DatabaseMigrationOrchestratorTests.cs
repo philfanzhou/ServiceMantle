@@ -13,6 +13,54 @@ public class DatabaseMigrationOrchestratorTests
 
     private static readonly TimeSpan DefaultLockTimeout = TimeSpan.FromSeconds(5);
 
+    [Theory]
+    [InlineData(MigrationObservationState.Empty, true, null, true, 2, 1)]
+    [InlineData(MigrationObservationState.PendingMigration, true, null, true, 2, 1)]
+    [InlineData(MigrationObservationState.CurrentVersionCompatible, true, null, false, 1, 0)]
+    [InlineData(MigrationObservationState.VersionTooNew, false, WellKnownMigrationErrorCodes.VersionTooNew, false, 1, 0)]
+    [InlineData(MigrationObservationState.InspectionFailed, false, WellKnownMigrationErrorCodes.InspectionFailed, false, 1, 0)]
+    [InlineData((MigrationObservationState)999, false, WellKnownMigrationErrorCodes.InspectionFailed, false, 1, 0)]
+    public async Task Initial_state_matrix_only_executes_for_the_finite_allowed_set(
+        MigrationObservationState initialState,
+        bool expectedSucceeded,
+        string? expectedErrorCode,
+        bool expectedExecutorWasCalled,
+        int expectedInspectCalls,
+        int expectedExecuteCalls)
+    {
+        const string bootstrapSecret = "initial-state-bootstrap-secret";
+        var bootstrap = new BootstrapDatabaseConfiguration(
+            "PostgreSQL",
+            "15",
+            $"Host=localhost;Database=test;Username=user;Password={bootstrapSecret}");
+        var executor = new FakeMigrationExecutor(
+            [initialState, MigrationObservationState.CurrentVersionCompatible]);
+        var lockProvider = new FakeMigrationLockProvider(
+            disposeException: new InvalidOperationException("initial-state-release-secret"));
+        var registry = new DatabaseMigrationLockProviderRegistry(
+            [lockProvider],
+            DatabaseProviderIdResolver.Empty);
+
+        var result = await new DatabaseMigrationOrchestrator(executor, registry).OrchestrateMigrationAsync(
+            TestServiceId,
+            bootstrap,
+            DefaultLockTimeout,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(expectedSucceeded, result.Succeeded);
+        Assert.Equal(expectedErrorCode, result.ErrorCode);
+        Assert.Equal(expectedExecutorWasCalled, result.ExecutorWasCalled);
+        Assert.Equal(expectedInspectCalls, executor.InspectCallCount);
+        Assert.Equal(expectedExecuteCalls, executor.ExecuteCallCount);
+        Assert.Equal(1, lockProvider.LeaseDisposeCount);
+        Assert.DoesNotContain(bootstrapSecret, result.ErrorMessage ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain(bootstrapSecret, result.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("initial-state-release-secret", result.ErrorMessage ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("initial-state-release-secret", result.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("999", result.ErrorMessage ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("999", result.ToString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task OrchestrateMigration_WhenDatabaseIsCurrentVersion_SkipsExecutor()
     {
