@@ -61,6 +61,7 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
 
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, observation.ErrorCode);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, preparation.ErrorCode);
+        await AssertBootstrapResultAsync(provider, target, "database.connection_string_invalid");
         Assert.Equal(0, fileSystem.CallCount);
         Assert.Equal(0, database.CallCount);
     }
@@ -86,6 +87,8 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
             Token);
 
         Assert.Equal(DatabaseTargetObservationStatus.TargetMissing, observation.Status);
+        await AssertBootstrapResultAsync(new SqliteDatabaseTargetPreparationProvider(),
+            Target(connectionString), "database.target_not_found");
         Assert.False(File.Exists(path));
         Assert.Empty(Directory.EnumerateFileSystemEntries(directory.Path));
     }
@@ -140,6 +143,9 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
         Assert.Equal(DatabaseTargetObservationStatus.ServerUnreachable, missingParent.Status);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, missingParent.ErrorCode);
         Assert.Equal(DatabaseTargetObservationStatus.TargetMissing, missingFile.Status);
+        await AssertBootstrapResultAsync(provider, TargetForPath(missingParentPath),
+            "database.connection_string_invalid");
+        await AssertBootstrapResultAsync(provider, TargetForPath(missingFilePath), "database.target_not_found");
         Assert.False(Directory.Exists(System.IO.Path.GetDirectoryName(missingParentPath)));
         Assert.False(File.Exists(missingFilePath));
         Assert.Empty(Directory.EnumerateFileSystemEntries(directory.Path));
@@ -159,6 +165,7 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
             Token);
 
         Assert.Equal(DatabaseTargetObservationStatus.TargetConnectable, observation.Status);
+        await AssertBootstrapResultAsync(new SqliteDatabaseTargetPreparationProvider(), TargetForPath(path), null);
         Assert.Equal(bytes, await File.ReadAllBytesAsync(path, Token));
         Assert.Equal(entries, Directory.GetFileSystemEntries(directory.Path));
     }
@@ -198,6 +205,8 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
         Assert.Equal(DatabaseTargetObservationStatus.TargetUnreachable, observation.Status);
         Assert.True(observation.TargetExists);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed, observation.ErrorCode);
+        await AssertBootstrapResultAsync(new SqliteDatabaseTargetPreparationProvider(),
+            TargetForPath(path), "database.connection_failed");
         Assert.Equal(bytes, await File.ReadAllBytesAsync(path, Token));
         Assert.Single(Directory.EnumerateFileSystemEntries(directory.Path));
     }
@@ -237,6 +246,8 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
             Assert.Equal(
                 WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied,
                 fileObservation.ErrorCode);
+            await AssertBootstrapResultAsync(provider, TargetForPath(missingPath), "database.permission_denied");
+            await AssertBootstrapResultAsync(provider, TargetForPath(unreadablePath), "database.permission_denied");
         }
         finally
         {
@@ -384,6 +395,9 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
         var target = TargetForPath(path);
 
         var observation = await provider.ObserveAsync(target, Token);
+        await AssertBootstrapResultAsync(provider, target, expectConflict
+            ? "database.connection_failed"
+            : targetExists ? null : "database.target_not_found");
         Assert.Equal(entries, Directory.GetFileSystemEntries(directory.Path)
             .Select(System.IO.Path.GetFileName).Order(StringComparer.Ordinal).ToArray());
         var preparation = await provider.PrepareAsync(
@@ -784,6 +798,24 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
             Token);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, observation.ErrorCode);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget, preparation.ErrorCode);
+        await AssertBootstrapResultAsync(provider, TargetForPath(path), "database.connection_string_invalid");
+    }
+
+    private static async Task AssertBootstrapResultAsync(
+        SqliteDatabaseTargetPreparationProvider observer,
+        BootstrapDatabaseConfiguration target,
+        string? expectedCode)
+    {
+        var result = await new SqliteBootstrapDatabaseProvider(observer).ValidateAsync(target, Token);
+        Assert.Equal(expectedCode is null, result.IsValid);
+        Assert.Equal(expectedCode, result.ErrorCode);
+        var output = result + JsonSerializer.Serialize(result);
+        Assert.DoesNotContain(target.ConnectionString, output, StringComparison.Ordinal);
+        Assert.DoesNotContain("Password", output, StringComparison.OrdinalIgnoreCase);
+        if (SqliteFileTarget.TryParse(target.ConnectionString, out var path))
+        {
+            Assert.DoesNotContain(path, output, StringComparison.Ordinal);
+        }
     }
 
     private static string InvalidConnectionString(string scenario, string directory)
