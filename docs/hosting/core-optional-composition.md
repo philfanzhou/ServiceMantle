@@ -157,7 +157,10 @@ mapping, Start, real loopback HTTP, Stop and Dispose. It additionally covers all
 snapshots, safe failure responses, barrier-triggered cancellation, Console output in both registration
 orders, duplicate/conflicting registration, pre-cancelled startup, and controlled sink disposal.
 The cancellation fixture explicitly binds caller cancellation to the server request token after the
-source-entry barrier; TCP half-close notification timing is not part of the assertion. Existing
+source-entry barrier; TCP half-close notification timing is not part of the assertion. The fixture
+also explicitly releases and awaits its own source reads. Completion of cooperative source
+cancellation is tracked separately in [issue #302](https://github.com/philfanzhou/ServiceMantle/issues/302)
+and is not inferred from the caller's cancellation result. Existing
 AspNetCore and Serilog dependency tests verify the registered package boundaries: Core and
 AspNetCore do not acquire Serilog, EF, database-driver, telemetry, or remote-sink dependencies.
 

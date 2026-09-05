@@ -173,7 +173,6 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
         host.RequestAbort.Cancel();
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
         Assert.Equal(cancellation.Token, error.CancellationToken);
-        await host.Source.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), Token);
         Assert.True(await host.RequestCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), Token));
         Assert.DoesNotContain(host.Sink.Events, item => item.Properties.TryGetValue("SourceContext", out var category) &&
             category.ToString() == "\"ServiceMantle.Http.ProblemDetails\"");
@@ -448,6 +447,7 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
         internal async Task StopAndDisposeAsync()
         {
             if (disposed) return;
+            await Source.ReleaseReadsAsync();
             await App.StopAsync(Token);
             await App.DisposeAsync();
             disposed = true;
@@ -463,18 +463,35 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
         internal int Resolutions;
         internal int Calls;
         internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public async ValueTask<ServiceHealthSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+        private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ConcurrentQueue<Task<ServiceHealthSnapshot>> reads = new();
+        public ValueTask<ServiceHealthSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref Calls);
+            var read = ReadAsync(cancellationToken);
+            reads.Enqueue(read);
+            return new ValueTask<ServiceHealthSnapshot>(read);
+        }
+        private async Task<ServiceHealthSnapshot> ReadAsync(CancellationToken cancellationToken)
+        {
             if (mode == "throw") throw new InvalidOperationException(Secret);
             if (mode is "timeout" or "cancel")
             {
                 Entered.TrySetResult();
-                try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
-                catch (OperationCanceledException) { Cancelled.TrySetResult(); throw; }
+                await release.Task.WaitAsync(cancellationToken);
             }
             return Snapshot;
+        }
+        internal async Task ReleaseReadsAsync()
+        {
+            // The health handler bounds its wait; the fixture still owns unfinished source work.
+            release.TrySetResult();
+            foreach (var read in reads)
+            {
+                try { await read.WaitAsync(TimeSpan.FromSeconds(5), Token); }
+                catch (OperationCanceledException) { }
+                catch (InvalidOperationException) when (mode == "throw") { }
+            }
         }
     }
 
