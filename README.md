@@ -1188,9 +1188,9 @@ Current and planned provider packages are:
 
 - `ServiceMantle.Database.PostgreSql` validates PostgreSQL settings, performs a minimum read probe (`SELECT 1`) against the target database, and provides session-level advisory lock capability for multi-instance migration coordination (implementation complete, pending CI container verification).
 - `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
-- `ServiceMantle.Database.Sqlite` observes and explicitly prepares validated local SQLite file
-  targets and declares single-instance-only deployment support. Bootstrap candidate persistence and
-  migration integration remain separate follow-up capabilities.
+- `ServiceMantle.Database.Sqlite` validates existing local SQLite files as Bootstrap candidates,
+  observes and explicitly prepares file targets, and declares single-instance-only deployment
+  support. Migration integration remains a separate follow-up capability.
 - `ServiceMantle.Database.MySql` validates MySQL settings and supported Community product identity,
   observes server-database targets, explicitly creates a missing target without changing an existing
   database, and provides a dedicated-session `GET_LOCK` migration lease.
@@ -1401,6 +1401,33 @@ connection string or opening a connection. Request `ToString()` and default JSON
 not project either connection string.
 
 `DatabaseTargetPreparationResult.Outcome` reports `Created` or `AlreadyExists`. Implementations must never overwrite, drop, recreate, or otherwise destructively modify a target that already exists.
+
+### SQLite Bootstrap validation
+
+`ServiceMantle.Database.Sqlite.SqliteBootstrapDatabaseProvider` declares canonical `SQLite`, a `File`
+target, no aliases, and a forbidden `ServerVersion`. Register it explicitly:
+
+```csharp
+services
+    .AddServiceMantle(serviceId, instanceId)
+    .AddBootstrapDatabaseProvider<SqliteBootstrapDatabaseProvider>();
+```
+
+Validation reuses the File parsing and read-only observation boundary described below. Only
+`TargetConnectable` passes. A missing file returns `database.target_not_found`; invalid File input
+or a missing parent returns `database.connection_string_invalid`; access denial returns
+`database.permission_denied`; unreadable/invalid databases and sidecar/recovery conflicts return
+`database.connection_failed`. Unsupported filesystem capabilities and internal observation failures
+return `database.provider_validation_failed`. A different provider id returns
+`database.provider_mismatch`, and a supplied server version returns `database.server_version_not_allowed`.
+Results contain fixed codes without paths, connection strings, passwords, or underlying exception
+text. Caller cancellation propagates with the original token.
+
+Validation does not create, overwrite, repair, migrate, or delete files. Missing targets must be
+prepared through an explicit preparation call first. Bootstrap validation, target preparation, and
+deployment capabilities are independently registered; registering either of the latter does not
+enable Bootstrap validation. Validation adds no deployment gate, cross-process exclusion, or
+protection against external file replacement, and inherits the File restrictions below.
 
 ### SQLite file target preparation
 
