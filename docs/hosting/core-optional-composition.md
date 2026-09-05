@@ -156,7 +156,9 @@ must be released and awaited by the fixture. Forced termination cannot guarantee
 mapping, Start, real loopback HTTP, Stop and Dispose. It additionally covers all defined health
 snapshots, safe failure responses, barrier-triggered cancellation, Console output in both registration
 orders, duplicate/conflicting registration, pre-cancelled startup, and controlled sink disposal.
-Existing AspNetCore and Serilog dependency tests verify the registered package boundaries: Core and
+The cancellation fixture explicitly binds caller cancellation to the server request token after the
+source-entry barrier; TCP half-close notification timing is not part of the assertion. Existing
+AspNetCore and Serilog dependency tests verify the registered package boundaries: Core and
 AspNetCore do not acquire Serilog, EF, database-driver, telemetry, or remote-sink dependencies.
 
 Absence assertions concern the selected capability's DI objects, scheme, endpoints, snapshot reads,

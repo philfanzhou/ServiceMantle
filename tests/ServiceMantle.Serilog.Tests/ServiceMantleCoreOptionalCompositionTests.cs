@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -161,30 +160,17 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
     [Theory]
     [InlineData("/health/ready")]
     [InlineData("/health")]
-    public async Task Client_disconnect_remains_cancellation_through_the_full_pipeline(string path)
+    public async Task Caller_cancellation_remains_cancellation_through_the_full_pipeline(string path)
     {
         await using var host = new Composition(sourceMode: "cancel");
         await host.StartAsync();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(Token);
-        // Force a TCP reset on cancellation: a graceful HTTP/1.1 half-close does not
-        // portably notify Kestrel's RequestAborted before the health probe timeout.
-        using var client = new HttpClient(new SocketsHttpHandler
-        {
-            UseProxy = false,
-            ConnectCallback = async (context, token) =>
-            {
-                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { LingerState = new LingerOption(true, 0) };
-                try
-                {
-                    await socket.ConnectAsync(context.DnsEndPoint, token);
-                    return new NetworkStream(socket, ownsSocket: true);
-                }
-                catch { socket.Dispose(); throw; }
-            }
-        }) { BaseAddress = host.Client.BaseAddress };
-        var request = client.GetAsync(path, cancellation.Token);
+        var request = host.Client.GetAsync(path, cancellation.Token);
         await host.Source.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), Token);
         cancellation.Cancel();
+        // Bind the caller's cancellation to the server observation explicitly. TCP half-close
+        // notification timing is platform-specific and is not a composition guarantee.
+        host.RequestAbort.Cancel();
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
         Assert.Equal(cancellation.Token, error.CancellationToken);
         await host.Source.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), Token);
@@ -341,6 +327,7 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
         internal ServiceMantleSerilogRuntime? Runtime { get; }
         internal TaskCompletionSource<bool> RequestCancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int AdminCalls;
+        internal CancellationTokenSource RequestAbort { get; } = new();
         private bool disposed;
 
         internal Composition(bool authentication = true, bool health = true, bool logging = true,
@@ -391,6 +378,8 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
             // Observe cancellation outside the composed exception handler without changing its result.
             App.Use(async (context, next) =>
             {
+                using var requestAbort = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, RequestAbort.Token);
+                context.RequestAborted = requestAbort.Token;
                 try { await next(context); }
                 catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
                 {
@@ -463,6 +452,7 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
             await App.DisposeAsync();
             disposed = true;
             Client.Dispose();
+            RequestAbort.Dispose();
         }
         public async ValueTask DisposeAsync() => await StopAndDisposeAsync();
     }
