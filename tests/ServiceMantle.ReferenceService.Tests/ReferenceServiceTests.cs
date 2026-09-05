@@ -99,7 +99,8 @@ public sealed class ReferenceServiceTests
         Assert.True(registry.Validate(new Dictionary<string, string?>()).IsValid);
         var invalid = registry.Validate(new Dictionary<string, string?>
         {
-            ["workspace.display_name"] = "", ["workspace.item_limit"] = "1001"
+            ["workspace.display_name"] = "",
+            ["workspace.item_limit"] = "1001"
         });
         Assert.False(invalid.IsValid);
         Assert.Equal(2, invalid.Errors.Count);

@@ -300,7 +300,8 @@ public sealed class ServiceMantlePipelineTests
         var identity = ManagementIdentity.Create(WellKnownManagementAuditOperatorSources.InteractiveAdmin, id, [permission]);
         var ticket = new AuthenticationTicket(identity.ToClaimsPrincipal(), new AuthenticationProperties
         {
-            IssuedUtc = DateTimeOffset.UtcNow, ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(5)
+            IssuedUtc = DateTimeOffset.UtcNow,
+            ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(5)
         }, scheme);
         return ServiceMantleManagementSessionDefaults.CookieName + "=" + options.TicketDataFormat.Protect(ticket);
     }
@@ -309,8 +310,11 @@ public sealed class ServiceMantlePipelineTests
     {
         foreach (var (name, value) in new Dictionary<string, string>
         {
-            ["Cache-Control"] = "no-store", ["Pragma"] = "no-cache", ["X-Content-Type-Options"] = "nosniff",
-            ["X-Frame-Options"] = "DENY", ["Referrer-Policy"] = "no-referrer",
+            ["Cache-Control"] = "no-store",
+            ["Pragma"] = "no-cache",
+            ["X-Content-Type-Options"] = "nosniff",
+            ["X-Frame-Options"] = "DENY",
+            ["Referrer-Policy"] = "no-referrer",
             ["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         }) Assert.Equal(value, Assert.Single(response.Headers.GetValues(name)));
     }
