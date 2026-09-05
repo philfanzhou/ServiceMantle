@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -165,7 +166,23 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
         await using var host = new Composition(sourceMode: "cancel");
         await host.StartAsync();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(Token);
-        var request = host.Client.GetAsync(path, cancellation.Token);
+        // Force a TCP reset on cancellation: a graceful HTTP/1.1 half-close does not
+        // portably notify Kestrel's RequestAborted before the health probe timeout.
+        using var client = new HttpClient(new SocketsHttpHandler
+        {
+            UseProxy = false,
+            ConnectCallback = async (context, token) =>
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { LingerState = new LingerOption(true, 0) };
+                try
+                {
+                    await socket.ConnectAsync(context.DnsEndPoint, token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            }
+        }) { BaseAddress = host.Client.BaseAddress };
+        var request = client.GetAsync(path, cancellation.Token);
         await host.Source.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5), Token);
         cancellation.Cancel();
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
