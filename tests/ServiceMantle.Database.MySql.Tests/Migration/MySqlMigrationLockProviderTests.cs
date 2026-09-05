@@ -252,7 +252,7 @@ public sealed class MySqlMigrationLockProviderTests
                     cancellation.Cancel();
                     return Task.FromException(new InvalidOperationException(secret));
                 }
-                : null,
+            : null,
             Execute = (_, _) =>
             {
                 cancellation.Cancel();

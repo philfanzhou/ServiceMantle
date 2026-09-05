@@ -235,19 +235,19 @@ public sealed class MySqlProductIdentityTests
 
     private static ScriptedMySqlConnection Session(string path, string? version = "8.4.0",
         string? systemVersion = "8.4.0", string? comment = "MySQL Community Server - GPL") => new()
-    {
-        Execute = (sql, _) => Task.FromResult<object?>(sql switch
         {
-            MySqlProductIdentity.Query => ScriptedMySqlConnection.Rows([version, systemVersion, comment]),
-            _ when sql.Contains("GET_LOCK", StringComparison.Ordinal) => 1,
-            "SELECT CONNECTION_ID()" => 42L,
-            "SELECT @@lower_case_table_names" => 0,
-            _ when sql.Contains("BINARY DATABASE()", StringComparison.Ordinal) => ScriptedMySqlConnection.Rows([0, true, true]),
-            _ when sql.Contains("INFORMATION_SCHEMA", StringComparison.Ordinal) => path == "prepare-existing" ? "app" : null,
-            _ when sql.StartsWith("CREATE DATABASE", StringComparison.Ordinal) => 1,
-            _ => throw new InvalidOperationException("Unexpected SQL.")
-        })
-    };
+            Execute = (sql, _) => Task.FromResult<object?>(sql switch
+            {
+                MySqlProductIdentity.Query => ScriptedMySqlConnection.Rows([version, systemVersion, comment]),
+                _ when sql.Contains("GET_LOCK", StringComparison.Ordinal) => 1,
+                "SELECT CONNECTION_ID()" => 42L,
+                "SELECT @@lower_case_table_names" => 0,
+                _ when sql.Contains("BINARY DATABASE()", StringComparison.Ordinal) => ScriptedMySqlConnection.Rows([0, true, true]),
+                _ when sql.Contains("INFORMATION_SCHEMA", StringComparison.Ordinal) => path == "prepare-existing" ? "app" : null,
+                _ when sql.StartsWith("CREATE DATABASE", StringComparison.Ordinal) => 1,
+                _ => throw new InvalidOperationException("Unexpected SQL.")
+            })
+        };
 
     private static void AssertResult(string path, object result, string? failure)
     {

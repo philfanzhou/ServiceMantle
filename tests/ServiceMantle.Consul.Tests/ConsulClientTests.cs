@@ -79,12 +79,15 @@ public sealed class ConsulClientTests
     {
         using var fixture = new ConsulFixture();
         await fixture.ActivateAsync(ConsulFixture.Enabled());
-        var stub = new ConsulFixture.StubClient { Operation = _ => scenario switch
+        var stub = new ConsulFixture.StubClient
+        {
+            Operation = _ => scenario switch
         {
             "throw" => ValueTask.FromException<ConsulClientResult>(new HttpRequestException(ConsulFixture.Secret)),
             "internal-cancel" => ValueTask.FromException<ConsulClientResult>(new OperationCanceledException(ConsulFixture.Secret)),
             _ => ValueTask.FromResult((ConsulClientResult)999)
-        } };
+        }
+        };
         fixture.ClientFactory.CreateClient = _ => stub;
         using var session = fixture.Provider.CreateClient();
         var result = register ? await session!.RegisterAsync(TestContext.Current.CancellationToken)
@@ -107,7 +110,9 @@ public sealed class ConsulClientTests
         using var fixture = new ConsulFixture();
         await fixture.ActivateAsync(ConsulFixture.Enabled());
         using var cancellation = new CancellationTokenSource();
-        var stub = new ConsulFixture.StubClient { Operation = token =>
+        var stub = new ConsulFixture.StubClient
+        {
+            Operation = token =>
         {
             Assert.Equal(cancellation.Token, token);
             cancellation.Cancel();
@@ -117,7 +122,8 @@ public sealed class ConsulClientTests
                 "different-exception" => ValueTask.FromException<ConsulClientResult>(new HttpRequestException(ConsulFixture.Secret)),
                 _ => ValueTask.FromResult(ConsulClientResult.Success)
             };
-        } };
+        }
+        };
         fixture.ClientFactory.CreateClient = _ => stub;
         using var session = fixture.Provider.CreateClient();
         if (point == "before") { cancellation.Cancel(); }
