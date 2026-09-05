@@ -1766,7 +1766,7 @@ closes the dedicated session as the authoritative fallback. The lock is scoped t
 uses session rather than transaction ownership, is not a fencing token, and cannot undo already
 committed migration side effects.
 
-No lock providers for SQLite or MySQL are implemented in this release.
+No lock provider for SQLite is implemented in this release.
 Multi-instance migrations without registered lock support fail closed with
 `migration.lock_not_supported`.
 
