@@ -14,7 +14,12 @@ internal sealed class ServiceMantleOpenTelemetryRegistrationValidator(
     public Task StartingAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        Validate(registrations);
+        return Task.CompletedTask;
+    }
 
+    internal static void Validate(IEnumerable<ServiceMantleOpenTelemetryRegistration> registrations)
+    {
         ServiceMantleOpenTelemetryRegistration? baseline = null;
         foreach (var registration in registrations)
         {
@@ -27,8 +32,6 @@ internal sealed class ServiceMantleOpenTelemetryRegistrationValidator(
 
             baseline = normalized;
         }
-
-        return Task.CompletedTask;
     }
 
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
