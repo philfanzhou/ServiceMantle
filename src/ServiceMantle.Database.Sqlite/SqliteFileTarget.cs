@@ -279,10 +279,30 @@ internal sealed class SqliteTargetFileSystem : ISqliteTargetFileSystem
                 leaf + "-wal",
                 leaf + "-shm"
             };
-            return new DirectoryInfo(parent).EnumerateFileSystemInfos()
-                .Any(entry => sidecars.Contains(entry.Name))
-                ? SqliteSidecarInspectionStatus.Present
-                : SqliteSidecarInspectionStatus.None;
+            if (new DirectoryInfo(parent).EnumerateFileSystemInfos()
+                .Any(entry => sidecars.Contains(entry.Name)))
+            {
+                return SqliteSidecarInspectionStatus.Present;
+            }
+
+            // Resolve each name through the filesystem as well: ordinal directory entries can
+            // miss case aliases (including in a missing target's leaf or the sidecar suffix).
+            // Attribute lookup observes directories and dangling links without opening SQLite;
+            // unlike Exists, it does not hide access failures as an absent sidecar.
+            foreach (var sidecar in sidecars)
+            {
+                try
+                {
+                    _ = File.GetAttributes(Path.Combine(parent, sidecar));
+                    return SqliteSidecarInspectionStatus.Present;
+                }
+                catch (FileNotFoundException)
+                {
+                    // Only an absent entry permits checking the next sidecar name.
+                }
+            }
+
+            return SqliteSidecarInspectionStatus.None;
         }
         catch (UnauthorizedAccessException)
         {

@@ -324,6 +324,119 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
         Assert.Equal(entries, Directory.GetFileSystemEntries(directory.Path));
     }
 
+    public static TheoryData<string, bool, string, string> SidecarPathCases => new(
+        from suffix in new[] { "-journal", "-wal", "-shm" }
+        from targetExists in new[] { false, true }
+        from spelling in new[] { "exact", "leaf-case", "suffix-case" }
+        from entryKind in new[] { "file", "directory", "dangling-link" }
+        select (suffix, targetExists, spelling, entryKind));
+
+    [Theory]
+    [MemberData(nameof(SidecarPathCases))]
+    public async Task Sidecar_conflicts_follow_filesystem_resolution_without_SQLite_IO_or_writes(
+        string suffix,
+        bool targetExists,
+        string spelling,
+        string entryKind)
+    {
+        using var directory = new TemporaryDirectory();
+        // Detect this directory's behavior; Windows and macOS can also host case-sensitive volumes.
+        var probe = System.IO.Path.Combine(directory.Path, "CaseProbe");
+        await File.WriteAllTextAsync(probe, "probe", Token);
+        var ignoresCase = File.Exists(System.IO.Path.Combine(directory.Path, "caseprobe"));
+        File.Delete(probe);
+
+        var path = System.IO.Path.Combine(directory.Path, "Target.db");
+        if (targetExists)
+        {
+            await CreateDatabaseAsync(path);
+        }
+
+        var originalBytes = targetExists ? await File.ReadAllBytesAsync(path, Token) : null;
+        var sidecarName = spelling switch
+        {
+            "leaf-case" => "target.db" + suffix,
+            "suffix-case" => "Target.db" + suffix.ToUpperInvariant(),
+            _ => "Target.db" + suffix
+        };
+        var sidecarPath = System.IO.Path.Combine(directory.Path, sidecarName);
+        var linkTarget = System.IO.Path.Combine(directory.Path, "absent-link-target");
+        switch (entryKind)
+        {
+            case "file":
+                await File.WriteAllBytesAsync(sidecarPath, [1, 2, 3], Token);
+                break;
+            case "directory":
+                Directory.CreateDirectory(sidecarPath);
+                break;
+            case "dangling-link":
+                File.CreateSymbolicLink(sidecarPath, linkTarget);
+                break;
+        }
+
+        var entries = Directory.GetFileSystemEntries(directory.Path)
+            .Select(System.IO.Path.GetFileName).Order(StringComparer.Ordinal).ToArray();
+        var expectConflict = spelling == "exact" || ignoresCase;
+        var rejectedDatabase = new RejectIoDatabaseAccess();
+        var provider = new SqliteDatabaseTargetPreparationProvider(
+            new SqliteTargetFileSystem(),
+            expectConflict ? rejectedDatabase : new SqliteDatabaseAccess());
+        var target = TargetForPath(path);
+
+        var observation = await provider.ObserveAsync(target, Token);
+        Assert.Equal(entries, Directory.GetFileSystemEntries(directory.Path)
+            .Select(System.IO.Path.GetFileName).Order(StringComparer.Ordinal).ToArray());
+        var preparation = await provider.PrepareAsync(
+            DatabaseTargetPreparationRequest.ForFile(target), DefaultTimeout, Token);
+
+        if (expectConflict)
+        {
+            Assert.Equal(DatabaseTargetObservationStatus.TargetUnreachable, observation.Status);
+            Assert.Equal(targetExists ? (bool?)true : null, observation.TargetExists);
+            Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, observation.ErrorCode);
+            Assert.False(preparation.Succeeded);
+            Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, preparation.ErrorCode);
+            Assert.Equal(0, rejectedDatabase.CallCount);
+            Assert.Equal(targetExists, File.Exists(path));
+        }
+        else
+        {
+            Assert.Equal(targetExists
+                ? DatabaseTargetObservationStatus.TargetConnectable
+                : DatabaseTargetObservationStatus.TargetMissing, observation.Status);
+            Assert.True(preparation.Succeeded);
+            Assert.Equal(targetExists
+                ? DatabaseTargetPreparationOutcome.AlreadyExists
+                : DatabaseTargetPreparationOutcome.Created, preparation.Outcome);
+            if (!targetExists)
+            {
+                entries = entries.Append("Target.db").Order(StringComparer.Ordinal).ToArray();
+            }
+        }
+
+        Assert.Equal(entries, Directory.GetFileSystemEntries(directory.Path)
+            .Select(System.IO.Path.GetFileName).Order(StringComparer.Ordinal).ToArray());
+        if (targetExists)
+        {
+            Assert.Equal(originalBytes, await File.ReadAllBytesAsync(path, Token));
+        }
+
+        if (entryKind == "file")
+        {
+            Assert.Equal(new byte[] { 1, 2, 3 }, await File.ReadAllBytesAsync(sidecarPath, Token));
+        }
+        else if (entryKind == "directory")
+        {
+            Assert.True(Directory.Exists(sidecarPath));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(sidecarPath));
+        }
+        else
+        {
+            Assert.True(new FileInfo(sidecarPath).LinkTarget == linkTarget);
+            Assert.False(File.Exists(linkTarget));
+        }
+    }
+
     [Fact]
     public async Task Directory_symbolic_linked_component_hard_link_and_special_file_are_rejected()
     {
