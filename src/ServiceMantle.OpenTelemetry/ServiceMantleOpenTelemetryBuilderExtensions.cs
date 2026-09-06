@@ -24,7 +24,8 @@ public static class ServiceMantleOpenTelemetryBuilderExtensions
     /// <remarks>
     /// The OpenTelemetry resource contains only the service name, service version, and instance ID
     /// registered by <c>AddServiceMantle</c>. Equivalent repeated registrations are idempotent;
-    /// invalid or conflicting registrations fail when the host starts.
+    /// invalid or conflicting registrations fail when the host starts, before activating the
+    /// ServiceMantle instrumentation, including when framework DI resolves a provider early.
     /// </remarks>
     public static ServiceMantleBuilder AddOpenTelemetryInstrumentation(
         this ServiceMantleBuilder builder,
@@ -64,6 +65,11 @@ public static class ServiceMantleOpenTelemetryBuilderExtensions
 
         if (registration.EnableRuntimeMetrics)
         {
+            // Framework DI/Options can create this provider before hosted StartingAsync runs.
+            // Validate the final registrations before any of our instrumentation callbacks.
+            builder.Services.ConfigureOpenTelemetryMeterProvider(static (services, _) =>
+                ServiceMantleOpenTelemetryRegistrationValidator.Validate(
+                    services.GetServices<ServiceMantleOpenTelemetryRegistration>()));
             openTelemetry.WithMetrics(metrics => metrics
                 .SetResourceBuilder(CreateResource(logContext))
                 .AddRuntimeInstrumentation());
@@ -71,6 +77,9 @@ public static class ServiceMantleOpenTelemetryBuilderExtensions
 
         if (registration.EnableAspNetCoreTracing || registration.EnableHttpClientTracing)
         {
+            builder.Services.ConfigureOpenTelemetryTracerProvider(static (services, _) =>
+                ServiceMantleOpenTelemetryRegistrationValidator.Validate(
+                    services.GetServices<ServiceMantleOpenTelemetryRegistration>()));
             openTelemetry.WithTracing(tracing =>
             {
                 tracing.SetResourceBuilder(CreateResource(logContext));

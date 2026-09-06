@@ -83,8 +83,10 @@ ServiceMantle replaces the OpenTelemetry resource with exactly `service.name`, `
 `service.instance.id`, using the same values as `ServiceLogContext.ServiceName`, `ServiceVersion`, and
 `InstanceId`. These options cannot add resource attributes. Equivalent repeated registrations are
 idempotent; an enabled registration that selects no instrumentation or repeated registrations with
-different effective settings fail when the host starts. Providers and their instrumentation are
-disposed with the host, and disposal failures remain observable to the caller.
+different effective settings fail when the host starts, before ServiceMantle instrumentation is
+activated. This validation also covers framework DI/Options that resolves a provider before hosted
+startup callbacks run. Providers and their instrumentation are disposed with the host, and disposal
+failures remain observable to the caller.
 
 Instrumentation-generated span and metric attributes are controlled by the upstream OpenTelemetry
 packages, not by the ServiceMantle resource whitelist. This package does not guarantee their
