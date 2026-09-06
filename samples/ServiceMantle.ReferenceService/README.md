@@ -62,11 +62,20 @@ mandatory structured sanitization, adds the sample-owned `X-Reference-Secret` to
 Header names through `AddSensitiveHeaders`, and composes Correlation ID outside Problem Details so
 one identifier enriches the whole downstream scope. Its single request line carries only a fixed
 message template, a bounded result classification (`success`, `client_error`, `server_error`,
-`other`, `cancelled`, `faulted`), the status code, the request method, the matched route pattern, and
-the Header graph produced by the DI-owned `ServiceMantleRequestHeaderDiagnosticProjector`. No raw
-path, query, body, connection setting, Header value, or exception detail is logged, and no second
-sanitizer is registered. Caller cancellation stays cancellation and is never swallowed. The phase
-gate, health endpoints, management routes, telemetry, and rate limiting stay unwired here.
+`other`, `cancelled`, `faulted`), the status code, the request method collapsed to the framework's
+known token set (anything else becomes `(other)`), the matched route pattern, and the Header graph
+produced by the DI-owned `ServiceMantleRequestHeaderDiagnosticProjector`. No raw path, query, body,
+connection setting, or exception detail is logged, and no second sanitizer is registered.
+
+Header values follow the library contract rather than an allow list: the built-in denied Headers and
+the sample-owned `X-Reference-Secret` are replaced in full by the redaction marker, while the values
+of Headers outside the denied list — `User-Agent`, `Referer`, `X-Forwarded-For`, and any caller
+Header the sample never declared — are projected under the free-text rules of
+[the structured logging security contract](../../LOGGING_SECURITY.md) and therefore do reach the log
+line. Only the shapes that contract recognizes are redacted there. Add a Header name through
+`AddSensitiveHeaders` to keep its values out. Caller cancellation stays cancellation and is never
+swallowed. The phase gate, health endpoints, management routes, telemetry, and rate limiting stay
+unwired here.
 
 The safety boundary is the one documented in [the structured logging security
 contract](../../LOGGING_SECURITY.md). Denied structured field names, denied Headers, supported

@@ -28,6 +28,9 @@ public sealed class ReferenceLoggingTests
     private const string ConfigurationSecret = "reference-configuration-secret-sentinel";
     private const string HeaderSecret = "reference-header-sentinel";
     private const string RequestLine = "Reference request handled";
+    private const string TraceHeaderName = "X-Reference-Trace";
+    private const string NoteHeaderName = "X-Reference-Note";
+    private const string TraceHeaderValue = "reference-trace-marker";
     private static readonly string[] AllSecrets =
         [BootstrapSecret, SetupSecret, DatabaseSecret, ConfigurationSecret, HeaderSecret];
     private static readonly TimeSpan Observation = TimeSpan.FromSeconds(5);
@@ -148,6 +151,68 @@ public sealed class ReferenceLoggingTests
     }
 
     [Fact]
+    public async Task Headers_outside_the_denied_list_keep_their_values_under_the_free_text_contract()
+    {
+        const string correlation = "reference-unlisted-header-probe";
+        await using var host = await StartAsync(enabled: true, map: MapProbes);
+        var projector = host.App.Services.GetRequiredService<ServiceMantleRequestHeaderDiagnosticProjector>();
+
+        using (var client = host.App.GetTestClient())
+        {
+            using var request = CreateRequest("/probe/ok", correlation);
+            request.Headers.Add(TraceHeaderName, TraceHeaderValue);
+            request.Headers.Add(NoteHeaderName, $"Authorization: Bearer {ConfigurationSecret}");
+            request.Headers.Add(ReferenceLoggingDefaults.SecretHeaderName, HeaderSecret);
+            using var response = await client.SendAsync(request, Token);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        // The registry is a deny list, not an allow list: a Header the sample never declared keeps
+        // its value, and only the free-text shapes the contract recognizes are redacted inside it.
+        var context = new DefaultHttpContext();
+        context.Request.Headers[TraceHeaderName] = TraceHeaderValue;
+        context.Request.Headers[NoteHeaderName] = $"Authorization: Bearer {ConfigurationSecret}";
+        context.Request.Headers[ReferenceLoggingDefaults.SecretHeaderName] = HeaderSecret;
+        var projected = projector.Project(context.Request.Headers);
+        Assert.Equal(3, projected.Count);
+        Assert.Equal(TraceHeaderValue, Assert.IsType<string>(projected[TraceHeaderName]));
+        AssertNoSecrets(Assert.IsType<string>(projected[NoteHeaderName]));
+        Assert.Equal(
+            StructuredLogSanitizer.RedactedValue,
+            Assert.IsType<string>(projected[ReferenceLoggingDefaults.SecretHeaderName]));
+
+        var line = SingleRequestLine(await host.StopAndReadAsync(), correlation);
+        Assert.Contains(TraceHeaderValue, line, StringComparison.Ordinal);
+        AssertNoSecrets(line);
+    }
+
+    [Theory]
+    [InlineData("GET", "GET")]
+    [InlineData("get", "GET")]
+    [InlineData("REFERENCE-CUSTOM-METHOD", "(other)")]
+    public async Task The_request_method_is_collapsed_to_the_known_token_set(string method, string expected)
+    {
+        var correlation = "reference-method-probe-" + expected.Trim('(', ')');
+        await using var host = await StartAsync(enabled: true, map: MapProbes);
+
+        using (var client = host.App.GetTestClient())
+        {
+            using var request = new HttpRequestMessage(new HttpMethod(method), "/probe/ok");
+            request.Headers.Add("x-correlation-id", correlation);
+            using var response = await client.SendAsync(request, Token);
+            Assert.NotEqual(HttpStatusCode.InternalServerError, response.StatusCode);
+        }
+
+        var line = SingleRequestLine(await host.StopAndReadAsync(), correlation);
+        Assert.Contains(expected, line, StringComparison.Ordinal);
+        if (!string.Equals(method, expected, StringComparison.OrdinalIgnoreCase))
+        {
+            // An unrecognized token never reaches the log line; it is replaced by the placeholder.
+            Assert.DoesNotContain(method, line, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task Named_secrets_are_redacted_as_structured_fields_exceptions_and_recognized_free_text()
     {
         const string correlation = "reference-secret-probe";
@@ -187,8 +252,9 @@ public sealed class ReferenceLoggingTests
         AssertNoSecrets(pem!);
 
         var console = await host.StopAndReadAsync();
-        var probe = Assert.Single(console.Split('\n')
-            .Where(line => line.Contains("Reference probe", StringComparison.Ordinal)));
+        var probe = Assert.Single(
+            console.Split('\n'),
+            line => line.Contains("Reference probe", StringComparison.Ordinal));
         // The denied field names are redacted by the mandatory sink, not by an explicit call site.
         Assert.Contains(StructuredLogSanitizer.RedactedValue, probe, StringComparison.Ordinal);
         Assert.Contains("success", SingleRequestLine(console, correlation), StringComparison.Ordinal);
@@ -289,10 +355,10 @@ public sealed class ReferenceLoggingTests
         }
     }
 
-    private static string SingleRequestLine(string text, string marker) => Assert.Single(text
-        .Split('\n')
-        .Where(line => line.Contains(RequestLine, StringComparison.Ordinal) &&
-            line.Contains(marker, StringComparison.Ordinal)));
+    private static string SingleRequestLine(string text, string marker) => Assert.Single(
+        text.Split('\n'),
+        line => line.Contains(RequestLine, StringComparison.Ordinal) &&
+            line.Contains(marker, StringComparison.Ordinal));
 
     private static void MapProbes(WebApplication app) => MapProbes(app, barrier: null);
 

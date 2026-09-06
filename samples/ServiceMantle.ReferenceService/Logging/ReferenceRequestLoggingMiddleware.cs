@@ -5,12 +5,17 @@ namespace ServiceMantle.ReferenceService.Logging;
 
 /// <summary>
 /// Writes one fixed, sanitized log line per request. It never records the raw path, query, body,
-/// Header values, connection settings, or exception detail, and it never swallows cancellation.
+/// connection settings, or exception detail, it collapses the request method to the framework's
+/// known token set, and it never swallows cancellation. Header values are only what the DI-owned
+/// <see cref="ServiceMantleRequestHeaderDiagnosticProjector"/> emits: denied Header values become the
+/// redaction marker, while the values of Headers outside the denied list are projected under the
+/// free-text contract and therefore do reach the log line.
 /// </summary>
 internal sealed class ReferenceRequestLoggingMiddleware
 {
     private const string Cancelled = "cancelled";
     private const string Faulted = "faulted";
+    private const string OtherMethod = "(other)";
     private const string Unmatched = "(unmatched)";
     private const string Unknown = "(unknown)";
 
@@ -35,7 +40,7 @@ internal sealed class ReferenceRequestLoggingMiddleware
     {
         ArgumentNullException.ThrowIfNull(context);
         var headers = projector.Project(context.Request.Headers);
-        var method = context.Request.Method;
+        var method = Method(context.Request.Method);
         try
         {
             await next(context).ConfigureAwait(false);
@@ -68,6 +73,22 @@ internal sealed class ReferenceRequestLoggingMiddleware
             Route(context),
             statusCode,
             headers);
+
+    /// <summary>
+    /// Collapses the caller-supplied method token to a bounded set. A method the framework does not
+    /// recognize is reported as a fixed placeholder, so the log line never carries caller text here.
+    /// </summary>
+    private static string Method(string method) =>
+        HttpMethods.IsGet(method) ? HttpMethods.Get
+        : HttpMethods.IsPost(method) ? HttpMethods.Post
+        : HttpMethods.IsPut(method) ? HttpMethods.Put
+        : HttpMethods.IsDelete(method) ? HttpMethods.Delete
+        : HttpMethods.IsPatch(method) ? HttpMethods.Patch
+        : HttpMethods.IsHead(method) ? HttpMethods.Head
+        : HttpMethods.IsOptions(method) ? HttpMethods.Options
+        : HttpMethods.IsTrace(method) ? HttpMethods.Trace
+        : HttpMethods.IsConnect(method) ? HttpMethods.Connect
+        : OtherMethod;
 
     private static string Route(HttpContext context) => context.GetEndpoint() switch
     {

@@ -20,8 +20,10 @@ public static class ReferenceLoggingDefaults
     /// <summary>The fixed message template of the sample's request log line.</summary>
     /// <remarks>
     /// The template never interpolates caller data. Only the bounded result classification, the
-    /// status code, the matched route pattern, the request method, and the projected Header graph
-    /// are attached as structured properties, which the mandatory sanitizing sink cleans.
+    /// status code, the matched route pattern, the request method collapsed to the framework's known
+    /// token set, and the projected Header graph are attached as structured properties, which the
+    /// mandatory sanitizing sink cleans. The Header graph redacts denied Header values in full and
+    /// projects the remaining Header values under the free-text contract.
     /// </remarks>
     public const string RequestMessageTemplate =
         "Reference request handled {Result} {Method} {Route} {StatusCode} {@Headers}";
