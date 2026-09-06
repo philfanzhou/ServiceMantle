@@ -85,7 +85,7 @@ internal sealed class ServiceMantlePhaseGateState(IEnumerable<ServiceMantlePhase
         return methods is { Count: > 0 } && methods.All(method => HttpMethods.IsGet(method) || HttpMethods.IsHead(method));
     }
 
-    private static string Normalize(string? path)
+    internal static string Normalize(string? path)
     {
         if (path is null) throw Failure();
         var normalized = path.Trim().ToLowerInvariant();
