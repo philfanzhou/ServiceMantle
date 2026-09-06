@@ -174,6 +174,10 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.True(await host.RequestCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), Token));
+        // The handler cancels the token it handed to the cooperative source before it leaves its
+        // cancellation exit, so this is asserted directly instead of inferred from the caller.
+        Assert.True(host.Source.CancellationObserved.Task.IsCompleted);
+        Assert.True(host.Source.ObservedToken.IsCancellationRequested);
         Assert.DoesNotContain(host.Sink.Events, item => item.Properties.TryGetValue("SourceContext", out var category) &&
             category.ToString() == "\"ServiceMantle.Http.ProblemDetails\"");
     }
@@ -463,11 +467,18 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
         internal int Resolutions;
         internal int Calls;
         internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource CancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal CancellationToken ObservedToken;
         private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly ConcurrentQueue<Task<ServiceHealthSnapshot>> reads = new();
+        private readonly ConcurrentQueue<CancellationTokenRegistration> registrations = new();
         public ValueTask<ServiceHealthSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref Calls);
+            ObservedToken = cancellationToken;
+            // The fixture owns this registration: disposing it from the read would race the token's
+            // own callbacks and could drop the notification under observation.
+            registrations.Enqueue(cancellationToken.Register(() => CancellationObserved.TrySetResult()));
             var read = ReadAsync(cancellationToken);
             reads.Enqueue(read);
             return new ValueTask<ServiceHealthSnapshot>(read);
@@ -492,6 +503,7 @@ public sealed class ServiceMantleCoreOptionalCompositionTests
                 catch (OperationCanceledException) { }
                 catch (InvalidOperationException) when (mode == "throw") { }
             }
+            foreach (var registration in registrations) await registration.DisposeAsync();
         }
     }
 

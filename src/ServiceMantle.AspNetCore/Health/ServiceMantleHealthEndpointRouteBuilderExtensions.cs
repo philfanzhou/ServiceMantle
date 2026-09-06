@@ -13,6 +13,15 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
     /// <summary>
     /// Maps <c>/health/live</c>, <c>/health/ready</c>, and <c>/health</c>.
     /// </summary>
+    /// <remarks>
+    /// The readiness routes read one snapshot per request through a token linked to the request's
+    /// cancellation and to the configured probe timeout. When the caller aborts the request, the
+    /// handler cancels that linked token before it releases it, so a cooperative source observes
+    /// the cancellation on the token it received; the request itself still fails with an
+    /// <see cref="OperationCanceledException"/> carrying the request's own token. Sources that
+    /// ignore the token, block, or throw from a cancellation callback are not terminated, and the
+    /// handler does not wait for a source to finish its own cleanup.
+    /// </remarks>
     public static IEndpointRouteBuilder MapServiceMantleHealthEndpoints(
         this IEndpointRouteBuilder endpoints)
     {
@@ -74,11 +83,10 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
                 .AsTask()
                 .WaitAsync(registration.ProbeTimeout, requestAborted)
                 .ConfigureAwait(false);
-            requestAborted.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (requestAborted.IsCancellationRequested)
         {
-            throw new OperationCanceledException(requestAborted);
+            throw CancelledByCaller(linked, requestAborted);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
@@ -91,6 +99,11 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         catch
         {
             return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
+        }
+
+        if (requestAborted.IsCancellationRequested)
+        {
+            throw CancelledByCaller(linked, requestAborted);
         }
 
         if (snapshot is null)
@@ -148,6 +161,27 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         return Results.Json(
             HealthResponse.FromSnapshot(isReady: true, snapshot),
             statusCode: StatusCodes.Status200OK);
+    }
+
+    /// <summary>
+    /// Owns the cancellation exit: the snapshot source is notified on the token it received before
+    /// the linked source is released, and the caller still observes its own cancellation.
+    /// </summary>
+    private static OperationCanceledException CancelledByCaller(
+        CancellationTokenSource linked,
+        CancellationToken requestAborted)
+    {
+        try
+        {
+            linked.Cancel();
+        }
+        catch (AggregateException)
+        {
+            // Cancellation callbacks that throw are outside the cooperative cancellation contract
+            // and must not replace the caller's cancellation result.
+        }
+
+        return new OperationCanceledException(requestAborted);
     }
 
     private static IResult NotReady(string errorCode) => Results.Json(
