@@ -146,7 +146,7 @@ public sealed class ManagementAuditModelBuilderExtensionsTests
             (ManagementAuditEntityMapper.MaxMetadataJsonByteLength / 4) + 1)) + "\"";
         context.Set<ManagementAuditLogEntity>().Add(new ManagementAuditLogEntity
         {
-            Id = Guid.NewGuid(),
+            Id = Guid.NewGuid().ToString("D"),
             OperatorSource = "system",
             Action = "configuration.changed",
             TargetType = "configuration",

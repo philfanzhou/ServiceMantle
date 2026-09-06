@@ -10,8 +10,8 @@ internal static class ManagementAuditEntityMapper
     internal const int MaxMetadataJsonByteLength = 256 * 1024;
 
     // Four bytes per UTF-16 code unit is deliberately conservative. Domain validation still
-    // enforces the exact character limits; this ceiling bounds transfer/allocation for dirty rows
-    // before EF materializes their text values.
+    // enforces the exact character limits; the query service uses this ceiling in server-side
+    // conditional projections so dirty rows cannot return oversized text to the client.
     internal static int MaxPersistedTextByteLength(int maxCharacterLength) =>
         checked(maxCharacterLength * 4);
 
@@ -61,7 +61,7 @@ internal static class ManagementAuditEntityMapper
 
         return new ManagementAuditLogEntity
         {
-            Id = id,
+            Id = id.ToString("D"),
             OperatorId = safeEvent.Operator.OperatorId,
             OperatorDisplayName = safeEvent.Operator.DisplayName,
             OperatorSource = safeEvent.Operator.Source.Value,
@@ -81,7 +81,17 @@ internal static class ManagementAuditEntityMapper
     {
         ArgumentNullException.ThrowIfNull(entity);
 
-        if (entity.Id == Guid.Empty
+        Guid id;
+        try
+        {
+            id = ParsePersistedId(entity.Id);
+        }
+        catch (FormatException exception)
+        {
+            throw InvalidStoredEntity(exception);
+        }
+
+        if (id == Guid.Empty
             || !ManagementAuditOperatorSource.TryParse(entity.OperatorSource, out var source) || source is null
             || !ManagementAuditAction.TryParse(entity.Action, out var action) || action is null
             || !ManagementAuditTargetType.TryParse(entity.TargetType, out var targetType) || targetType is null
@@ -123,7 +133,7 @@ internal static class ManagementAuditEntityMapper
                 metadata);
 
             return new ManagementAuditRecord(
-                entity.Id,
+                id,
                 safeEvent.Operator,
                 safeEvent.Action,
                 safeEvent.Target,
