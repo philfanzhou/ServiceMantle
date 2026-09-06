@@ -15,7 +15,7 @@ The audited source is [`philfanzhou/SignaCore@23c2f666`](https://github.com/phil
 
 ## Deletion sequence
 
-| Order | Subsystem | Candidate IDs | Unique replacement/integration gate | Tracking task |
+| Order | Subsystem | Candidate IDs | Unique replacement/integration gate | Tracking issue |
 |---:|---|---|---|---|
 | 1 | Migration | `migration-orchestration`, `installation-state-persistence` | #70, #71 | #128 |
 | 2 | Bootstrap | `bootstrap-file-lifecycle`, `bootstrap-management-mode`, `bootstrap-startup-branch` | `BootstrapFileStore`, #95, #116 | #129 |
@@ -26,11 +26,28 @@ The audited source is [`philfanzhou/SignaCore@23c2f666`](https://github.com/phil
 | 7 | Health | `phase-health-endpoints`, `signing-key-readiness` | #103 | #134 |
 | 8 | Consul | `consul-registration-lifecycle` | #104 | #135 |
 
-All eight tasks are native sub-issues of #106. Their GitHub `Blocked by` relationships include both capability prerequisites and the preceding deletion batch, so the prose table is not the dependency source of truth.
+The eight rows group the historical inventory by subsystem; they are not eight equal units of work. All eight tracking issues are native sub-issues of [#106](https://github.com/philfanzhou/ServiceMantle/issues/106), but three of them — [#129](https://github.com/philfanzhou/ServiceMantle/issues/129), [#131](https://github.com/philfanzhou/ServiceMantle/issues/131) and [#135](https://github.com/philfanzhou/ServiceMantle/issues/135) — are Workstreams rather than issues anyone can pick up. Implementation happens in their deepest tasks:
+
+| Workstream | Deepest tasks to pick up |
+| --- | --- |
+| [#129](https://github.com/philfanzhou/ServiceMantle/issues/129) (Bootstrap) | [#163](https://github.com/philfanzhou/ServiceMantle/issues/163), [#168](https://github.com/philfanzhou/ServiceMantle/issues/168), [#162](https://github.com/philfanzhou/ServiceMantle/issues/162) |
+| [#131](https://github.com/philfanzhou/ServiceMantle/issues/131) (Configuration) | [#143](https://github.com/philfanzhou/ServiceMantle/issues/143), [#144](https://github.com/philfanzhou/ServiceMantle/issues/144), [#145](https://github.com/philfanzhou/ServiceMantle/issues/145), [#146](https://github.com/philfanzhou/ServiceMantle/issues/146) |
+| [#135](https://github.com/philfanzhou/ServiceMantle/issues/135) (Consul) | [#147](https://github.com/philfanzhou/ServiceMantle/issues/147), [#148](https://github.com/philfanzhou/ServiceMantle/issues/148) |
+
+The remaining five rows — [#128](https://github.com/philfanzhou/ServiceMantle/issues/128), [#130](https://github.com/philfanzhou/ServiceMantle/issues/130), [#132](https://github.com/philfanzhou/ServiceMantle/issues/132), [#133](https://github.com/philfanzhou/ServiceMantle/issues/133) and [#134](https://github.com/philfanzhou/ServiceMantle/issues/134) — are directly implementable tasks.
+
+GitHub's native `Sub-issues` and `Blocked by` relationships are the execution dependency source of truth; this prose table is not. Those relationships mix capability prerequisites with the preceding deletion batch, and each Workstream's `Blocked by` set is exactly its own sub-issues, so a Workstream is transparent in the dependency graph rather than a step of its own.
 
 ## Post-deletion acceptance
 
-#107 runs only after #106 and all eight deletion batches complete. It validates the integrated upgrade, new-install, failure-recovery and multi-instance behavior; it is not a prerequisite of any deletion candidate or batch. Keeping this acceptance edge downstream avoids making #106 depend on its own completion.
+[#107](https://github.com/philfanzhou/ServiceMantle/issues/107) as a whole closes only after [#106](https://github.com/philfanzhou/ServiceMantle/issues/106) and all eight deletion batches complete, and `manifest.json` records that aggregate edge as `postDeletionAcceptance` (`issue: #107`, `afterWorkstream: #106`). It validates the integrated upgrade, new-install, failure-recovery, multi-instance and bootstrap-app-provisioning behavior; it is not a prerequisite of any deletion candidate or batch. Keeping this acceptance edge downstream avoids making [#106](https://github.com/philfanzhou/ServiceMantle/issues/106) depend on its own completion.
+
+Closing the aggregate and starting a concrete acceptance task are two different levels. The individual acceptance tasks carry their own native `Blocked by` gates, which are narrower than the whole Workstream:
+
+- The P0 tasks [#152](https://github.com/philfanzhou/ServiceMantle/issues/152), [#153](https://github.com/philfanzhou/ServiceMantle/issues/153), [#155](https://github.com/philfanzhou/ServiceMantle/issues/155), [#166](https://github.com/philfanzhou/ServiceMantle/issues/166), [#167](https://github.com/philfanzhou/ServiceMantle/issues/167) and [#174](https://github.com/philfanzhou/ServiceMantle/issues/174) are each gated on [#134](https://github.com/philfanzhou/ServiceMantle/issues/134) alone. Once [#134](https://github.com/philfanzhou/ServiceMantle/issues/134) is done and their own prerequisites hold, they are workable; they do not wait for the P1 Consul switchover in [#148](https://github.com/philfanzhou/ServiceMantle/issues/148). [#152](https://github.com/philfanzhou/ServiceMantle/issues/152), [#153](https://github.com/philfanzhou/ServiceMantle/issues/153), [#155](https://github.com/philfanzhou/ServiceMantle/issues/155) and [#178](https://github.com/philfanzhou/ServiceMantle/issues/178) are direct sub-issues of [#107](https://github.com/philfanzhou/ServiceMantle/issues/107); [#166](https://github.com/philfanzhou/ServiceMantle/issues/166), [#167](https://github.com/philfanzhou/ServiceMantle/issues/167) and [#174](https://github.com/philfanzhou/ServiceMantle/issues/174) sit one level deeper under the failure-recovery Workstream [#154](https://github.com/philfanzhou/ServiceMantle/issues/154).
+- The P1 task [#178](https://github.com/philfanzhou/ServiceMantle/issues/178) is gated on [#148](https://github.com/philfanzhou/ServiceMantle/issues/148), so it does wait for the Consul switchover.
+
+The manifest's aggregate record and the offline guard tests deliberately stay at the [#107](https://github.com/philfanzhou/ServiceMantle/issues/107)/[#106](https://github.com/philfanzhou/ServiceMantle/issues/106) level. They do not read GitHub, so nothing here asserts that the offline guard has verified the current remote task graph; the native relationships above were read from GitHub and are what an implementer should re-read before picking a task up.
 
 ## Explicit coverage gaps
 
