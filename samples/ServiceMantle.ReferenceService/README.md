@@ -19,11 +19,11 @@ build and test both projects without a separate sample list.
 | --- | --- | --- |
 | `ReferenceApplication` | Public composition seam, one skeleton route | Shared by integration tasks |
 | `ReferenceDbContext` and `Data/Migrations` | One workspace table; caller owns migration, save and transaction | #160 |
-| `ReferenceSetupContributor` | Read-only validation and staging-only example; never invoked at startup | #160 |
+| `ReferenceSetupContributor` | Read-only validation and staging-only example; never invoked at startup | [#175](https://github.com/philfanzhou/ServiceMantle/issues/175) |
 | `ReferenceSettingDefinitions` | Defaults and constraints only; no store, HTTP or activation | #177 |
 | `ReferenceReadinessContributor` | Returns `reference.health_not_integrated`; never claims readiness | #156 |
 | `ExternalManagementIdentityPlaceholder` | Returns Failed with a safe unconfigured-provider code | Future external identity integration |
-| `Logging/` | Opt-in Serilog Console wiring and one sanitized request line | #175 |
+| `Logging/` | Opt-in Serilog Console wiring and one sanitized request line | Delivered by [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) |
 
 EF SQLite is configured solely as a consumer model carrier. The optional ServiceMantle SQLite
 installation provider is not registered. The default file is `reference.db` below the content root;
@@ -41,10 +41,14 @@ The identity placeholder does not invent an unauthenticated-success story for an
 external system, emit credentials, contact a network service, or create a local administrator.
 No local-administrator entity or provisioning path exists in this sample.
 
-Audit, telemetry and Consul integration remain in #175, #158 and #159. This
-skeleton makes no guarantees about TLS, deployment, reverse proxies, production security hardening,
-API compatibility, final management routes or multi-instance E2E behavior. Its startup status is not
-a health/readiness claim.
+Configuration management transaction audit remains in
+[#177](https://github.com/philfanzhou/ServiceMantle/issues/177), first-install transaction audit in
+[#175](https://github.com/philfanzhou/ServiceMantle/issues/175), telemetry in
+[#158](https://github.com/philfanzhou/ServiceMantle/issues/158) and Consul in
+[#159](https://github.com/philfanzhou/ServiceMantle/issues/159). This skeleton makes no guarantees
+about TLS, deployment, reverse proxies, production security hardening, API compatibility, final
+management routes or multi-instance E2E behavior. Its startup status is not a health/readiness
+claim.
 
 ## Logging safety wiring
 
