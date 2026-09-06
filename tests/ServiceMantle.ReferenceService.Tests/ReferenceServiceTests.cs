@@ -133,7 +133,8 @@ public sealed class ReferenceServiceTests
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "ServiceMantle.slnx"))) root = root.Parent;
         Assert.NotNull(root);
         var project = XDocument.Load(Path.Combine(root.FullName, "samples/ServiceMantle.ReferenceService/ServiceMantle.ReferenceService.csproj"));
-        Assert.Equal(new[] { "../../src/ServiceMantle/ServiceMantle.csproj", "../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" },
+        Assert.Equal(new[] { "../../src/ServiceMantle/ServiceMantle.csproj", "../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj",
+            "../../src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" },
             project.Descendants("ProjectReference").Select(reference => (string)reference.Attribute("Include")!));
         Assert.DoesNotContain(project.Descendants("Compile"), item => item.Attribute("Include") is not null);
         var assembly = typeof(ReferenceApplication).Assembly;
