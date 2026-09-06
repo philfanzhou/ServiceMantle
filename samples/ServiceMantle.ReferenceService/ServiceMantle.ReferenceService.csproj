@@ -6,5 +6,6 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
     <ProjectReference Include="../../src/ServiceMantle/ServiceMantle.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" />
+    <ProjectReference Include="../../src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" />
   </ItemGroup>
 </Project>
