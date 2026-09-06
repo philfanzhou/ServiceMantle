@@ -51,23 +51,40 @@ internal sealed class ServiceMantlePhaseGateMiddleware(RequestDelegate next, Ser
             var source = context.RequestServices.GetService<IServiceHealthSnapshotSource>();
             snapshot = source is null ? null : await source.GetSnapshotAsync(linked.Token).AsTask()
                 .WaitAsync(configuration.Timeout, cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
-            throw new OperationCanceledException("The phase observation was cancelled by the caller.", cancellationToken);
+            throw CancelledByCaller(linked, cancellationToken);
         }
         catch
         {
             snapshot = null;
         }
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested) throw CancelledByCaller(linked, cancellationToken);
         if (snapshot is null || !Allows(surface, snapshot))
         {
             await RejectAsync(context).ConfigureAwait(false);
             return;
         }
         await next(context).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Owns the cancellation exit: the snapshot source is notified on the token it received before
+    /// the linked source is released, and the caller still observes its own cancellation.
+    /// </summary>
+    private static OperationCanceledException CancelledByCaller(CancellationTokenSource linked, CancellationToken cancellationToken)
+    {
+        try
+        {
+            linked.Cancel();
+        }
+        catch (AggregateException)
+        {
+            // Cancellation callbacks that throw are outside the cooperative cancellation contract
+            // and must not replace the caller's cancellation result.
+        }
+        return new OperationCanceledException("The phase observation was cancelled by the caller.", cancellationToken);
     }
 
     private static bool Allows(ServiceMantleManagementSurface? surface, ServiceHealthSnapshot snapshot)
