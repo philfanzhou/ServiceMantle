@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Net;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Builder;
@@ -403,9 +404,9 @@ public sealed class ReferenceLoggingTests
         var root = Path.Combine(Path.GetTempPath(), $"sm-reference-log-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         var original = Console.Out;
-        var writer = new StringWriter(CultureInfo.InvariantCulture);
+        var writer = new ConsoleCapture();
         // The Console sink is created while the host starts, so the capture must be installed first.
-        Console.SetOut(TextWriter.Synchronized(writer));
+        Console.SetOut(writer);
         try
         {
             List<string> args =
@@ -435,7 +436,7 @@ public sealed class ReferenceLoggingTests
         }
     }
 
-    private sealed class ReferenceHost(WebApplication app, string root, StringWriter writer, TextWriter original)
+    private sealed class ReferenceHost(WebApplication app, string root, ConsoleCapture writer, TextWriter original)
         : IAsyncDisposable
     {
         private bool stopped;
@@ -466,9 +467,44 @@ public sealed class ReferenceLoggingTests
             finally
             {
                 Console.SetOut(original);
-                writer.Dispose();
                 if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
             }
+        }
+    }
+
+    /// <summary>
+    /// Captures Console output while one host runs. Console is process-global, so writes can arrive
+    /// from any thread at any time; taking the same lock for every write and for the snapshot keeps
+    /// the reader from tearing the buffer, and writes that arrive after the capture is uninstalled
+    /// are simply appended to a buffer nobody reads again rather than throwing on a foreign thread.
+    /// </summary>
+    private sealed class ConsoleCapture : TextWriter
+    {
+        private readonly Lock gate = new();
+        private readonly StringBuilder builder = new();
+
+        public override Encoding Encoding => Encoding.UTF8;
+
+        public override IFormatProvider FormatProvider => CultureInfo.InvariantCulture;
+
+        public override void Write(char value)
+        {
+            lock (gate) builder.Append(value);
+        }
+
+        public override void Write(string? value)
+        {
+            lock (gate) builder.Append(value);
+        }
+
+        public override void Write(char[] buffer, int index, int count)
+        {
+            lock (gate) builder.Append(buffer, index, count);
+        }
+
+        public override string ToString()
+        {
+            lock (gate) return builder.ToString();
         }
     }
 
