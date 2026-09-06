@@ -191,6 +191,9 @@ public static class ServiceMantleServiceCollectionExtensions
     /// <remarks>
     /// The consuming service separately registers one <see cref="IServiceHealthSnapshotSource"/>.
     /// The live endpoint does not resolve that source; readiness fails closed when it is absent.
+    /// The capability also registers the default scoped <see cref="IServiceReadinessDecisionSource"/>
+    /// shared by the readiness endpoints and by optional packages that must not repeat the readiness
+    /// algorithm. Registering a decision source before this call keeps that registration.
     /// </remarks>
     public static ServiceMantleBuilder AddServiceMantleHealthEndpoints(
         this ServiceMantleBuilder builder,
@@ -203,6 +206,9 @@ public static class ServiceMantleServiceCollectionExtensions
             options.ProbeTimeout,
             options.ContributorTimeout));
         builder.Services.TryAddSingleton<ServiceReadinessContributorCombiner>();
+        builder.Services.TryAddScoped<
+            IServiceReadinessDecisionSource,
+            ServiceMantleReadinessDecisionSource>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
             ServiceMantleHealthStartupValidator>());

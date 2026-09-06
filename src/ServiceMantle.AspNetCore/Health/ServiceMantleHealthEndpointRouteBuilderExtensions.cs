@@ -14,13 +14,16 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
     /// Maps <c>/health/live</c>, <c>/health/ready</c>, and <c>/health</c>.
     /// </summary>
     /// <remarks>
-    /// The readiness routes read one snapshot per request through a token linked to the request's
-    /// cancellation and to the configured probe timeout. When the caller aborts the request, the
-    /// handler cancels that linked token before it releases it, so a cooperative source observes
-    /// the cancellation on the token it received; the request itself still fails with an
-    /// <see cref="OperationCanceledException"/> carrying the request's own token. Sources that
-    /// ignore the token, block, or throw from a cancellation callback are not terminated, and the
-    /// handler does not wait for a source to finish its own cleanup.
+    /// The readiness routes project one <see cref="ServiceReadinessDecision"/> obtained from the
+    /// registered <see cref="IServiceReadinessDecisionSource"/>; the live route never resolves it.
+    /// The default decision source reads one snapshot per request through a token linked to the
+    /// request's cancellation and to the configured probe timeout. When the caller aborts the
+    /// request, that source cancels the linked token before it releases it, so a cooperative
+    /// snapshot source observes the cancellation on the token it received; the request itself still
+    /// fails with an <see cref="OperationCanceledException"/> carrying the request's own token.
+    /// Sources that ignore the token, block, or throw from a cancellation callback are not
+    /// terminated, and the handler does not wait for a source to finish its own cleanup. A missing,
+    /// unresolvable, failing, or null-returning decision source fails closed.
     /// </remarks>
     public static IEndpointRouteBuilder MapServiceMantleHealthEndpoints(
         this IEndpointRouteBuilder endpoints)
@@ -52,12 +55,10 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
     {
         var requestAborted = context.RequestAborted;
         requestAborted.ThrowIfCancellationRequested();
-        var registration = context.RequestServices
-            .GetRequiredService<ServiceMantleHealthRegistration>();
-        IServiceHealthSnapshotSource? source;
+        IServiceReadinessDecisionSource? decisionSource;
         try
         {
-            source = context.RequestServices.GetService<IServiceHealthSnapshotSource>();
+            decisionSource = context.RequestServices.GetService<IServiceReadinessDecisionSource>();
         }
         catch
         {
@@ -66,80 +67,15 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         }
 
         requestAborted.ThrowIfCancellationRequested();
-        if (source is null)
+        if (decisionSource is null)
         {
             return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
         }
 
-        using var timeout = new CancellationTokenSource(registration.ProbeTimeout);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            requestAborted,
-            timeout.Token);
-
-        ServiceHealthSnapshot? snapshot;
+        ServiceReadinessDecision? decision;
         try
         {
-            snapshot = await source.GetSnapshotAsync(linked.Token)
-                .AsTask()
-                .WaitAsync(registration.ProbeTimeout, requestAborted)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (requestAborted.IsCancellationRequested)
-        {
-            throw CancelledByCaller(linked, requestAborted);
-        }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
-        {
-            return NotReady(WellKnownServiceHealthErrorCodes.ProbeTimeout);
-        }
-        catch (TimeoutException)
-        {
-            return NotReady(WellKnownServiceHealthErrorCodes.ProbeTimeout);
-        }
-        catch
-        {
-            return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
-        }
-
-        if (requestAborted.IsCancellationRequested)
-        {
-            throw CancelledByCaller(linked, requestAborted);
-        }
-
-        if (snapshot is null)
-        {
-            return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
-        }
-
-        var evaluation = ServiceHealthEvaluator.Evaluate(snapshot);
-        if (!evaluation.IsReady)
-        {
-            return Results.Json(
-                HealthResponse.FromSnapshot(isReady: false, snapshot),
-                statusCode: StatusCodes.Status503ServiceUnavailable);
-        }
-
-        ServiceReadinessContributorCombiner combiner;
-        try
-        {
-            combiner = context.RequestServices
-                .GetRequiredService<ServiceReadinessContributorCombiner>();
-        }
-        catch
-        {
-            requestAborted.ThrowIfCancellationRequested();
-            return ContributorNotReady(
-                snapshot,
-                WellKnownServiceHealthErrorCodes.ContributorFailed);
-        }
-
-        ServiceReadinessContributorResult contribution;
-        try
-        {
-            contribution = await combiner
-                .EvaluateAsync(snapshot, registration.ContributorTimeout, requestAborted)
-                .ConfigureAwait(false);
-            requestAborted.ThrowIfCancellationRequested();
+            decision = await decisionSource.GetDecisionAsync(requestAborted).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (requestAborted.IsCancellationRequested)
         {
@@ -147,52 +83,29 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         }
         catch
         {
-            requestAborted.ThrowIfCancellationRequested();
-            return ContributorNotReady(
-                snapshot,
-                WellKnownServiceHealthErrorCodes.ContributorFailed);
+            return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
         }
 
-        if (!contribution.IsReady)
+        if (decision is null)
         {
-            return ContributorNotReady(snapshot, contribution.ErrorCode!);
+            return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
+        }
+
+        if (decision.Snapshot is null)
+        {
+            return NotReady(decision.ErrorCode ?? WellKnownServiceHealthErrorCodes.ProbeFailed);
         }
 
         return Results.Json(
-            HealthResponse.FromSnapshot(isReady: true, snapshot),
-            statusCode: StatusCodes.Status200OK);
-    }
-
-    /// <summary>
-    /// Owns the cancellation exit: the snapshot source is notified on the token it received before
-    /// the linked source is released, and the caller still observes its own cancellation.
-    /// </summary>
-    private static OperationCanceledException CancelledByCaller(
-        CancellationTokenSource linked,
-        CancellationToken requestAborted)
-    {
-        try
-        {
-            linked.Cancel();
-        }
-        catch (AggregateException)
-        {
-            // Cancellation callbacks that throw are outside the cooperative cancellation contract
-            // and must not replace the caller's cancellation result.
-        }
-
-        return new OperationCanceledException(requestAborted);
+            HealthResponse.FromDecision(decision),
+            statusCode: decision.IsReady
+                ? StatusCodes.Status200OK
+                : StatusCodes.Status503ServiceUnavailable);
     }
 
     private static IResult NotReady(string errorCode) => Results.Json(
         HealthResponse.ProbeFailure(errorCode),
         statusCode: StatusCodes.Status503ServiceUnavailable);
-
-    private static IResult ContributorNotReady(
-        ServiceHealthSnapshot snapshot,
-        string errorCode) => Results.Json(
-            HealthResponse.FromContributorFailure(snapshot, errorCode),
-            statusCode: StatusCodes.Status503ServiceUnavailable);
 
     private sealed record LiveHealthResponse(string Status);
 
@@ -203,14 +116,16 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         string? DatabaseStatus,
         string? ErrorCode)
     {
-        internal static HealthResponse FromSnapshot(
-            bool isReady,
-            ServiceHealthSnapshot snapshot) => new(
-                isReady ? "ready" : "not_ready",
+        internal static HealthResponse FromDecision(ServiceReadinessDecision decision)
+        {
+            var snapshot = decision.Snapshot!;
+            return new(
+                decision.IsReady ? "ready" : "not_ready",
                 ToWireValue(snapshot.Phase),
                 ToWireValue(snapshot.MigrationStatus),
                 ToWireValue(snapshot.DatabaseStatus),
-                snapshot.ErrorCode);
+                decision.IsReady ? snapshot.ErrorCode : decision.ErrorCode);
+        }
 
         internal static HealthResponse ProbeFailure(string errorCode) => new(
             "not_ready",
@@ -218,15 +133,6 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
             MigrationStatus: null,
             DatabaseStatus: null,
             errorCode);
-
-        internal static HealthResponse FromContributorFailure(
-            ServiceHealthSnapshot snapshot,
-            string errorCode) => new(
-                "not_ready",
-                ToWireValue(snapshot.Phase),
-                ToWireValue(snapshot.MigrationStatus),
-                ToWireValue(snapshot.DatabaseStatus),
-                errorCode);
 
         private static string ToWireValue(ServiceMantle.Installation.ServiceStartupPhase phase) => phase switch
         {
