@@ -11,6 +11,13 @@ public static class ServiceMantlePhaseGateApplicationBuilderExtensions
     /// <remarks>
     /// This is independent of authentication and authorization. The caller owns ordering relative
     /// to other middleware and must not put protected short-circuit handlers before the gate.
+    /// The gate reads one snapshot per admitted request through a token linked to the request's
+    /// cancellation and to the configured snapshot timeout. When the caller aborts the request, the
+    /// gate cancels that linked token before it releases it, so a cooperative snapshot source
+    /// observes the cancellation on the token it received; the request itself still fails with an
+    /// <see cref="OperationCanceledException"/> carrying the caller's own token and the endpoint is
+    /// never executed. Sources that ignore the token, block, or throw from a cancellation callback
+    /// are not terminated, and the gate does not wait for a source to finish its own cleanup.
     /// </remarks>
     public static WebApplication UseServiceMantlePhaseGate(this WebApplication app)
     {
