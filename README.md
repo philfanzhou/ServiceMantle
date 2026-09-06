@@ -317,6 +317,27 @@ that ignores cancellation. This capability does not validate source freshness, r
 or govern middleware that short-circuits before the gate. Runtime route reconfiguration is outside
 startup validation; per-request path/metadata checks still reject mismatches conservatively.
 
+### Shared management entries
+
+`AddServiceMantleManagementEntries` adds an opt-in convention for the finite set of management
+entries that share one baseline — installation status, Bootstrap create and update, Setup status and
+completion, and session login, logout, and read. `MapServiceMantleManagementEntry` maps one entry at
+its fixed path and methods under the root configured by `AddServiceMantleManagementApiV1`, with the
+method-aware phase admission, the fixed anonymous or policy authentication rule, the named rate-limit
+policy, the security response headers, and, for unsafe methods, the fixed
+`X-ServiceMantle-Request: 1` guard already applied.
+
+```csharp
+app.MapServiceMantleManagementEntry(
+    ServiceMantleManagementEntryKind.InstallationStatus,
+    ReadInstallationStatus);
+```
+
+Entries are mapped beside the protected `MapServiceMantleManagementApiV1` group, never inside it, so
+an anonymous entry cannot be used to weaken that group. The convention maps no handler of its own; a
+duplicate kind, a wrong path or method, a downgraded convention, or a missing capability fails before
+the host starts. See [docs/contracts/management-entries.md](docs/contracts/management-entries.md).
+
 ## Isolated setup and management rate limiting
 
 Rate limiting is opt-in and registers two named sliding-window policies without a global limiter:
@@ -631,6 +652,12 @@ provider, and a lossless projection onto the existing `ManagementAuditOperator` 
 | `ManagementPermission.Admin` | `management.admin` |
 | Helper authentication type | `ServiceMantle.Management` |
 | Admin policy name | `ServiceMantle.ManagementAdmin` |
+| Session policy name | `ServiceMantle.ManagementSession` |
+
+`ServiceMantle.ManagementSession` is registered by `AddServiceMantleManagementEntries` for the shared
+management entries any signed-in operator may reach. It pins the fixed management cookie scheme and
+requires the principal's claims to resolve to exactly one legitimate operator, but requires no
+permission, so it is stricter than `RequireAuthenticatedUser` and weaker than the Admin policy.
 
 ```csharp
 builder.Services.AddServiceMantleManagementAuthorization();
