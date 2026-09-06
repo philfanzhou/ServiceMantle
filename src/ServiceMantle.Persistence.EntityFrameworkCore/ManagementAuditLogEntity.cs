@@ -10,7 +10,7 @@ internal sealed class ManagementAuditLogEntity
     /// <summary>
     /// Gets or sets the unique identifier of the audit record.
     /// </summary>
-    public Guid Id { get; set; }
+    public string Id { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets the operator identifier, or null when no operator identity is available.

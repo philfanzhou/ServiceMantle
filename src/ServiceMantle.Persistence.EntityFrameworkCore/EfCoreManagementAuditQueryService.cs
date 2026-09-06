@@ -9,6 +9,8 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 /// occurrence/id key, preventing cursor reuse with different filters or pagination parameters.
 /// Continuations use ordinary keyset semantics rather than claiming a database snapshot: concurrent
 /// backfilled rows may appear on a later page and counts may change between requests.
+/// For supported database dialects, page rows use server-side conditional projections so text that
+/// exceeds the mapped byte ceilings is replaced before it can be returned to or materialized by EF.
 /// </summary>
 public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementAuditQueryService
     where TDbContext : DbContext
@@ -65,16 +67,65 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
         // to slip through. Required text columns cannot be null at the store level (their guards
         // would be pruned from the SQL anyway); anything else a dirty row contains is rejected by
         // ConvertToRecord below, which stays the authoritative validation boundary.
-        List<ManagementAuditLogEntity> entities;
-        try
-        {
-            var page = await ordered
-                .Take(query.PageSize + 1)
-                .Select(item => new
-                {
-                    item,
-                    ViolatesPersistedLimits =
-                        item.Id == Guid.Empty
+        var page = await ordered
+            .Take(query.PageSize + 1)
+            .Select(item => new ManagementAuditBoundedRow
+            {
+                Id = ManagementAuditDatabaseFunctions.TextByteLength(item.Id)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(36)
+                            ? item.Id
+                            : null,
+                OperatorId = ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorId)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                            ManagementAuditOperator.MaxOperatorIdLength)
+                            ? item.OperatorId
+                            : null,
+                OperatorDisplayName = ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorDisplayName)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                            ManagementAuditOperator.MaxDisplayNameLength)
+                            ? item.OperatorDisplayName
+                            : null,
+                OperatorSource = ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorSource)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                            ManagementAuditOperatorSource.MaxLength)
+                            ? item.OperatorSource
+                            : null,
+                Action = ManagementAuditDatabaseFunctions.TextByteLength(item.Action)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(ManagementAuditAction.MaxLength)
+                            ? item.Action
+                            : null,
+                TargetType = ManagementAuditDatabaseFunctions.TextByteLength(item.TargetType)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(ManagementAuditTargetType.MaxLength)
+                            ? item.TargetType
+                            : null,
+                TargetId = ManagementAuditDatabaseFunctions.TextByteLength(item.TargetId)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                            ManagementAuditTarget.MaxTargetIdLength)
+                            ? item.TargetId
+                            : null,
+                Outcome = item.Outcome,
+                OccurredAtUtc = item.OccurredAtUtc,
+                ClientIp = ManagementAuditDatabaseFunctions.TextByteLength(item.ClientIp)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(ManagementAuditEvent.MaxClientIpLength)
+                            ? item.ClientIp
+                            : null,
+                CorrelationId = ManagementAuditDatabaseFunctions.TextByteLength(item.CorrelationId)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                            ManagementAuditEvent.MaxCorrelationIdLength)
+                            ? item.CorrelationId
+                            : null,
+                SecurityDescription = ManagementAuditDatabaseFunctions.TextByteLength(item.SecurityDescription)
+                        <= ManagementAuditEntityMapper.MaxPersistedTextByteLength(
+                            ManagementAuditEvent.MaxDescriptionLength)
+                            ? item.SecurityDescription
+                            : null,
+                MetadataJson = ManagementAuditDatabaseFunctions.TextByteLength(item.MetadataJson)
+                        <= ManagementAuditEntityMapper.MaxMetadataJsonByteLength
+                            ? item.MetadataJson
+                            : null,
+                ViolatesPersistedLimits =
+                        ManagementAuditDatabaseFunctions.TextByteLength(item.Id)
+                            > ManagementAuditEntityMapper.MaxPersistedTextByteLength(36)
                         || ManagementAuditDatabaseFunctions.TextByteLength(item.OperatorId)
                             > ManagementAuditEntityMapper.MaxPersistedTextByteLength(
                                 ManagementAuditOperator.MaxOperatorIdLength)
@@ -107,23 +158,18 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
                         || (item.MetadataJson != null
                             && ManagementAuditDatabaseFunctions.TextByteLength(item.MetadataJson)
                                 > ManagementAuditEntityMapper.MaxMetadataJsonByteLength)
-                })
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-            foreach (var row in page)
-            {
-                if (row.ViolatesPersistedLimits)
-                {
-                    throw ManagementAuditEntityMapper.InvalidStoredEntity();
-                }
-            }
-
-            entities = page.Select(row => row.item).ToList();
-        }
-        catch (FormatException exception)
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        foreach (var row in page)
         {
-            throw ManagementAuditEntityMapper.InvalidStoredEntity(exception);
+            if (row.ViolatesPersistedLimits)
+            {
+                throw ManagementAuditEntityMapper.InvalidStoredEntity();
+            }
         }
+
+        var entities = page.Select(row => row.ToEntity()).ToList();
 
         var hasNext = entities.Count > query.PageSize;
         if (hasNext)
@@ -136,7 +182,7 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
             ? ManagementAuditContinuationCursor.Encode(ManagementAuditContinuationCursor.Create(
                 query,
                 new DateTimeOffset(DateTime.SpecifyKind(entities[^1].OccurredAtUtc, DateTimeKind.Utc)),
-                entities[^1].Id))
+                ManagementAuditEntityMapper.ParsePersistedId(entities[^1].Id)))
             : null;
 
         return new ManagementAuditQueryResult(
@@ -152,13 +198,14 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
         ManagementAuditContinuationCursor cursor,
         ManagementAuditSortOrder sortOrder)
     {
+        var lastId = cursor.LastId.ToString("D");
         return sortOrder == ManagementAuditSortOrder.Oldest
             ? source.Where(item => item.OccurredAtUtc > cursor.LastOccurredAtUtc.UtcDateTime
                 || (item.OccurredAtUtc == cursor.LastOccurredAtUtc.UtcDateTime
-                    && item.Id.CompareTo(cursor.LastId) > 0))
+                    && item.Id.CompareTo(lastId) > 0))
             : source.Where(item => item.OccurredAtUtc < cursor.LastOccurredAtUtc.UtcDateTime
                 || (item.OccurredAtUtc == cursor.LastOccurredAtUtc.UtcDateTime
-                    && item.Id.CompareTo(cursor.LastId) < 0));
+                    && item.Id.CompareTo(lastId) < 0));
     }
 
     private static IOrderedQueryable<ManagementAuditLogEntity> Order(
@@ -206,4 +253,53 @@ public sealed class EfCoreManagementAuditQueryService<TDbContext> : IManagementA
 
         return source;
     }
+}
+
+internal sealed class ManagementAuditBoundedRow
+{
+    internal string? Id { get; init; }
+
+    internal string? OperatorId { get; init; }
+
+    internal string? OperatorDisplayName { get; init; }
+
+    internal string? OperatorSource { get; init; }
+
+    internal string? Action { get; init; }
+
+    internal string? TargetType { get; init; }
+
+    internal string? TargetId { get; init; }
+
+    internal ManagementAuditOutcome Outcome { get; init; }
+
+    internal DateTime OccurredAtUtc { get; init; }
+
+    internal string? ClientIp { get; init; }
+
+    internal string? CorrelationId { get; init; }
+
+    internal string? SecurityDescription { get; init; }
+
+    internal string? MetadataJson { get; init; }
+
+    internal bool ViolatesPersistedLimits { get; init; }
+
+    internal ManagementAuditLogEntity ToEntity() =>
+        new()
+        {
+            Id = Id ?? string.Empty,
+            OperatorId = OperatorId,
+            OperatorDisplayName = OperatorDisplayName,
+            OperatorSource = OperatorSource ?? string.Empty,
+            Action = Action ?? string.Empty,
+            TargetType = TargetType ?? string.Empty,
+            TargetId = TargetId ?? string.Empty,
+            Outcome = Outcome,
+            OccurredAtUtc = OccurredAtUtc,
+            ClientIp = ClientIp,
+            CorrelationId = CorrelationId,
+            SecurityDescription = SecurityDescription,
+            MetadataJson = MetadataJson
+        };
 }
