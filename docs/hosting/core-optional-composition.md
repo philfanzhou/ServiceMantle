@@ -129,7 +129,8 @@ With H enabled, `/health/live` returns 200 without resolving the snapshot source
 and `/health` read one snapshot per request and return 200 only for `Completed + Succeeded + Reachable`;
 all other defined state combinations return 503. These library health endpoints bypass Gate sampling.
 Missing or throwing sources produce `health.probe_failed`; an internal probe timeout produces
-`health.probe_timeout`. A caller-aborted request remains cancellation. Without H, none of these three
+`health.probe_timeout`. A caller-aborted request remains cancellation, and the handler cancels the
+token it handed to the cooperative snapshot source before it leaves that cancellation exit. Without H, none of these three
 routes is mapped and no health polling is added. The Gate still reads state for ordinary endpoints.
 There is no shared Gate/health cache or cross-request/cross-instance consistency guarantee.
 
@@ -158,9 +159,9 @@ snapshots, safe failure responses, barrier-triggered cancellation, Console outpu
 orders, duplicate/conflicting registration, pre-cancelled startup, and controlled sink disposal.
 The cancellation fixture explicitly binds caller cancellation to the server request token after the
 source-entry barrier; TCP half-close notification timing is not part of the assertion. The fixture
-also explicitly releases and awaits its own source reads. Completion of cooperative source
-cancellation is tracked separately in [issue #302](https://github.com/philfanzhou/ServiceMantle/issues/302)
-and is not inferred from the caller's cancellation result. Existing
+also explicitly releases and awaits its own source reads. The cooperative source's own token is
+observed directly through its cancellation registration and is not inferred from the caller's
+cancellation result. Existing
 AspNetCore and Serilog dependency tests verify the registered package boundaries: Core and
 AspNetCore do not acquire Serilog, EF, database-driver, telemetry, or remote-sink dependencies.
 
