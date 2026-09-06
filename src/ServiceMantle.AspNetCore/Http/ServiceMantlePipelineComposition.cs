@@ -24,6 +24,13 @@ internal sealed class ServiceMantlePipelineComposition
         state.used = true;
     }
 
+    /// <summary>
+    /// Reports whether the composed pipeline already ran on this builder, without creating state
+    /// for a builder that has none.
+    /// </summary>
+    internal static bool IsCompleted(IApplicationBuilder app) =>
+        States.TryGetValue(app, out var state) && state.completed;
+
     internal static void Complete(IApplicationBuilder app)
     {
         var state = States.GetValue(app, static _ => new ServiceMantlePipelineComposition());
