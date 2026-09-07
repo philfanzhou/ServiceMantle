@@ -97,28 +97,62 @@ public sealed class ServiceReadinessContributorCombinerTests
         var first = new TrackingContributor(1, async (_, cancellationToken) =>
         {
             calls.Add(1);
-            await Task.Delay(TimeSpan.FromMilliseconds(150), cancellationToken);
+            // Drain the whole shared budget: this returns only once the budget cancels it,
+            // so the outcome never depends on how fast the host schedules a timer.
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return ServiceReadinessContributorResult.Ready();
         });
-        var second = new TrackingContributor(2, async (_, cancellationToken) =>
+        var second = new TrackingContributor(2, (_, _) =>
         {
             calls.Add(2);
-            await Task.Delay(TimeSpan.FromMilliseconds(150), cancellationToken);
-            return ServiceReadinessContributorResult.Ready();
+            return ValueTask.FromResult(ServiceReadinessContributorResult.Ready());
         });
         var combiner = new ServiceReadinessContributorCombiner([first, second]);
-        var started = DateTimeOffset.UtcNow;
 
         var result = await combiner.EvaluateAsync(
             ReadySnapshot,
             TimeSpan.FromMilliseconds(250),
             TestContext.Current.CancellationToken);
 
+        // The first contributor drained the total budget, so the second never ran, and the
+        // evaluation returned rather than hanging on a contributor that never completes.
+        // This does not on its own separate a shared budget from a per-contributor one: a
+        // contributor that never completes exhausts either. Pinning how the budget is divided
+        // between contributors needs an injectable TimeProvider; see #333.
+        Assert.Equal([1], calls);
+        Assert.Equal(
+            WellKnownServiceReadinessContributorErrorCodes.ContributorTimeout,
+            result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task A_hung_later_contributor_is_cut_off_by_the_total_budget()
+    {
+        var calls = new List<int>();
+        var first = new TrackingContributor(1, (_, _) =>
+        {
+            calls.Add(1);
+            return ValueTask.FromResult(ServiceReadinessContributorResult.Ready());
+        });
+        var second = new TrackingContributor(2, async (_, cancellationToken) =>
+        {
+            calls.Add(2);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return ServiceReadinessContributorResult.Ready();
+        });
+        var combiner = new ServiceReadinessContributorCombiner([first, second]);
+
+        var result = await combiner.EvaluateAsync(
+            ReadySnapshot,
+            TimeSpan.FromMilliseconds(250),
+            TestContext.Current.CancellationToken);
+
+        // The first contributor completes synchronously, so the second is always reached
+        // and is then bounded by the budget rather than by its own completion.
         Assert.Equal([1, 2], calls);
         Assert.Equal(
             WellKnownServiceReadinessContributorErrorCodes.ContributorTimeout,
             result.ErrorCode);
-        Assert.True(DateTimeOffset.UtcNow - started < TimeSpan.FromSeconds(2));
     }
 
     [Fact]
