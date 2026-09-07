@@ -44,7 +44,12 @@ public sealed class BootstrapCredentialFileStoreTests
     [Fact]
     public async Task Provisioning_creates_a_private_directory_and_file_on_unix()
     {
-        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix file modes are not a Windows contract.");
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Skip("Unix file modes are not a Windows contract.");
+            return;
+        }
+
         using var directory = TemporaryDirectory.Create();
         var nested = Path.Combine(directory.Path, "config");
         var store = new BootstrapCredentialFileStore(
@@ -204,7 +209,7 @@ public sealed class BootstrapCredentialFileStoreTests
             return await store.ConsumeAsync(value, Token);
         }, Token)));
 
-        Assert.Single(results.Where(result => result.IsConsumed));
+        Assert.Single(results, result => result.IsConsumed);
         Assert.All(
             results.Where(result => !result.IsConsumed),
             result => Assert.Equal(
@@ -246,7 +251,7 @@ public sealed class BootstrapCredentialFileStoreTests
             }
         }
 
-        Assert.Single(exitCodes.Where(code => code == BootstrapCredentialWorker.ConsumedExitCode));
+        Assert.Single(exitCodes, code => code == BootstrapCredentialWorker.ConsumedExitCode);
         Assert.All(
             exitCodes.Where(code => code != BootstrapCredentialWorker.ConsumedExitCode),
             code => Assert.Equal(BootstrapCredentialWorker.InvalidExitCode, code));
