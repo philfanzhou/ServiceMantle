@@ -205,7 +205,13 @@ public static class ServiceMantleServiceCollectionExtensions
         builder.Services.AddSingleton(new ServiceMantleHealthRegistration(
             options.ProbeTimeout,
             options.ContributorTimeout));
-        builder.Services.TryAddSingleton<ServiceReadinessContributorCombiner>();
+        // Constructed explicitly so the shared contributor budget keeps measuring on
+        // TimeProvider.System. The combiner also accepts a TimeProvider for deterministic tests,
+        // and container-driven activation would otherwise start capturing a consumer-registered
+        // TimeProvider and silently change this default.
+        builder.Services.TryAddSingleton(serviceProvider =>
+            new ServiceReadinessContributorCombiner(
+                serviceProvider.GetServices<IServiceReadinessContributor>()));
         builder.Services.TryAddScoped<
             IServiceReadinessDecisionSource,
             ServiceMantleReadinessDecisionSource>();

@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace ServiceMantle.Health;
 
 /// <summary>Well-known safe failures produced while combining readiness contributors.</summary>
@@ -62,15 +60,39 @@ public sealed class ServiceReadinessContributorCombiner
         "Service readiness contributor registration is invalid.";
 
     private readonly IReadOnlyList<OrderedContributor> contributors;
+    private readonly TimeProvider timeProvider;
 
-    /// <summary>Initializes and validates an immutable contributor sequence.</summary>
+    /// <summary>
+    /// Initializes and validates an immutable contributor sequence measured by the system clock.
+    /// </summary>
+    /// <param name="contributors">The registered contributors.</param>
     /// <exception cref="InvalidOperationException">
     /// A contributor is null, its order cannot be read, or more than one contributor has the same order.
     /// </exception>
     public ServiceReadinessContributorCombiner(
         IEnumerable<IServiceReadinessContributor> contributors)
+        : this(contributors, TimeProvider.System)
+    {
+    }
+
+    /// <summary>Initializes and validates an immutable contributor sequence.</summary>
+    /// <param name="contributors">The registered contributors.</param>
+    /// <param name="timeProvider">The clock that measures the shared total budget.</param>
+    /// <remarks>
+    /// The provider only measures the shared budget. It does not change the contributor contract,
+    /// the error codes, or the cancellation behaviour, and production callers keep
+    /// <see cref="TimeProvider.System"/>.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// A contributor is null, its order cannot be read, or more than one contributor has the same order.
+    /// </exception>
+    public ServiceReadinessContributorCombiner(
+        IEnumerable<IServiceReadinessContributor> contributors,
+        TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(contributors);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        this.timeProvider = timeProvider;
 
         try
         {
@@ -128,15 +150,17 @@ public sealed class ServiceReadinessContributorCombiner
             return ServiceReadinessContributorResult.Ready();
         }
 
-        using var budgetCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budgetCancellation.CancelAfter(totalBudget);
-        var elapsed = Stopwatch.StartNew();
+        using var budgetTimeout = new CancellationTokenSource(totalBudget, timeProvider);
+        using var budgetCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            budgetTimeout.Token);
+        var startedAt = timeProvider.GetTimestamp();
         ServiceReadinessContributorResult? selectedFailure = null;
 
         foreach (var ordered in contributors)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var remaining = totalBudget - elapsed.Elapsed;
+            var remaining = totalBudget - timeProvider.GetElapsedTime(startedAt);
             if (remaining <= TimeSpan.Zero)
             {
                 return Timeout(cancellationToken);
@@ -148,7 +172,7 @@ public sealed class ServiceReadinessContributorCombiner
                 result = await ordered.Contributor
                     .EvaluateAsync(snapshot, budgetCancellation.Token)
                     .AsTask()
-                    .WaitAsync(remaining, cancellationToken)
+                    .WaitAsync(remaining, timeProvider, cancellationToken)
                     .ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
             }
@@ -160,7 +184,7 @@ public sealed class ServiceReadinessContributorCombiner
                     throw new OperationCanceledException(cancellationToken);
                 }
 
-                if (budgetCancellation.IsCancellationRequested || elapsed.Elapsed >= totalBudget)
+                if (budgetCancellation.IsCancellationRequested || timeProvider.GetElapsedTime(startedAt) >= totalBudget)
                 {
                     return Timeout(cancellationToken);
                 }
@@ -180,7 +204,7 @@ public sealed class ServiceReadinessContributorCombiner
                 continue;
             }
 
-            if (budgetCancellation.IsCancellationRequested || elapsed.Elapsed >= totalBudget)
+            if (budgetCancellation.IsCancellationRequested || timeProvider.GetElapsedTime(startedAt) >= totalBudget)
             {
                 return Timeout(cancellationToken);
             }

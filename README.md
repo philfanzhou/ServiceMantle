@@ -338,6 +338,35 @@ an anonymous entry cannot be used to weaken that group. The convention maps no h
 duplicate kind, a wrong path or method, a downgraded convention, or a missing capability fails before
 the host starts. See [docs/contracts/management-entries.md](docs/contracts/management-entries.md).
 
+### Anonymous installation status
+
+`AddServiceMantleInstallationStatus` and `MapServiceMantleInstallationStatus` serve the one entry
+ServiceMantle implements itself:
+
+```csharp
+builder.Services
+    .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+    .AddServiceMantleManagementApiV1()
+    .AddServiceMantleInstallationStatus();
+
+var app = builder.Build();
+app.UseServiceMantlePipeline();
+app.MapServiceMantleInstallationStatus();
+```
+
+`GET` and `HEAD {versionedRoot}/status` are anonymous in every phase, so the phase gate admits them
+without reading a snapshot. The handler parses nothing. It reads the consumer health source once,
+the local Bootstrap status once, and one process-local restart latch, and answers `200` with exactly
+`phase`, `migrationStatus`, `databaseStatus`, `bootstrapConfigured` and `restartRequired` in fixed
+lower snake case. An absent or failing source, a damaged Bootstrap file, a combination the two
+sources contradict, an internal failure and an internal timeout all answer
+`503 {"errorCode":"management.status.unavailable"}`; caller cancellation propagates its original
+token. `HEAD` answers the same status and headers with no body. No ServiceId, InstanceId, provider,
+server version, connection string, MasterKey, file path, or source error code is projected. The
+restart latch is process-local, starts false, is set only by a successful local Bootstrap write in
+this process, and resets on restart. See
+[docs/contracts/management-installation-status.md](docs/contracts/management-installation-status.md).
+
 ### Anonymous Setup status and completion
 
 `MapServiceMantleSetup` serves `GET`/`HEAD`/`POST {versionedRoot}/setup` and requires an explicit
@@ -651,7 +680,11 @@ failures do not short-circuit later contributors, and the lowest-order failure d
 All contributors in one request share one total budget, which defaults to five seconds and accepts
 100 milliseconds through 30 seconds. A null result or implementation exception maps to
 `health.contributor_failed`; exhausting the total budget maps to `health.contributor_timeout`.
-Caller request cancellation remains distinct and propagates its original token.
+Caller request cancellation remains distinct and propagates its original token. The budget is the
+remainder: each contributor is bounded by the total budget minus what the earlier contributors
+already spent. `ServiceReadinessContributorCombiner` also accepts a `TimeProvider` so tests can pin
+that arithmetic on a virtual clock; `AddServiceMantleHealthEndpoints` always measures the budget on
+`TimeProvider.System`.
 
 The endpoints do not implement that algorithm themselves. `AddServiceMantleHealthEndpoints`
 registers a scoped `IServiceReadinessDecisionSource` (core `ServiceMantle.Health`, no ASP.NET Core
