@@ -162,27 +162,63 @@ internal sealed record ConsulLifecycleDiagnostic(
         $"Presence={Presence}, Attempt={Attempt}, SnapshotVersion={SnapshotVersion})";
 }
 
-/// <summary>Collects the bounded diagnostics the lifecycle records.</summary>
+/// <summary>
+/// Retains the most recent lifecycle classifications in a fixed-capacity ring buffer.
+/// </summary>
+/// <remarks>
+/// The lifecycle records on every failed readiness sample and every failed remote attempt, so a
+/// long-lived process on a repeating failure path would otherwise grow this collection without
+/// limit. Only <see cref="Capacity"/> entries are retained; older ones are overwritten.
+/// <see cref="RecordedCount"/> keeps counting past that so a caller can still tell how often the
+/// classification happened.
+/// </remarks>
 internal sealed class ConsulLifecycleObserver
 {
-    private readonly List<ConsulLifecycleDiagnostic> diagnostics = [];
+    /// <summary>The number of most recent diagnostics retained.</summary>
+    internal const int Capacity = 64;
 
+    private readonly ConsulLifecycleDiagnostic?[] retained = new ConsulLifecycleDiagnostic?[Capacity];
+    private readonly Lock gate = new();
+    private long recorded;
+
+    /// <summary>Gets the total number of diagnostics recorded, including those overwritten.</summary>
+    internal long RecordedCount
+    {
+        get
+        {
+            lock (gate)
+            {
+                return recorded;
+            }
+        }
+    }
+
+    /// <summary>Gets the retained diagnostics, oldest retained first.</summary>
     internal IReadOnlyList<ConsulLifecycleDiagnostic> Diagnostics
     {
         get
         {
-            lock (diagnostics)
+            lock (gate)
             {
-                return diagnostics.ToArray();
+                var count = (int)Math.Min(recorded, Capacity);
+                var start = recorded <= Capacity ? 0 : (int)(recorded % Capacity);
+                var snapshot = new ConsulLifecycleDiagnostic[count];
+                for (var index = 0; index < count; index++)
+                {
+                    snapshot[index] = retained[(start + index) % Capacity]!;
+                }
+
+                return snapshot;
             }
         }
     }
 
     internal void Record(ConsulLifecycleDiagnostic diagnostic)
     {
-        lock (diagnostics)
+        lock (gate)
         {
-            diagnostics.Add(diagnostic);
+            retained[(int)(recorded % Capacity)] = diagnostic;
+            recorded++;
         }
     }
 }

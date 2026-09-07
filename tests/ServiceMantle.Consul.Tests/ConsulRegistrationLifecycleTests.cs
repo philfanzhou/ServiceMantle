@@ -434,6 +434,88 @@ public sealed class ConsulRegistrationLifecycleTests
     }
 
     [Fact]
+    public async Task Stop_cancels_an_in_flight_operation_even_without_a_consumable_desire_signal()
+    {
+        // The owner is parked outside the desire semaphore while a spare signal is left pending, so
+        // the Signal() in StopAsync is a no-op and the only wake-up the owner can get is the
+        // cancelled lifetime token. The stop still has to cancel the attempt it is waiting on.
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var hold = new ManualResetEventSlim(false);
+        var client = new Harness.ScriptedClient { Gate = gate, Hold = hold };
+        await using var harness = await Harness.CreateAsync(
+            client: client,
+            configure: options =>
+            {
+                options.ReadinessPollInterval = TimeSpan.FromMilliseconds(100);
+                options.ConsulOperationBudget = TimeSpan.FromSeconds(30);
+                options.ShutdownBudget = TimeSpan.FromSeconds(60);
+            });
+
+        await harness.StartAsync();
+        await client.Entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var startedAt = harness.Time.GetUtcNow();
+
+        // Sample 2 flips the desire and fills the semaphore; sample 3 flips it back but finds the
+        // signal already pending, so its Release is skipped. Sample 4 only proves 3 has settled.
+        harness.Decisions.Current = Harness.NotReady();
+        await harness.AdvanceUntilAsync(
+            TimeSpan.FromMilliseconds(100),
+            () => harness.Decisions.Calls >= 2,
+            "the sampler never published the not-ready desire");
+        harness.Decisions.Current = Harness.Ready();
+        await harness.AdvanceUntilAsync(
+            TimeSpan.FromMilliseconds(100),
+            () => harness.Decisions.Calls >= 4,
+            "the sampler never published the restored ready desire");
+
+        // From here the clock never moves, so neither the operation budget nor the shutdown budget
+        // can end this: only cancellation can.
+        client.Gate = null;
+        var stop = harness.StopAsync();
+        hold.Set();
+        await stop.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+
+        // The register ended because the stop cancelled it, not because a budget elapsed: the gate
+        // it was waiting on is still unreleased and the clock never reached the operation budget.
+        Assert.False(gate.Task.IsCompleted);
+        Assert.True(
+            harness.Time.GetUtcNow() - startedAt < TimeSpan.FromSeconds(30),
+            "the operation budget elapsed, so the cancellation is not what ended the register");
+        Assert.Equal(["register", "deregister"], client.Operations);
+        Assert.Equal(1, client.MaximumConcurrent);
+        Assert.Equal(ConsulRemotePresence.Absent, harness.Lifecycle.Presence);
+        Assert.True(client.Disposed);
+    }
+
+    [Fact]
+    public async Task The_observer_retains_a_bounded_window_of_the_diagnostics_it_records()
+    {
+        // The fail-closed readiness path records once per poll for the life of the process, so the
+        // retention has to be bounded even though the count keeps rising.
+        var capacity = ConsulLifecycleObserver.Capacity;
+        await using var harness = await Harness.CreateAsync(
+            configure: options => options.ReadinessPollInterval = TimeSpan.FromMilliseconds(100));
+        harness.Decisions.Failure = new InvalidOperationException(ConsulFixture.Secret);
+
+        await harness.StartAsync();
+        await harness.AdvanceUntilAsync(
+            TimeSpan.FromMilliseconds(100),
+            () => harness.Observer.RecordedCount > capacity + 5,
+            "the fail-closed sampler never recorded past the retention capacity");
+        await harness.StopAsync();
+
+        var retained = harness.Observer.Diagnostics;
+        Assert.Equal(capacity, retained.Count);
+        Assert.True(
+            harness.Observer.RecordedCount > retained.Count,
+            "the recorded count stopped rising with the retained window");
+        Assert.All(retained, diagnostic => Assert.Equal(
+            ConsulLifecycleDiagnostics.ReadinessUnavailable,
+            diagnostic.Classification));
+        Assert.Empty(harness.Client.Operations);
+    }
+
+    [Fact]
     public async Task A_disposal_failure_is_a_safe_classification_and_is_not_retried()
     {
         var client = new Harness.ScriptedClient { FailDisposal = true };

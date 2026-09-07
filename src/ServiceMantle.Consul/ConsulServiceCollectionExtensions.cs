@@ -32,11 +32,11 @@ public static class ConsulServiceCollectionExtensions
     /// <remarks>
     /// Every timing value is validated here, before the host is built and therefore before any
     /// readiness sampler, timer, or remote operation can exist. Repeating this call is idempotent,
-    /// but two calls that configure different timing fail as a conflicting configuration.
+    /// but two calls that configure different timing are a conflicting configuration: that conflict
+    /// is detected when the lifecycle is resolved, so it fails while the host is built rather than
+    /// from this method.
     /// </remarks>
-    /// <exception cref="ConsulConfigurationException">
-    /// A timing value is out of range, or a repeated registration configures different timing.
-    /// </exception>
+    /// <exception cref="ConsulConfigurationException">A timing value is out of range.</exception>
     public static IServiceCollection AddServiceMantleConsul(
         this IServiceCollection services,
         Action<ConsulLifecycleOptions>? configure)

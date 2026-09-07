@@ -228,6 +228,13 @@ internal sealed class ConsulLifecycleHarness : IAsyncDisposable
         /// <summary>Set to hold every operation until the gate is released.</summary>
         internal TaskCompletionSource? Gate { get; set; }
 
+        /// <summary>
+        /// Set to block the owner loop synchronously on the way into an operation, before it can
+        /// reach its wait loop. It lets a test drive the sampler and the stop while the owner is
+        /// provably parked outside the desire semaphore.
+        /// </summary>
+        internal ManualResetEventSlim? Hold { get; set; }
+
         internal TaskCompletionSource Entered { get; private set; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -286,10 +293,14 @@ internal sealed class ConsulLifecycleHarness : IAsyncDisposable
 
             try
             {
+                // Captured on entry so a test that parks this call on Hold can still retarget Gate
+                // for the operations that follow it.
+                var pending = Gate;
                 Entered.TrySetResult();
-                if (Gate is { } gate)
+                Hold?.Wait(TimeSpan.FromSeconds(20));
+                if (pending is not null)
                 {
-                    await gate.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    await pending.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();

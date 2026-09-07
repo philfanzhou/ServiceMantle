@@ -307,13 +307,16 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
                 break;
             }
 
-            if (!interrupted)
+            // A wake-up that is not a desire signal can only be the lifetime token, which is
+            // cancelled once and stays cancelled. Falling through to the exit below keeps that from
+            // spinning until the call settles, and lets stop cancel the attempt it is waiting on.
+            var terminating = Volatile.Read(ref stopping) != 0 || lifetime.IsCancellationRequested;
+            if (!interrupted && !terminating)
             {
                 continue;
             }
 
-            if (Volatile.Read(ref stopping) != 0 ||
-                (Volatile.Read(ref desiredPresent) == 1) != register)
+            if (terminating || (Volatile.Read(ref desiredPresent) == 1) != register)
             {
                 await operation.CancelAsync().ConfigureAwait(false);
                 break;
