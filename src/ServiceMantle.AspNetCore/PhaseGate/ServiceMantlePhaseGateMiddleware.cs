@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
+using ServiceMantle.Management;
 
 namespace ServiceMantle.AspNetCore;
 
@@ -35,6 +36,20 @@ internal sealed class ServiceMantlePhaseGateMiddleware(RequestDelegate next, Ser
             await RejectAsync(context).ConfigureAwait(false);
             return;
         }
+        // An opt-in management entry narrows admission by method within its surface. An endpoint
+        // without entry metadata keeps the existing surface-only classification.
+        var entries = endpoint.Metadata.GetOrderedMetadata<ServiceMantleManagementEntryMetadata>();
+        ServiceMantleManagementEntryDefinition? entry = null;
+        if (entries.Count == 1 && Enum.IsDefined(entries[0].Kind))
+        {
+            entry = ServiceMantleManagementEntryDefaults.Get(entries[0].Kind);
+        }
+        if (entries.Count > 1 || entries.Count == 1 && entry is null ||
+            entry is not null && (entry.Surface != surface || !entry.AllowsMethod(context.Request.Method)))
+        {
+            await RejectAsync(context).ConfigureAwait(false);
+            return;
+        }
         if (surface == ServiceMantleManagementSurface.Status)
         {
             if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
@@ -61,7 +76,7 @@ internal sealed class ServiceMantlePhaseGateMiddleware(RequestDelegate next, Ser
             snapshot = null;
         }
         if (cancellationToken.IsCancellationRequested) throw CancelledByCaller(linked, cancellationToken);
-        if (snapshot is null || !Allows(surface, snapshot))
+        if (snapshot is null || !Allows(entry, surface, snapshot))
         {
             await RejectAsync(context).ConfigureAwait(false);
             return;
@@ -87,9 +102,25 @@ internal sealed class ServiceMantlePhaseGateMiddleware(RequestDelegate next, Ser
         return new OperationCanceledException("The phase observation was cancelled by the caller.", cancellationToken);
     }
 
-    private static bool Allows(ServiceMantleManagementSurface? surface, ServiceHealthSnapshot snapshot)
+    private static bool Allows(ServiceMantleManagementEntryDefinition? entry, ServiceMantleManagementSurface? surface,
+        ServiceHealthSnapshot snapshot)
     {
         if (snapshot.MigrationStatus is ServiceMigrationReadinessState.Running or ServiceMigrationReadinessState.Failed) return false;
+        if (entry is not null) return entry.Kind switch
+        {
+            // Bootstrap creation stays anonymous, so it must never be admitted once the service is
+            // configured; the migration states other than NotStarted and Succeeded are already gone.
+            ServiceMantleManagementEntryKind.BootstrapCreate => snapshot.Phase == ServiceStartupPhase.BootstrapConfiguration,
+            ServiceMantleManagementEntryKind.SetupStatus or ServiceMantleManagementEntryKind.SetupComplete =>
+                snapshot.Phase is ServiceStartupPhase.PendingSetup or ServiceStartupPhase.Completed &&
+                snapshot.MigrationStatus == ServiceMigrationReadinessState.Succeeded &&
+                snapshot.DatabaseStatus == ServiceDatabaseReadinessState.Reachable,
+            ServiceMantleManagementEntryKind.BootstrapUpdate or ServiceMantleManagementEntryKind.SessionLogin or
+                ServiceMantleManagementEntryKind.SessionLogout or ServiceMantleManagementEntryKind.CurrentSession =>
+                ServiceHealthEvaluator.Evaluate(snapshot).IsReady,
+            // Installation status never reaches this point: it is admitted without a snapshot.
+            _ => false
+        };
         return surface switch
         {
             ServiceMantleManagementSurface.Bootstrap => snapshot.Phase == ServiceStartupPhase.BootstrapConfiguration,

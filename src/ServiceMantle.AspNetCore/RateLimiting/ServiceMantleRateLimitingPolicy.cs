@@ -38,10 +38,17 @@ internal static class ServiceMantleRateLimitingPolicy
             .GetRequiredService<ServiceMantleRateLimitingSnapshotProvider>()
             .GetRequiredSnapshot()
             .Management;
-        var resolution = context.RequestServices
-            .GetRequiredService<IManagementCurrentOperatorResolver>()
-            .Resolve(context.User);
-        var key = resolution.Status == ManagementCurrentOperatorStatus.Resolved
+        // A management entry may pin the anonymous client partition so that a presented management
+        // cookie cannot move an anonymous entry into a per-operator quota.
+        var entry = context.GetEndpoint()?.Metadata.GetMetadata<ServiceMantleManagementEntryMetadata>();
+        var clientPartition = entry is not null && Enum.IsDefined(entry.Kind) &&
+            ServiceMantleManagementEntryDefaults.Get(entry.Kind).AnonymousClientPartition;
+        var resolution = clientPartition
+            ? null
+            : context.RequestServices
+                .GetRequiredService<IManagementCurrentOperatorResolver>()
+                .Resolve(context.User);
+        var key = resolution is not null && resolution.Status == ManagementCurrentOperatorStatus.Resolved
             ? ManagementOperatorNamespace + HashOperator(resolution.Identity!)
             : ManagementClientNamespace + ClientKey(context.Connection.RemoteIpAddress);
         return RateLimitPartition.GetSlidingWindowLimiter(
