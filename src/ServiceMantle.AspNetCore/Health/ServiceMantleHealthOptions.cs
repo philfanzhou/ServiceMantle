@@ -8,10 +8,12 @@ namespace ServiceMantle.AspNetCore.Health;
 public static class WellKnownServiceHealthErrorCodes
 {
     /// <summary>The snapshot source exceeded the configured internal timeout.</summary>
-    public const string ProbeTimeout = "health.probe_timeout";
+    public const string ProbeTimeout =
+        WellKnownServiceReadinessDecisionErrorCodes.ProbeTimeout;
 
     /// <summary>The snapshot source was missing, failed, or returned no snapshot.</summary>
-    public const string ProbeFailed = "health.probe_failed";
+    public const string ProbeFailed =
+        WellKnownServiceReadinessDecisionErrorCodes.ProbeFailed;
 
     /// <summary>A readiness contributor failed or returned an invalid result.</summary>
     public const string ContributorFailed =

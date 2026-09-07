@@ -599,6 +599,25 @@ All contributors in one request share one total budget, which defaults to five s
 `health.contributor_failed`; exhausting the total budget maps to `health.contributor_timeout`.
 Caller request cancellation remains distinct and propagates its original token.
 
+The endpoints do not implement that algorithm themselves. `AddServiceMantleHealthEndpoints`
+registers a scoped `IServiceReadinessDecisionSource` (core `ServiceMantle.Health`, no ASP.NET Core
+dependency) and `/health/ready` and `/health` project exactly one `ServiceReadinessDecision` from it;
+`/health/live` never resolves it. A decision carries the exact `ServiceHealthSnapshot` the evaluation
+used, the final Ready value after the base matrix and the contributors, and a bounded safe error code
+only when it is not Ready. `ServiceReadinessDecision.Ready` requires a base-ready snapshot, so a
+replacement source cannot promote a snapshot the base matrix rejects. When no snapshot could be
+obtained at all, the decision carries no snapshot and the response projects null state fields.
+
+Optional packages that must not repeat the readiness algorithm read the same registration instead of
+calling `/health/ready`. Because a snapshot source may itself be scoped, the decision source is
+scoped: resolve it from the current request scope, or from a scope created through
+`IServiceScopeFactory` in a background component. Registering your own `IServiceReadinessDecisionSource`
+before `AddServiceMantleHealthEndpoints` keeps that registration. Each call reads the base snapshot at
+most once and returns one complete immutable decision; two calls sample two moments, and the shared
+guarantee is the source and the algorithm, not the returned object. A missing, unresolvable, failing,
+or null-returning decision source fails closed with `health.probe_failed`. The decision source itself
+performs no background polling, caching, retry, registration, or setup work.
+
 Ready responses use `application/json` and contain only `status`, `phase`, `migrationStatus`,
 `databaseStatus`, and `errorCode`. Probe failures use null state fields and a stable error code. The
 source is responsible for read-only, cancellation-aware sampling and for keeping its optional error
