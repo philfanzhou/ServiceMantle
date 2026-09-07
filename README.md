@@ -618,7 +618,11 @@ failures do not short-circuit later contributors, and the lowest-order failure d
 All contributors in one request share one total budget, which defaults to five seconds and accepts
 100 milliseconds through 30 seconds. A null result or implementation exception maps to
 `health.contributor_failed`; exhausting the total budget maps to `health.contributor_timeout`.
-Caller request cancellation remains distinct and propagates its original token.
+Caller request cancellation remains distinct and propagates its original token. The budget is the
+remainder: each contributor is bounded by the total budget minus what the earlier contributors
+already spent. `ServiceReadinessContributorCombiner` also accepts a `TimeProvider` so tests can pin
+that arithmetic on a virtual clock; `AddServiceMantleHealthEndpoints` always measures the budget on
+`TimeProvider.System`.
 
 The endpoints do not implement that algorithm themselves. `AddServiceMantleHealthEndpoints`
 registers a scoped `IServiceReadinessDecisionSource` (core `ServiceMantle.Health`, no ASP.NET Core

@@ -117,8 +117,9 @@ public sealed class ServiceReadinessContributorCombinerTests
         // The first contributor drained the total budget, so the second never ran, and the
         // evaluation returned rather than hanging on a contributor that never completes.
         // This does not on its own separate a shared budget from a per-contributor one: a
-        // contributor that never completes exhausts either. Pinning how the budget is divided
-        // between contributors needs an injectable TimeProvider; see #333.
+        // contributor that never completes exhausts either. How the budget is divided between
+        // contributors is pinned deterministically by
+        // The_second_contributor_only_receives_the_budget_the_first_left.
         Assert.Equal([1], calls);
         Assert.Equal(
             WellKnownServiceReadinessContributorErrorCodes.ContributorTimeout,
@@ -206,6 +207,102 @@ public sealed class ServiceReadinessContributorCombinerTests
             WellKnownServiceReadinessContributorErrorCodes.ContributorFailed,
             result.ErrorCode);
         Assert.DoesNotContain("internal cancellation secret", result.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_second_contributor_only_receives_the_budget_the_first_left()
+    {
+        var time = new ManualTimeProvider();
+        var calls = new List<int>();
+        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstReleased = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var timersBeforeSecondDeadline = 0;
+        var first = new TrackingContributor(1, async (_, _) =>
+        {
+            calls.Add(1);
+            firstEntered.SetResult();
+            await firstReleased.Task;
+            return ServiceReadinessContributorResult.Ready();
+        });
+        var second = new TrackingContributor(2, async (_, cancellationToken) =>
+        {
+            calls.Add(2);
+            timersBeforeSecondDeadline = time.CreatedTimerCount;
+            secondEntered.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return ServiceReadinessContributorResult.Ready();
+        });
+        var combiner = new ServiceReadinessContributorCombiner([first, second], time);
+
+        var evaluation = combiner.EvaluateAsync(
+            ReadySnapshot,
+            TimeSpan.FromMilliseconds(250),
+            TestContext.Current.CancellationToken).AsTask();
+        await firstEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        // The first contributor consumes 150ms of the 250ms total and then succeeds.
+        time.Advance(TimeSpan.FromMilliseconds(150));
+        firstReleased.SetResult();
+        await secondEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        // The combiner arms the second contributor's deadline immediately after entering it.
+        await time.WhenTimerCountAtLeastAsync(timersBeforeSecondDeadline + 1)
+            .WaitAsync(TestContext.Current.CancellationToken);
+
+        // 100ms is exactly what the first contributor left, so 99ms is not yet enough.
+        time.Advance(TimeSpan.FromMilliseconds(99));
+        Assert.False(evaluation.IsCompleted);
+
+        time.Advance(TimeSpan.FromMilliseconds(1));
+        // Virtual time drives the outcome; the real-time bound only turns a regression into a
+        // failure instead of a hang. Giving each contributor its own full budget would leave the
+        // second one running until 400ms of virtual time and fail here.
+        var result = await evaluation.WaitAsync(
+            TimeSpan.FromSeconds(30),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal([1, 2], calls);
+        Assert.Equal(
+            WellKnownServiceReadinessContributorErrorCodes.ContributorTimeout,
+            result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Caller_cancellation_is_distinct_from_an_unspent_budget()
+    {
+        var time = new ManualTimeProvider();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var contributor = new TrackingContributor(1, async (_, cancellationToken) =>
+        {
+            entered.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return ServiceReadinessContributorResult.Ready();
+        });
+        var combiner = new ServiceReadinessContributorCombiner([contributor], time);
+        using var cancellation = new CancellationTokenSource();
+
+        var evaluation = combiner.EvaluateAsync(
+            ReadySnapshot,
+            TimeSpan.FromMilliseconds(250),
+            cancellation.Token).AsTask();
+        await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        // The budget is deliberately left unspent, so only the caller can end the evaluation.
+        time.Advance(TimeSpan.FromMilliseconds(100));
+        await cancellation.CancelAsync();
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            evaluation.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+    }
+
+    [Fact]
+    public void The_time_provider_overload_rejects_null_arguments()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new ServiceReadinessContributorCombiner([], null!));
+        Assert.Throws<ArgumentNullException>(() =>
+            new ServiceReadinessContributorCombiner(null!, TimeProvider.System));
     }
 
     [Fact]
