@@ -46,6 +46,7 @@
       "project": "src/ServiceMantle.Consul/ServiceMantle.Consul.csproj",
       "optional": true,
       "dependencies": [
+        "Microsoft.Extensions.Hosting.Abstractions",
         "ServiceMantle"
       ],
       "frameworkReferences": [],

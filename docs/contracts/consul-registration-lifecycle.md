@@ -1,6 +1,7 @@
 # Consul registration lifecycle decision (#290)
 
-Status: accepted design for #49. The implementation is intentionally not part of this document.
+Status: implemented by #49. This document remains the normative state, completion, and stop matrix;
+the implementation lives in `ServiceMantle.Consul`.
 
 ## Decision
 

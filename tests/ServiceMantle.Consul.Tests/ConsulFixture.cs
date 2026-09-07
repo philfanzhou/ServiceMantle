@@ -18,7 +18,8 @@ internal sealed class ConsulFixture : IDisposable
     internal readonly Factory ClientFactory = new();
     internal readonly ServiceProvider Services;
 
-    internal ConsulFixture(bool composite = true, bool tokenSensitive = true, ServiceId? snapshotService = null)
+    internal ConsulFixture(bool composite = true, bool tokenSensitive = true, ServiceId? snapshotService = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var definitions = new ConsulSettingDefinitions().GetDefinitions().Select(d =>
             d.Key == ConsulSettingDefinitions.Token && !tokenSensitive
@@ -35,10 +36,16 @@ internal sealed class ConsulFixture : IDisposable
             ClientFactory.Resolutions++;
             return ClientFactory;
         });
+        configureServices?.Invoke(services);
         services.AddServiceMantleConsul();
         services.AddServiceMantleConsul();
-        Assert.DoesNotContain(services, d => d.ServiceType.FullName == "Microsoft.Extensions.Hosting.IHostedService");
+        // The lifecycle is registered once however often the capability is added, and registration
+        // itself resolves no client factory, creates no client, and starts no timer or remote work:
+        // the controller only takes ownership once the host starts it.
+        Assert.Single(services, d => d.ServiceType.FullName == "Microsoft.Extensions.Hosting.IHostedService");
         Services = services.BuildServiceProvider();
+        Assert.Equal(0, ClientFactory.Resolutions);
+        Assert.Equal(0, ClientFactory.Calls);
     }
 
     internal ConsulClientProvider Provider => Services.GetRequiredService<ConsulClientProvider>();

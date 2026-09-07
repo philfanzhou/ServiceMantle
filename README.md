@@ -1994,9 +1994,8 @@ does not add disk buffering, unbounded retries, dynamic reload, query APIs, or e
 
 `ServiceMantle.Consul` contains the optional configuration catalog, immutable registration model,
 replaceable `IConsulClientFactory` / `IConsulClient`, and single-call HTTP adapter. It references only
-the core package and uses the platform HTTP stack; the core acquires no Consul SDK or ASP.NET Core
-reference. Automatic registration, readiness/phase gating, retry and shutdown deregistration remain
-tracked by [#49](https://github.com/philfanzhou/ServiceMantle/issues/49).
+the core package plus `Microsoft.Extensions.Hosting.Abstractions`, and uses the platform HTTP stack;
+the core acquires no Consul SDK or ASP.NET Core reference.
 
 Register `AddServiceMantleConsul()` before constructing the setting registry. Supply the existing
 `ServiceId`, `InstanceId`, setting store and root-key source, then use
@@ -2056,8 +2055,66 @@ custom serialization that invokes methods, debuggers or process memory. Do not p
 non-sensitive service names, addresses or identities. Enterprise namespaces/partitions, mTLS,
 certificate overrides, automatic reload and Consul KV are outside this boundary.
 
-Tests activate real typed snapshots, script HTTP requests, and exercise a loopback HTTP redirect;
-they do not certify a real Consul cluster or the future lifecycle implementation.
+### Readiness-driven registration lifecycle
+
+`AddServiceMantleConsul()` also registers one hosted controller that drives registration from the
+shared `IServiceReadinessDecisionSource`. `ServiceMantle.Consul` never references ASP.NET Core,
+requests `/health/ready`, accepts a separate Boolean, or repeats the readiness algorithm: the
+consuming service registers one decision source for the health endpoints and for this lifecycle.
+
+Registration itself still creates no client, timer, sampler, background loop, or network request.
+`StartAsync` calls `ConsulClientProvider.CreateClient()` exactly once. A disabled configuration ends
+in a terminal `Disabled` state with no client and no background work at all; a snapshot or factory
+failure fails host startup with the existing value-free exception and is never retried; a session
+created before caller cancellation is observed is disposed rather than leaked. The session,
+registration ID, and captured snapshot version are then fixed for the life of the process, so every
+`consul.*` change requires a consumer-owned restart.
+
+One owner loop holds all mutable state and the session, so at most one register or deregister is
+active for this instance. A separate non-overlapping sampler resolves the scoped decision source in
+a fresh scope per sample and publishes the latest desire; a source failure, a null or invalid
+decision, an internal cancellation, and an internal timeout are all fail-closed not-Ready. Ready
+registers once and a repeated Ready adds nothing; losing readiness deregisters the same ID. A desire
+flip during an operation cancels that attempt and waits for it to settle before starting the
+opposite one, so a late completion can never overlap or overwrite a newer intent.
+
+Only a completed register `Success` makes the remote presence `Present`, and only a completed
+deregister `Success` makes it `Absent`. `Rejected`, `Unavailable`, an undefined result, an exception,
+an internal cancellation, and a timeout are all `Unknown` - in particular a register timeout never
+means "not registered". Transport failures retry on a jitter-free, overflow-safe
+`min(maximum, initial * 2^failures)` delay that resets on success or on a change of desire.
+
+```csharp
+services.AddServiceMantleConsul(options =>
+{
+    options.ReadinessPollInterval = TimeSpan.FromSeconds(1);   // 100 ms - 30 s
+    options.ReadinessCallBudget = TimeSpan.FromSeconds(10);    // 100 ms - 60 s
+    options.ConsulOperationBudget = TimeSpan.FromSeconds(10);  // 100 ms - 30 s
+    options.InitialRetryDelay = TimeSpan.FromMilliseconds(250);// 50 ms - 5 s
+    options.MaximumRetryDelay = TimeSpan.FromSeconds(5);       // initial - 30 s
+    options.ShutdownBudget = TimeSpan.FromSeconds(15);         // 1 s - 60 s
+});
+```
+
+Every value is validated when the capability is registered, so an out-of-range or conflicting value
+fails before the host is built and therefore before any sampler, timer, or remote call exists.
+Stop cancels the sampler and every delay first, forbids any new register, and deregisters within the
+cooperative shutdown budget; if that budget expires or the `StopAsync` caller cancels, the lifecycle
+stops creating operations and completes **without** claiming remote absence. The session is disposed
+once, after any cooperative in-flight operation settles; a disposal failure is a safe classification
+and is neither retried nor treated as a deregistration.
+
+Because attempts continue while the corresponding desire stands, the number of attempts over an
+arbitrarily long process lifetime is deliberately uncapped. What is bounded is one call, one delay,
+concurrency, and cooperative shutdown. ServiceMantle promises no eventual successful registration, no
+maximum recovery time, no propagation to every catalog or DNS reader, no proof that traffic drained
+after a deregistration, and no hard wall-clock bound for a synchronous factory or `Dispose`, or for a
+replacement client that ignores its token. The full state, completion, and stop matrices are in
+[docs/contracts/consul-registration-lifecycle.md](docs/contracts/consul-registration-lifecycle.md).
+
+Tests activate real typed snapshots, script HTTP requests, exercise a loopback HTTP redirect, and
+drive the whole lifecycle on a fake clock with scripted decisions, a scripted session, and operation
+barriers; they do not certify a real Consul cluster.
 
 ## Frontend note
 
