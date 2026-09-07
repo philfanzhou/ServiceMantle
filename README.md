@@ -795,6 +795,42 @@ container with the final registry snapshot, so providers added on the returned b
 
 Bootstrap files belong to individual service instances. Synchronizing or distributing them across multiple instances is not a current ServiceMantle responsibility. When backing up a business database, also back up the matching Bootstrap file for the instance that owns it.
 
+### One-time Bootstrap creation credential
+
+The anonymous first Bootstrap creation is authorized by a separate instance-local, short-lived,
+one-time credential. It is never a Setup Code, a management cookie, a database credential, or the
+Bootstrap MasterKey.
+
+```csharp
+var credentialStore = new BootstrapCredentialFileStore(serviceId);
+var provisioned = await credentialStore.ProvisionAsync(BootstrapCredentialLifetime.Default);
+if (provisioned.IsProvisioned)
+{
+    // The only place the plaintext is ever available.
+    Console.WriteLine(provisioned.Credential!.Reveal());
+}
+```
+
+The credential is 32 bytes of cryptographic randomness rendered as 43 unpadded Base64URL characters,
+matched case sensitively and never trimmed. It defaults to a 15-minute lifetime, with a configurable
+range of 1 to 60 minutes. Only the format version, the versioned SHA-256 digest, and the issuance and
+expiry timestamps are persisted, at
+`<AppContext.BaseDirectory>/config/<normalized-service-id>.bootstrap-credential.json` unless an
+explicit path is given; on Unix the directory is `0700` and the record is `0600`.
+
+Provisioning is an explicit local operations action — no management endpoint issues or rotates a
+credential — and it is refused when a record already exists or the Bootstrap file is already present.
+Consumption compares the candidate in fixed time and then claims the record with a cross-process
+atomic rename, so at most one caller in any process succeeds and an invalid candidate never consumes
+a valid credential. Expired, malformed, mismatched, already consumed, and never provisioned all
+return the same `bootstrap_credential.invalid`; corruption, oversize, access denial, and I/O failure
+return `bootstrap_credential.unavailable`.
+
+Consumption is one-way and happens before the Bootstrap file is written, so a later failure leaves
+the credential consumed and requires an explicit new provision; `GetStatusAsync` makes that window
+diagnosable without exposing the plaintext or the digest. See
+[docs/contracts/bootstrap-creation-credential.md](docs/contracts/bootstrap-creation-credential.md).
+
 ## Bootstrap management use cases
 
 `BootstrapConfigurationManager` is the use-case layer intended for a future management API. Its status projection reports service and instance identity, provider metadata, and whether secret values are configured, but never returns the connection string or MasterKey. Create and update requests are assembled into a complete candidate configuration and must pass an `IBootstrapCandidateValidator` before the local Bootstrap file is written. Updates preserve omitted replacement values and use the existing atomic file replacement semantics.
