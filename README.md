@@ -2099,10 +2099,15 @@ services.AddServiceMantleConsul(options =>
 Every value is validated when the capability is registered, so an out-of-range or conflicting value
 fails before the host is built and therefore before any sampler, timer, or remote call exists.
 Stop cancels the sampler and every delay first, forbids any new register, and deregisters within the
-cooperative shutdown budget; if that budget expires or the `StopAsync` caller cancels, the lifecycle
-stops creating operations and completes **without** claiming remote absence. The session is disposed
-once, after any cooperative in-flight operation settles; a disposal failure is a safe classification
-and is neither retried nor treated as a deregistration.
+cooperative shutdown budget. That budget is total: it starts when stop begins, before the owner is
+woken, so whatever an in-flight operation spends settling is deducted from what the cleanup
+deregistration has left. An in-flight register is cancelled, because stop may never start one; an
+in-flight deregister is awaited instead, because it is already doing what stop wants and cancelling
+it would discard a `Success` and force the same call to be repeated. If the budget expires or the
+`StopAsync` caller cancels, the lifecycle stops creating operations and completes **without**
+claiming remote absence. The session is disposed once, after any cooperative in-flight operation
+settles; a disposal failure is a safe classification and is neither retried nor treated as a
+deregistration.
 
 Because attempts continue while the corresponding desire stands, the number of attempts over an
 arbitrarily long process lifetime is deliberately uncapped. What is bounded is one call, one delay,

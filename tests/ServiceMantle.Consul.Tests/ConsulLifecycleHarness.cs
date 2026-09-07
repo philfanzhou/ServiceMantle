@@ -235,6 +235,12 @@ internal sealed class ConsulLifecycleHarness : IAsyncDisposable
         /// </summary>
         internal ManualResetEventSlim? Hold { get; set; }
 
+        /// <summary>
+        /// Set to model a replacement client that ignores its cancellation token: the call neither
+        /// observes the token nor throws for it, and ends only when the gate is released.
+        /// </summary>
+        internal bool IgnoreCancellation { get; set; }
+
         internal TaskCompletionSource Entered { get; private set; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -300,10 +306,17 @@ internal sealed class ConsulLifecycleHarness : IAsyncDisposable
                 Hold?.Wait(TimeSpan.FromSeconds(20));
                 if (pending is not null)
                 {
-                    await pending.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    // A non-cooperative client ends only when the test releases it, whatever the
+                    // token says.
+                    await (IgnoreCancellation
+                        ? pending.Task
+                        : pending.Task.WaitAsync(cancellationToken)).ConfigureAwait(false);
                 }
 
-                cancellationToken.ThrowIfCancellationRequested();
+                if (!IgnoreCancellation)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 if (Failure(kind, call) is { } failure)
                 {
                     throw failure;

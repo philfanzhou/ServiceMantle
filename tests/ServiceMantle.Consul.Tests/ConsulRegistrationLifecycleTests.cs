@@ -488,6 +488,93 @@ public sealed class ConsulRegistrationLifecycleTests
     }
 
     [Fact]
+    public async Task Stop_during_a_deregister_awaits_that_attempt_instead_of_cancelling_it()
+    {
+        // #290 stops an in-flight register by cancelling it, but an in-flight deregister is already
+        // doing what stop wants, so that attempt is awaited. Cancelling it would discard a Success,
+        // leave the presence Unknown, and make the cleanup issue a second deregister.
+        var client = new Harness.ScriptedClient();
+        await using var harness = await Harness.CreateAsync(client: client);
+
+        await harness.StartAsync();
+        await Harness.WaitAsync(
+            () => harness.Lifecycle.State == ConsulLifecycleState.Registered,
+            "the lifecycle never registered");
+        client.Arm();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Gate = gate;
+        harness.Decisions.Current = Harness.NotReady();
+        await harness.AdvanceUntilAsync(
+            TimeSpan.FromSeconds(1),
+            () => client.Deregisters == 1,
+            "the deregister never started");
+        Assert.Equal(ConsulLifecycleState.Deregistering, harness.Lifecycle.State);
+
+        // The clock never moves again, so no budget can end this attempt, and the gate is released
+        // only once the owner has reached its stopping decision. A build that cancelled the attempt
+        // would already have ended it and left the cleanup to issue a second deregister.
+        var stop = harness.StopAsync();
+        await Harness.WaitAsync(
+            () => harness.Lifecycle.State == ConsulLifecycleState.Stopping,
+            "the owner never observed the stop");
+        gate.SetResult();
+        await stop.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+
+        // One deregister, and it is the one that was already in flight.
+        Assert.Equal(["register", "deregister"], client.Operations);
+        Assert.Equal(1, client.Deregisters);
+        Assert.Equal(1, client.MaximumConcurrent);
+        Assert.Equal(ConsulRemotePresence.Absent, harness.Lifecycle.Presence);
+        Assert.DoesNotContain(
+            harness.Observer.Diagnostics,
+            diagnostic => diagnostic.Classification == ConsulLifecycleDiagnostics.DeregisterUnavailable);
+        Assert.Equal(1, client.Disposals);
+    }
+
+    [Fact]
+    public async Task A_non_cooperative_client_is_never_overlapped_or_disposed_to_force_a_bound()
+    {
+        // A replacement client may ignore its token. ServiceMantle promises no hard wall-clock bound
+        // for that, and #290 forbids buying one by starting the next remote operation concurrently
+        // or by disposing the client while its call is unfinished.
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new Harness.ScriptedClient { Gate = gate, IgnoreCancellation = true };
+        await using var harness = await Harness.CreateAsync(client: client);
+
+        await harness.StartAsync();
+        await client.Entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var stop = harness.StopAsync();
+        await Harness.WaitAsync(
+            () => harness.Lifecycle.State == ConsulLifecycleState.Stopping,
+            "the owner never observed the stop");
+
+        // Every deadline the lifecycle owns - the operation budget and the whole shutdown budget -
+        // has now passed while the call still ignores its token.
+        harness.Time.Advance(TimeSpan.FromSeconds(60));
+
+        Assert.False(stop.IsCompleted, "the stop completed while the client's call was unfinished");
+        Assert.False(client.Disposed, "the client was disposed while its call was unfinished");
+        Assert.Equal(1, client.Registers);
+        Assert.Equal(0, client.Deregisters);
+        Assert.Equal(1, client.MaximumConcurrent);
+
+        // Only the client can end it. The session converts the late answer into the cancellation it
+        // was given, so the presence stays Unknown and no absence is claimed.
+        gate.SetResult();
+        await stop.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["register"], client.Operations);
+        Assert.Equal(ConsulRemotePresence.Unknown, harness.Lifecycle.Presence);
+        Assert.Contains(
+            harness.Observer.Diagnostics,
+            diagnostic => diagnostic.Classification == ConsulLifecycleDiagnostics.RegisterTimeout);
+        Assert.Contains(
+            harness.Observer.Diagnostics,
+            diagnostic => diagnostic.Classification == ConsulLifecycleDiagnostics.ShutdownTimeout);
+        Assert.Equal(1, client.Disposals);
+    }
+
+    [Fact]
     public async Task The_observer_retains_a_bounded_window_of_the_diagnostics_it_records()
     {
         // The fail-closed readiness path records once per poll for the life of the process, so the

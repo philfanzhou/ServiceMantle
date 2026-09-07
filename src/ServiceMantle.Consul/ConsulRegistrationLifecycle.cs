@@ -93,12 +93,23 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
     }
 
     /// <summary>
-    /// Cancels the sampler and every delay, settles any in-flight operation, then deregisters
-    /// within the cooperative shutdown budget. It never starts another register.
+    /// Starts the total shutdown budget, cancels the sampler and every delay, settles any in-flight
+    /// operation, then deregisters within whatever is left of that budget. An in-flight register is
+    /// cancelled and an in-flight deregister is awaited. It never starts another register.
     /// </summary>
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         Interlocked.Exchange(ref stopping, 1);
+        if (session is null)
+        {
+            // Disabled, never started, or already stopped: no loop and no session own anything.
+            await lifetime.CancelAsync().ConfigureAwait(false);
+            return;
+        }
+
+        // The budget is total: it starts before the owner is woken, so the time an in-flight
+        // operation takes to settle is deducted from what the cleanup deregistration has left.
+        using var shutdown = new CancellationTokenSource(settings.ShutdownBudget, timeProvider);
         Signal();
         await lifetime.CancelAsync().ConfigureAwait(false);
 
@@ -112,15 +123,10 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
             await sample.ConfigureAwait(false);
         }
 
-        if (session is null)
-        {
-            return;
-        }
-
         State = ConsulLifecycleState.Stopping;
         try
         {
-            await CleanUpAsync(cancellationToken).ConfigureAwait(false);
+            await CleanUpAsync(shutdown, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -309,14 +315,29 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
 
             // A wake-up that is not a desire signal can only be the lifetime token, which is
             // cancelled once and stays cancelled. Falling through to the exit below keeps that from
-            // spinning until the call settles, and lets stop cancel the attempt it is waiting on.
+            // spinning until the call settles, and lets stop end the attempt it is waiting on.
             var terminating = Volatile.Read(ref stopping) != 0 || lifetime.IsCancellationRequested;
             if (!interrupted && !terminating)
             {
                 continue;
             }
 
-            if (terminating || (Volatile.Read(ref desiredPresent) == 1) != register)
+            if (terminating)
+            {
+                // Stop has priority from here on. A register is cancelled because stop may never
+                // start one, but an in-flight deregister is already doing what stop wants, so it is
+                // awaited instead: cancelling it would discard a Success, leave the presence
+                // Unknown, and make the cleanup repeat the very same call.
+                State = ConsulLifecycleState.Stopping;
+                if (register)
+                {
+                    await operation.CancelAsync().ConfigureAwait(false);
+                }
+
+                break;
+            }
+
+            if ((Volatile.Read(ref desiredPresent) == 1) != register)
             {
                 await operation.CancelAsync().ConfigureAwait(false);
                 break;
@@ -374,10 +395,12 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
     }
 
     /// <summary>
-    /// Deregisters within the remaining shutdown budget. It never claims absence it did not
-    /// observe, and it starts no new register.
+    /// Deregisters within whatever is left of the shutdown budget that stop started. It never claims
+    /// absence it did not observe, and it starts no new register.
     /// </summary>
-    private async Task CleanUpAsync(CancellationToken cancellationToken)
+    private async Task CleanUpAsync(
+        CancellationTokenSource shutdown,
+        CancellationToken cancellationToken)
     {
         if (Presence == ConsulRemotePresence.Absent)
         {
@@ -385,7 +408,6 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
         }
 
         Interlocked.Exchange(ref desiredPresent, 0);
-        using var shutdown = new CancellationTokenSource(settings.ShutdownBudget, timeProvider);
         var failures = 0;
         while (!shutdown.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
