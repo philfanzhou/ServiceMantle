@@ -338,6 +338,41 @@ an anonymous entry cannot be used to weaken that group. The convention maps no h
 duplicate kind, a wrong path or method, a downgraded convention, or a missing capability fails before
 the host starts. See [docs/contracts/management-entries.md](docs/contracts/management-entries.md).
 
+### Management session login, read, and logout
+
+`MapServiceMantleManagementSession` serves `POST {versionedRoot}/session/login`,
+`GET`/`HEAD {versionedRoot}/session`, and `POST {versionedRoot}/session/logout`, and requires an
+explicit consumer login adapter:
+
+```csharp
+app.MapServiceMantleManagementSession(async (httpContext, cancellationToken) =>
+{
+    var credentials = await ReadCredentialsAsync(httpContext, cancellationToken);
+    httpContext.RequestServices.GetRequiredService<MyScopedCredentialAccessor>().Set(credentials);
+    return await ManagementIdentityProviderInvoker.InvokeAsync(
+        httpContext.RequestServices.GetRequiredService<IManagementIdentityProvider>(),
+        cancellationToken);
+});
+```
+
+ServiceMantle defines no universal credential schema: it admits at most 64 KiB of raw body, rejects
+a query string and a content encoding, and hands the request to the adapter under a login budget
+that defaults to 10 seconds and accepts 100 milliseconds through 30 seconds. The adapter puts
+credentials only into its own trusted scoped accessor and calls the existing provider SPI, which
+still receives no credential object. Only an authenticated result followed by a completed
+fixed-scheme sign-in answers `204` with one cookie; an unauthenticated result keeps the existing
+session `401`; a failed, null or invalid result, an adapter exception, an internal cancellation, an
+internal timeout and a failed sign-in all answer
+`503 {"errorCode":"management.session.unavailable"}` with no partial cookie, and a consumer-supplied
+provider error code is never forwarded.
+
+The current-session read and the logout require any legitimate ServiceMantle management identity,
+not Admin. The read answers exactly `authenticated`, the UTC `expiresAtUtc`, and the defined
+permission names in their fixed order, and omits the operator identifier, display name, source,
+claims and ticket material; `HEAD` answers the same status and headers with no body. Logout answers
+`204` once this client's cookie deletion is on the response — it is local and stateless and revokes
+no copied ticket. See [docs/contracts/management-session.md](docs/contracts/management-session.md).
+
 ## Isolated setup and management rate limiting
 
 Rate limiting is opt-in and registers two named sliding-window policies without a global limiter:
