@@ -338,6 +338,39 @@ an anonymous entry cannot be used to weaken that group. The convention maps no h
 duplicate kind, a wrong path or method, a downgraded convention, or a missing capability fails before
 the host starts. See [docs/contracts/management-entries.md](docs/contracts/management-entries.md).
 
+### Anonymous Setup status and completion
+
+`MapServiceMantleSetup` serves `GET`/`HEAD`/`POST {versionedRoot}/setup` and requires an explicit
+consumer transaction executor:
+
+```csharp
+app.MapServiceMantleSetup(async (httpContext, setupCode, cancellationToken) =>
+{
+    await using var scope = httpContext.RequestServices
+        .GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+    // validate read-only, orchestrate, stage the consumption, save once, commit
+});
+```
+
+The read entry projects exactly `{"status":"pending"}` or `{"status":"completed"}` from the existing
+installation authority; `HEAD` answers the same status and headers with no body. The completion
+entry answers the fixed management `409` for an already completed installation without parsing the
+supplied code, so a replay is a stable boundary. Otherwise it accepts only `application/json` with
+an optional UTF-8 charset, no query string, no content encoding, at most 4 KiB of raw body, JSON
+depth at most 4, and exactly one case-sensitive top-level `code` string holding the existing
+32-character Base64URL Setup Code, never trimmed.
+
+The executor owns the shared unit of work: a fresh scope and clean `DbContext`, a read-only
+`ValidateAsync`, `ServiceSetupOrchestrator`, `StageConsumeAsync`, one `SaveChangesAsync`, then
+commit. It may report `Committed` only after that commit, and the endpoint answers `204` only then -
+core orchestrator success and `SetupCodeConsumptionResult.IsStaged` still mean staged, not
+committed. A rejected code answers `401 {"errorCode":"management.setup.credential_invalid"}` with no
+sub-reason; a store, orchestrator, save, commit, cleanup or internal timeout failure answers
+`503 {"errorCode":"management.setup.unavailable"}`; caller cancellation propagates its original
+token. See [docs/contracts/management-setup.md](docs/contracts/management-setup.md).
+
 ## Isolated setup and management rate limiting
 
 Rate limiting is opt-in and registers two named sliding-window policies without a global limiter:
