@@ -114,9 +114,11 @@ public sealed class ServiceReadinessContributorCombinerTests
             TimeSpan.FromMilliseconds(250),
             TestContext.Current.CancellationToken);
 
-        // The first contributor drained the one shared budget, so the second never ran.
-        // Giving each contributor its own budget would have invoked the second as well.
-        // Returning at all also proves the budget cuts off a contributor that never completes.
+        // The first contributor drained the total budget, so the second never ran, and the
+        // evaluation returned rather than hanging on a contributor that never completes.
+        // This does not on its own separate a shared budget from a per-contributor one: a
+        // contributor that never completes exhausts either. Pinning how the budget is divided
+        // between contributors needs an injectable TimeProvider; see #333.
         Assert.Equal([1], calls);
         Assert.Equal(
             WellKnownServiceReadinessContributorErrorCodes.ContributorTimeout,
