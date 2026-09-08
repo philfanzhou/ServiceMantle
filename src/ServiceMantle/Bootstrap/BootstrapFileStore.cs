@@ -362,7 +362,8 @@ public sealed class BootstrapFileStore
             }
 
             // A reservation that never received its content is this call's own empty file, so
-            // releasing it leaves no target behind for a failed create.
+            // releasing it leaves no target behind for a create this call saw fail. A process that
+            // never reaches here leaves the empty reservation on the target path.
             if (holdsReservation)
             {
                 Discard(FilePath);
@@ -386,6 +387,13 @@ public sealed class BootstrapFileStore
     /// The reservation is empty and is renamed over by the completed file. A reader that observes
     /// the target during that window sees an incomplete file and gets
     /// <see cref="BootstrapFileFailureKind.Unavailable"/>, never a partially written configuration.
+    /// </para>
+    /// <para>
+    /// The reservation belongs to the call that took it, and only that call releases it. A process
+    /// aborted between the reservation and the rename leaves an empty file at the target path,
+    /// which the store does not reclaim: a later <see cref="Create"/> reports
+    /// <see cref="BootstrapFileFailureKind.TargetAlreadyExists"/> and a read reports
+    /// <see cref="BootstrapFileFailureKind.Unavailable"/> until that file is removed.
     /// </para>
     /// </remarks>
     private void ReserveNewFile()

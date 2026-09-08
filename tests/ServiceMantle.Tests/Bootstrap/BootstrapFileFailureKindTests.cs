@@ -227,6 +227,44 @@ public sealed class BootstrapFileFailureKindTests
     }
 
     [Fact]
+    public void A_create_that_fails_after_reserving_releases_the_reservation()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var configurationDirectory = Path.Combine(directory.Path, "abandoned");
+        Directory.CreateDirectory(configurationDirectory);
+
+        // The content is written beside the target as ".{file name}.{12 random characters}.tmp", so
+        // a target name that fits the file system's component limit while that longer name does not
+        // fails the create after the reservation was already taken.
+        const string suffix = ".bootstrap.json";
+        var fileName = new string('n', 245 - suffix.Length) + suffix;
+        var temporaryName = $".{fileName}.{Path.GetRandomFileName()}.tmp";
+
+        if (!NameIsAccepted(configurationDirectory, fileName) ||
+            NameIsAccepted(configurationDirectory, temporaryName))
+        {
+            // Windows applies its length limits to the whole path rather than to one component, and
+            // a file system with a longer component limit accepts both names, so neither can place
+            // the failure between the reservation and the write.
+            return;
+        }
+
+        var store = new BootstrapFileStore(
+            ServiceId.Parse("signacore"),
+            new BootstrapDatabaseProviderRegistry([]),
+            Path.Combine(configurationDirectory, fileName));
+
+        var failure = Assert.Throws<BootstrapException>(() => store.Create(CreateConfiguration()));
+
+        // The reservation is the target path itself, so the declared release is observable only as
+        // the absence of that file after a create that had already claimed it.
+        Assert.Equal(BootstrapFileFailureKind.Unavailable, failure.FailureKind);
+        Assert.False(File.Exists(store.FilePath));
+        Assert.Null(store.TryLoad());
+        Assert.Empty(Directory.GetFileSystemEntries(configurationDirectory));
+    }
+
+    [Fact]
     public void A_denied_probe_is_never_reported_as_a_missing_target()
     {
         if (OperatingSystem.IsWindows())
@@ -330,6 +368,32 @@ public sealed class BootstrapFileFailureKindTests
             CallCount++;
             return ValueTask.FromResult(BootstrapValidationResult.Failure("candidate.rejected"));
         }
+    }
+
+    /// <summary>
+    /// Reports whether the file system accepts a name, proving which of the two create steps can
+    /// reach the disk at all.
+    /// </summary>
+    private static bool NameIsAccepted(string directoryPath, string fileName)
+    {
+        var path = Path.Combine(directoryPath, fileName);
+        try
+        {
+            using (File.Open(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+            }
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        File.Delete(path);
+        return true;
     }
 
     private static BootstrapFileStore CreateStore(
