@@ -306,6 +306,7 @@ public sealed class ServiceMantleManagementSessionBodyAdmissionTests
         var scopes = Enumerable.Range(0, 8).Select(_ => new LoginScope()).ToArray();
         try
         {
+            var rendezvous = new AdapterRendezvous(scopes.Length);
             var adapters = new RecordingAdapter[scopes.Length];
             var bodies = new byte[scopes.Length][];
             for (var index = 0; index < scopes.Length; index++)
@@ -314,11 +315,38 @@ public sealed class ServiceMantleManagementSessionBodyAdmissionTests
                     "{\"password\":\"" + Sentinel + index +
                         new string((char)('a' + index), 4096) + "\"}");
                 scopes[index].Send(bodies[index], maxRead: 97, declared: index % 2 == 0);
-                adapters[index] = new RecordingAdapter { Style = FullReads[index % FullReads.Length] };
+                adapters[index] = new RecordingAdapter
+                {
+                    Style = FullReads[index % FullReads.Length],
+                    OnEntered = rendezvous.EnterAsync,
+                };
             }
 
-            var outcomes = await Task.WhenAll(
-                scopes.Select((scope, index) => scope.LoginAsync(adapters[index])));
+            var pending = scopes
+                .Select((scope, index) => scope.LoginAsync(adapters[index]))
+                .ToArray();
+            try
+            {
+                await rendezvous.AllEntered.WaitAsync(
+                    TimeSpan.FromSeconds(10),
+                    TestContext.Current.CancellationToken);
+
+                // Every adapter is holding its installed copy at the same time. None can read or
+                // return until this checkpoint releases them, so sequential completion cannot make
+                // the isolation assertion pass accidentally.
+                Assert.All(pending, task => Assert.False(task.IsCompleted));
+                Assert.All(adapters, adapter => Assert.NotNull(adapter.SeenBody));
+                Assert.Equal(
+                    scopes.Length,
+                    adapters.Select(adapter => adapter.SeenBody).Distinct().Count());
+            }
+            finally
+            {
+                rendezvous.Release();
+            }
+
+            var outcomes = await Task.WhenAll(pending)
+                .WaitAsync(TestContext.Current.CancellationToken);
 
             for (var index = 0; index < scopes.Length; index++)
             {
@@ -782,12 +810,24 @@ public sealed class ServiceMantleManagementSessionBodyAdmissionTests
 
         internal Stream? SeenBody { get; private set; }
 
+        /// <summary>
+        /// An optional asynchronous checkpoint after this adapter has captured the installed body
+        /// and before it starts reading. The hook receives the login token so a stalled test can be
+        /// cancelled without leaving an adapter waiting forever.
+        /// </summary>
+        internal Func<CancellationToken, Task>? OnEntered { get; set; }
+
         internal async ValueTask<ManagementIdentityResult> InvokeAsync(
             HttpContext context,
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref calls);
             SeenBody = context.Request.Body;
+            if (OnEntered is { } onEntered)
+            {
+                await onEntered(cancellationToken).ConfigureAwait(false);
+            }
+
             var body = await ReadAsync(context, cancellationToken).ConfigureAwait(false);
             lock (Bodies)
             {
@@ -888,6 +928,39 @@ public sealed class ServiceMantleManagementSessionBodyAdmissionTests
 
             return buffer.ToArray();
         }
+    }
+
+    /// <summary>
+    /// Holds every participating adapter after it captures its admitted body until the test has
+    /// observed that all bodies are live together.
+    /// </summary>
+    private sealed class AdapterRendezvous(int participantCount)
+    {
+        private readonly TaskCompletionSource allEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource released =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int entered;
+
+        internal Task AllEntered => allEntered.Task;
+
+        internal async Task EnterAsync(CancellationToken cancellationToken)
+        {
+            var count = Interlocked.Increment(ref entered);
+            if (count > participantCount)
+            {
+                throw new InvalidOperationException("Too many adapters entered the rendezvous.");
+            }
+
+            if (count == participantCount)
+            {
+                allEntered.TrySetResult();
+            }
+
+            await released.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        internal void Release() => released.TrySetResult();
     }
 
     /// <summary>Counts the sign-ins a login attempted.</summary>
