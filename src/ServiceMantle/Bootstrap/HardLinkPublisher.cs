@@ -112,17 +112,26 @@ internal static class HardLinkPublisher
     /// </summary>
     /// <remarks>
     /// The bare name "libc" is not loadable on a glibc system, where it resolves to a linker script
-    /// rather than to the shared object, so the real sonames are tried first.
+    /// rather than to the shared object, so the real sonames are tried first. Binding runs once, in
+    /// a static initializer, so a failure here must not escape: an unbound link leaves every create
+    /// reporting a classified <see cref="BootstrapFileFailureKind.Unavailable"/> rather than
+    /// failing the type itself and turning each later call into a type-initialization error.
     /// </remarks>
     private static LinkFunction? LoadUnixLink()
     {
-        foreach (var candidate in new[] { "libc.so.6", "libSystem.dylib", "libc.so", "libc" })
+        try
         {
-            if (NativeLibrary.TryLoad(candidate, out var library) &&
-                NativeLibrary.TryGetExport(library, "link", out var symbol))
+            foreach (var candidate in new[] { "libc.so.6", "libSystem.dylib", "libc.so", "libc" })
             {
-                return Marshal.GetDelegateForFunctionPointer<LinkFunction>(symbol);
+                if (NativeLibrary.TryLoad(candidate, out var library) &&
+                    NativeLibrary.TryGetExport(library, "link", out var symbol))
+                {
+                    return Marshal.GetDelegateForFunctionPointer<LinkFunction>(symbol);
+                }
             }
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
         }
 
         return null;
