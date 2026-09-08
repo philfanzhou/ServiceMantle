@@ -69,6 +69,18 @@ public sealed class ConsulLifecycleOptions
     public TimeSpan MaximumRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>Gets or sets the total cooperative cleanup time after stop begins. 1 s - 60 s.</summary>
+    /// <remarks>
+    /// The budget starts when stop begins, before the owner loop is woken, and it bounds the cleanup
+    /// deregistration: whatever an already in-flight operation spends settling is deducted from what
+    /// the cleanup has left, and a cleanup retry delay is cut short by the remaining budget rather
+    /// than by a fresh one. It does not shorten the operation that is already in flight, which keeps
+    /// <see cref="ConsulOperationBudget"/> as its own cancellation deadline; an operation that has
+    /// already run for part of that budget settles within whatever is left of it. For cooperative
+    /// dependencies the resulting bound on one stop is therefore
+    /// <c>max(ConsulOperationBudget, ShutdownBudget)</c> - with <c>ConsulOperationBudget = 30 s</c>
+    /// and <c>ShutdownBudget = 1 s</c>, a stop can take about 30 seconds. It is not exact scheduling
+    /// time, and it is no bound at all on a client, factory, or disposal that ignores cancellation.
+    /// </remarks>
     public TimeSpan ShutdownBudget { get; set; } = TimeSpan.FromSeconds(15);
 
     /// <summary>Returns a validated immutable copy, or throws before any work can start.</summary>
