@@ -124,7 +124,10 @@ public sealed class BootstrapFileStore
     /// Loads the bootstrap file when it exists.
     /// </summary>
     /// <returns>The loaded configuration, or null when the file does not exist.</returns>
-    /// <exception cref="BootstrapException">The file exists but is invalid or inaccessible.</exception>
+    /// <exception cref="BootstrapException">
+    /// The file exists but is invalid or inaccessible. A damaged, mismatched, or unreadable file is
+    /// <see cref="BootstrapFileFailureKind.Unavailable"/>; a missing file returns null instead.
+    /// </exception>
     public BootstrapConfiguration? TryLoad()
     {
         try
@@ -173,16 +176,27 @@ public sealed class BootstrapFileStore
     /// Loads the bootstrap file and fails when it does not exist.
     /// </summary>
     /// <returns>The loaded bootstrap configuration.</returns>
-    /// <exception cref="BootstrapException">The file is missing, invalid, or inaccessible.</exception>
+    /// <exception cref="BootstrapException">
+    /// The file is missing, invalid, or inaccessible. An absence the store proved by opening the
+    /// file is <see cref="BootstrapFileFailureKind.TargetMissing"/>; every other failure is
+    /// <see cref="BootstrapFileFailureKind.Unavailable"/>.
+    /// </exception>
     public BootstrapConfiguration Load() =>
-        TryLoad() ?? throw Failure("does not exist.");
+        TryLoad() ?? throw Failure(
+            "does not exist.",
+            failureKind: BootstrapFileFailureKind.TargetMissing);
 
     /// <summary>
     /// Creates a new bootstrap file and never overwrites an existing file.
     /// </summary>
     /// <param name="configuration">The configuration to persist.</param>
     /// <exception cref="ArgumentNullException"><paramref name="configuration"/> is null.</exception>
-    /// <exception cref="BootstrapException">The target exists or the file cannot be written.</exception>
+    /// <exception cref="BootstrapException">
+    /// The target exists or the file cannot be written. A target the operating system refused to
+    /// publish over is <see cref="BootstrapFileFailureKind.TargetAlreadyExists"/>, including the
+    /// target a concurrent creator won first; every other failure, including a link the file system
+    /// refused, is <see cref="BootstrapFileFailureKind.Unavailable"/>.
+    /// </exception>
     public void Create(BootstrapConfiguration configuration) =>
         Persist(configuration, replace: false);
 
@@ -191,7 +205,11 @@ public sealed class BootstrapFileStore
     /// </summary>
     /// <param name="configuration">The configuration to persist.</param>
     /// <exception cref="ArgumentNullException"><paramref name="configuration"/> is null.</exception>
-    /// <exception cref="BootstrapException">The target does not exist or the file cannot be replaced.</exception>
+    /// <exception cref="BootstrapException">
+    /// The target does not exist or the file cannot be replaced. An absence the store proved by
+    /// opening the file is <see cref="BootstrapFileFailureKind.TargetMissing"/>; every other failure,
+    /// including a denied or failed probe, is <see cref="BootstrapFileFailureKind.Unavailable"/>.
+    /// </exception>
     public void Replace(BootstrapConfiguration configuration) =>
         Persist(configuration, replace: true);
 
@@ -294,18 +312,10 @@ public sealed class BootstrapFileStore
         {
             if (replace)
             {
-                if (!File.Exists(FilePath))
-                {
-                    throw Failure("cannot be replaced because it does not exist.");
-                }
+                EnsureReplaceTargetExists();
             }
             else
             {
-                if (File.Exists(FilePath))
-                {
-                    throw Failure("already exists and cannot be overwritten by Create.");
-                }
-
                 EnsurePrivateDirectory(directoryPath);
             }
 
@@ -318,13 +328,16 @@ public sealed class BootstrapFileStore
             if (replace)
             {
                 File.Replace(temporaryPath, FilePath, destinationBackupFileName: null);
+
+                // The replace consumed the temporary name, so there is nothing left to remove.
+                temporaryPath = null;
             }
             else
             {
-                File.Move(temporaryPath, FilePath);
+                // The content is complete before the target exists at all. The temporary name stays
+                // set so the finally block removes this call's second name for the published file.
+                PublishNewFile(temporaryPath);
             }
-
-            temporaryPath = null;
         }
         catch (BootstrapException)
         {
@@ -340,19 +353,120 @@ public sealed class BootstrapFileStore
         }
         finally
         {
+            // The temporary file is only ever this call's own work, whether the operation failed
+            // before it was published or succeeded and left it as a second name for the target. A
+            // refused delete leaves that file beside the target and changes nothing else; the
+            // target path itself is never removed here.
             if (temporaryPath is not null)
             {
-                try
-                {
-                    File.Delete(temporaryPath);
-                }
-                catch (IOException)
-                {
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
+                Discard(temporaryPath);
             }
+        }
+    }
+
+    /// <summary>
+    /// Publishes the completed file at the create target, which must still be free.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This one operating system step both decides the single winner among concurrent creators and
+    /// makes the file appear complete. It replaces a preceding existence check, which cannot do
+    /// either: <see cref="File.Move(string, string)"/> without overwrite is a check followed by a
+    /// rename on Unix, so two creators can both observe an absent target and both rename, and the
+    /// second silently replaces the first - breaking the promise that <see cref="Create"/> never
+    /// overwrites an existing file.
+    /// </para>
+    /// <para>
+    /// Nothing is placed at the target before the content is complete, so a create that fails, or a
+    /// process that dies at any point, leaves the target exactly as it found it. What can be left
+    /// behind is the temporary file beside it, which no operation reads and a later create replaces
+    /// with a fresh name.
+    /// </para>
+    /// <para>
+    /// A refusal is classified only from the operating system's own answer. A target that is
+    /// already taken is reported as such by the link itself, which is positive evidence rather than
+    /// an inference from a separate observation; every other refusal, including a file system that
+    /// does not support links at all, leaves the cause unestablished and is
+    /// <see cref="BootstrapFileFailureKind.Unavailable"/>.
+    /// </para>
+    /// </remarks>
+    private void PublishNewFile(string temporaryPath)
+    {
+        switch (HardLinkPublisher.TryPublish(temporaryPath, FilePath, out var errorCode))
+        {
+            case HardLinkResult.Published:
+                return;
+
+            case HardLinkResult.TargetAlreadyExists:
+                throw Failure(
+                    "already exists and cannot be overwritten by Create.",
+                    failureKind: BootstrapFileFailureKind.TargetAlreadyExists);
+
+            default:
+                throw Failure(
+                    $"could not be published because the file system refused to link it "
+                    + $"(operating system error {errorCode}).");
+        }
+    }
+
+    /// <summary>
+    /// Removes a file this call owns, as a best effort.
+    /// </summary>
+    /// <remarks>
+    /// A refused delete is swallowed so the operation reports its own classified failure instead of
+    /// the cleanup's. No decision in the store depends on the delete having succeeded, so a refused
+    /// release leaves the file in place rather than changing what the caller is told.
+    /// </remarks>
+    private static void Discard(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Proves the replace target exists by opening it.
+    /// </summary>
+    /// <remarks>
+    /// A negative <see cref="File.Exists(string)"/> result also means "the path could not be
+    /// inspected", so it can never be the evidence for
+    /// <see cref="BootstrapFileFailureKind.TargetMissing"/>. Opening the file separates the two: the
+    /// operating system reporting the file or its directory as not found is proof of absence, while
+    /// a denied or failed open leaves the cause unestablished and reaches the caller as
+    /// <see cref="BootstrapFileFailureKind.Unavailable"/> through the surrounding handlers.
+    /// </remarks>
+    private void EnsureReplaceTargetExists()
+    {
+        try
+        {
+            using var probe = new FileStream(
+                FilePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                BufferSize,
+                FileOptions.None);
+        }
+        catch (FileNotFoundException exception)
+        {
+            throw Failure(
+                "cannot be replaced because it does not exist.",
+                exception,
+                BootstrapFileFailureKind.TargetMissing);
+        }
+        catch (DirectoryNotFoundException exception)
+        {
+            throw Failure(
+                "cannot be replaced because it does not exist.",
+                exception,
+                BootstrapFileFailureKind.TargetMissing);
         }
     }
 
@@ -395,18 +509,21 @@ public sealed class BootstrapFileStore
             MasterKey = configuration.MasterKey
         };
 
-        using var stream = OpenTemporaryFile(temporaryPath);
+        using var stream = OpenNewPrivateFile(temporaryPath);
 
         JsonSerializer.Serialize(stream, document, WriteOptions);
         stream.Flush(flushToDisk: true);
     }
 
-    private static FileStream OpenTemporaryFile(string temporaryPath)
+    /// <summary>
+    /// Creates a file that must not already exist, owner-readable and owner-writable only.
+    /// </summary>
+    private static FileStream OpenNewPrivateFile(string path)
     {
         if (OperatingSystem.IsWindows())
         {
             return new FileStream(
-                temporaryPath,
+                path,
                 FileMode.CreateNew,
                 FileAccess.Write,
                 FileShare.None,
@@ -415,7 +532,7 @@ public sealed class BootstrapFileStore
         }
 
         return new FileStream(
-            temporaryPath,
+            path,
             new FileStreamOptions
             {
                 Mode = FileMode.CreateNew,
@@ -427,6 +544,9 @@ public sealed class BootstrapFileStore
             });
     }
 
-    private BootstrapException Failure(string detail, Exception? innerException = null) =>
-        new(FilePath, $"Bootstrap file '{FilePath}' {detail}", innerException);
+    private BootstrapException Failure(
+        string detail,
+        Exception? innerException = null,
+        BootstrapFileFailureKind failureKind = BootstrapFileFailureKind.Unavailable) =>
+        new(FilePath, $"Bootstrap file '{FilePath}' {detail}", innerException, failureKind);
 }
