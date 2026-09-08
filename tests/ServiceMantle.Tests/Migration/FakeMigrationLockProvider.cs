@@ -5,13 +5,15 @@ namespace ServiceMantle.Tests.Migration;
 
 /// <summary>
 /// Test double for IDatabaseMigrationLockProvider with configurable behavior.
-/// Supports actual lock semantics when needed for concurrent testing via shared semaphores.
+/// Supports actual lock semantics when needed for concurrent testing via semaphores held by a
+/// <see cref="FakeMigrationLockSpace"/>. The space is per instance unless a test passes an explicit
+/// one, so two providers only contend when the test asked them to.
 /// </summary>
 internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
 {
-    // Shared semaphores indexed by (ProviderId, ServiceId) for multi-instance simulation
-    private static readonly Dictionary<(string, string), SemaphoreSlim> SharedLocks = [];
-    private static readonly object LockDictLock = new();
+    // Semaphores indexed by (ProviderId, ServiceId) for multi-instance simulation, scoped to the
+    // space this provider was given.
+    private readonly FakeMigrationLockSpace lockSpace;
 
     private readonly Exception? acquireException;
     private readonly bool returnNullLease;
@@ -39,9 +41,11 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
         bool returnNullLease = false,
         Func<CancellationToken, Task>? acquireDelay = null,
         bool ignoreCancellationAfterAcquireDelay = false,
-        Exception? disposeException = null)
+        Exception? disposeException = null,
+        FakeMigrationLockSpace? lockSpace = null)
     {
         ProviderId = providerId ?? throw new ArgumentNullException(nameof(providerId));
+        this.lockSpace = lockSpace ?? new FakeMigrationLockSpace();
         this.acquireException = acquireException;
         this.returnNullLease = returnNullLease;
         this.acquireDelay = acquireDelay;
@@ -73,18 +77,8 @@ internal sealed class FakeMigrationLockProvider : IDatabaseMigrationLockProvider
             return null!;
         }
 
-        // Acquire shared semaphore for this lock key
-        var lockKey = (ProviderId, serviceId.Value);
-        SemaphoreSlim semaphore;
-
-        lock (LockDictLock)
-        {
-            if (!SharedLocks.TryGetValue(lockKey, out semaphore!))
-            {
-                semaphore = new SemaphoreSlim(1, 1);
-                SharedLocks[lockKey] = semaphore;
-            }
-        }
+        // Acquire the semaphore for this lock key within this provider's lock space.
+        var semaphore = lockSpace.GetOrAdd(ProviderId, serviceId.Value);
 
         // Wait for lock with timeout
         using var cts = new CancellationTokenSource(acquireTimeout);
