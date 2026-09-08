@@ -417,14 +417,17 @@ app.MapServiceMantleManagementSession(async (httpContext, cancellationToken) =>
 });
 ```
 
-ServiceMantle defines no universal credential schema: it admits at most 64 KiB of raw body, rejects
-a query string and a content encoding, and hands the request to the adapter under a login budget
-that defaults to 10 seconds and accepts 100 milliseconds through 30 seconds. The adapter puts
-credentials only into its own trusted scoped accessor and calls the existing provider SPI, which
-still receives no credential object. Only an authenticated result followed by a completed
-fixed-scheme sign-in answers `204` with one cookie; an unauthenticated result keeps the existing
-session `401`; a failed, null or invalid result, an adapter exception, an internal cancellation, an
-internal timeout and a failed sign-in all answer
+ServiceMantle defines no universal credential schema: it admits at most 64 KiB of raw body, counted
+while the body is read so a chunked request with no declared length meets the same limit, rejects a
+query string and a content encoding, and hands the adapter the admitted copy - readable in full
+through `Request.Body` or `Request.BodyReader` - under a login budget that covers the body read and
+the adapter call together, defaults to 10 seconds, and accepts 100 milliseconds through 30 seconds.
+An oversized body and a host's own `413` are the fixed `400 management.request.invalid` and run no
+adapter. The adapter puts credentials only into its own trusted scoped accessor and calls the
+existing provider SPI, which still receives no credential object. Only an authenticated result
+followed by a completed fixed-scheme sign-in answers `204` with one cookie; an unauthenticated
+result keeps the existing session `401`; a failed, null or invalid result, an adapter exception, a
+body read failure, an internal cancellation, an internal timeout and a failed sign-in all answer
 `503 {"errorCode":"management.session.unavailable"}`, and a consumer-supplied provider error code is
 never forwarded. A sign-in that already appended a complete or chunked ticket before it failed is
 rolled back to the `Set-Cookie` snapshot taken before it started, so the failed response carries no

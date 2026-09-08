@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
@@ -19,8 +18,8 @@ namespace ServiceMantle.AspNetCore;
 internal static class ServiceMantleManagementSessionHandlers
 {
     /// <summary>
-    /// Admits at most 64 KiB of credential material, calls the consumer login adapter under the
-    /// login budget, and signs in only an authenticated identity.
+    /// Admits at most 64 KiB of credential material, counted as it is read, calls the consumer
+    /// login adapter under the login budget, and signs in only an authenticated identity.
     /// </summary>
     internal static async Task<IResult> LoginAsync(
         HttpContext context,
@@ -38,23 +37,47 @@ internal static class ServiceMantleManagementSessionHandlers
             return ServiceMantleManagementApiResults.InvalidRequest();
         }
 
-        // A body without a declared length is bounded by the server feature instead, so a chunked
-        // upload cannot exceed the admission envelope either. The media type and the schema inside
-        // that envelope stay the consumer adapter's obligation.
-        if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
-        {
-            limit.MaxRequestBodySize = ServiceMantleManagementSessionMapping.MaximumLoginBodyLength;
-        }
-
+        // One budget covers the body read and the adapter call and is not reset between them.
         using var budget = new CancellationTokenSource(loginTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             budget.Token);
 
+        // The envelope is enforced by counting the bytes that actually arrive, so the host's own
+        // request size limit is left exactly as the host set it: it is never widened, and a host
+        // that already admits less still rejects first. Lowering it here would reject a body inside
+        // the envelope, because a server that counts a chunked request counts its framing too. The
+        // media type and the schema inside the envelope stay the consumer adapter's obligation.
+        using var body = await ServiceMantleManagementSessionBodyAdmission
+            .ReadAsync(request, linked.Token)
+            .ConfigureAwait(false);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            throw CancelledByCaller(linked, cancellationToken);
+        }
+
+        switch (body.Status)
+        {
+            case ServiceMantleManagementSessionBodyAdmission
+                .ServiceMantleManagementSessionBodyStatus.Rejected:
+                // An oversized body is the request's fault and is answered before the adapter runs,
+                // whether this handler or the host counted the overrun.
+                return ServiceMantleManagementApiResults.InvalidRequest();
+            case ServiceMantleManagementSessionBodyAdmission
+                .ServiceMantleManagementSessionBodyStatus.Unavailable:
+                return ServiceMantleManagementSessionResult.Unavailable;
+        }
+
+        if (budget.Token.IsCancellationRequested)
+        {
+            // The budget was already spent reading the body, so the adapter is not called at all.
+            return ServiceMantleManagementSessionResult.Unavailable;
+        }
+
         ManagementIdentityResult? result;
         try
         {
-            result = await adapter(context, linked.Token).ConfigureAwait(false);
+            result = await InvokeAsync(context, adapter, body, linked.Token).ConfigureAwait(false);
         }
         catch
         {
@@ -146,6 +169,28 @@ internal static class ServiceMantleManagementSessionHandlers
         }
 
         return ServiceMantleManagementSessionResult.NoContent;
+    }
+
+    /// <summary>
+    /// Runs the adapter over the admitted body copy. The request's own stream and pipe feature are
+    /// put back on every exit, including a failure or a cancellation, so nothing downstream keeps
+    /// reading this handler's buffer.
+    /// </summary>
+    private static async ValueTask<ManagementIdentityResult?> InvokeAsync(
+        HttpContext context,
+        ServiceMantleManagementLoginAdapter adapter,
+        ServiceMantleManagementSessionBodyAdmission body,
+        CancellationToken loginToken)
+    {
+        body.Install(context);
+        try
+        {
+            return await adapter(context, loginToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            body.Restore();
+        }
     }
 
     /// <summary>Projects the fixed three fields of the current session.</summary>

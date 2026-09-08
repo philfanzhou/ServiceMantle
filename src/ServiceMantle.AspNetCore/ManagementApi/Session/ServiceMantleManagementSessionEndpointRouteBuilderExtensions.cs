@@ -33,12 +33,25 @@ public static class ServiceMantleManagementSessionEndpointRouteBuilderExtensions
     /// <para>
     /// Login admits at most 64 KiB of raw body and rejects a query string or a content encoding
     /// before the adapter runs; the media type and the schema inside that envelope are the adapter's
-    /// obligation. An authenticated result is converted to a ServiceMantle claims principal and
-    /// signed in on the fixed cookie scheme, and only a completed sign-in answers <c>204</c>. An
+    /// obligation. The envelope is counted while the body is read, so a request with no declared
+    /// length meets the same limit as one that declares it and a declared length below the limit
+    /// excuses nothing: at most one byte past the envelope is ever read, and it is read into memory
+    /// and never onto disk. The host's own request size limit is left as the host set it - never
+    /// widened, and never narrowed - and a host that admits less still rejects first. An oversized
+    /// body and a host's own <c>413</c> are the fixed management <c>400</c>, and neither runs the
+    /// adapter. An authenticated result is converted to a ServiceMantle claims principal and signed
+    /// in on the fixed cookie scheme, and only a completed sign-in answers <c>204</c>. An
     /// unauthenticated result answers the existing session <c>401</c>. A failed, null, or invalid
-    /// result, an adapter exception, an internal cancellation, an internal timeout, and a failed
-    /// sign-in all answer <c>503 {"errorCode":"management.session.unavailable"}</c>; a
-    /// consumer-supplied provider error code is never forwarded.
+    /// result, an adapter exception, a body read failure, an internal cancellation, an internal
+    /// timeout, and a failed sign-in all answer
+    /// <c>503 {"errorCode":"management.session.unavailable"}</c>; a consumer-supplied provider error
+    /// code is never forwarded.
+    /// </para>
+    /// <para>
+    /// The adapter is handed the admitted copy: <c>Request.Body</c> and a <c>Request.BodyReader</c>
+    /// obtained inside the call both read the complete original bytes, and the request's own stream
+    /// and body pipe feature are put back when the call ends, however it ended. One login budget
+    /// covers the body read and the adapter call together and is not reset between them.
     /// </para>
     /// <para>
     /// A sign-in that appended or replaced <c>Set-Cookie</c> values before it failed is rolled back
