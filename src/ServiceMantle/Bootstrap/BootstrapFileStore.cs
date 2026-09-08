@@ -362,8 +362,9 @@ public sealed class BootstrapFileStore
             }
 
             // A reservation that never received its content is this call's own empty file, so
-            // releasing it leaves no target behind for a create this call saw fail. A process that
-            // never reaches here leaves the empty reservation on the target path.
+            // releasing it leaves no target behind for a create this call saw fail. The release is
+            // best effort: a process that never reaches here, and a delete the operating system
+            // refuses, both leave the empty reservation on the target path.
             if (holdsReservation)
             {
                 Discard(FilePath);
@@ -389,9 +390,10 @@ public sealed class BootstrapFileStore
     /// <see cref="BootstrapFileFailureKind.Unavailable"/>, never a partially written configuration.
     /// </para>
     /// <para>
-    /// The reservation belongs to the call that took it, and only that call releases it. A process
-    /// aborted between the reservation and the rename leaves an empty file at the target path,
-    /// which the store does not reclaim: a later <see cref="Create"/> reports
+    /// The reservation belongs to the call that took it, and only that call releases it, as a best
+    /// effort. It is left on the target path when that call never reaches its release - an aborted
+    /// process - and equally when the release is refused by the operating system. The store does
+    /// not reclaim it in either case: a later <see cref="Create"/> reports
     /// <see cref="BootstrapFileFailureKind.TargetAlreadyExists"/> and a read reports
     /// <see cref="BootstrapFileFailureKind.Unavailable"/> until that file is removed.
     /// </para>
@@ -412,6 +414,14 @@ public sealed class BootstrapFileStore
         }
     }
 
+    /// <summary>
+    /// Removes a file this call owns, as a best effort.
+    /// </summary>
+    /// <remarks>
+    /// A refused delete is swallowed so the operation reports its own classified failure instead of
+    /// the cleanup's. No decision in the store depends on the delete having succeeded, so a refused
+    /// release leaves the file in place rather than changing what the caller is told.
+    /// </remarks>
     private static void Discard(string path)
     {
         try

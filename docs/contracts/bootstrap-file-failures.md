@@ -57,8 +57,10 @@ target that is demonstrably there reports `TargetAlreadyExists`; a creator that 
 why its create failed reports `Unavailable`.
 
 A create that is refused, or that fails before its content is published, releases the reservation it
-took, so a create that failed while this process was still handling it leaves no target behind. The
-release is that call's own work, not a property of the target path; see Limits.
+took. That release is the call's own work rather than a property of the target path, and it is a
+best effort: it runs only while this process is still handling the failed create, and the operating
+system can still refuse the delete. A create whose release succeeded leaves no target behind. See
+Limits for what is left when it does not.
 
 ## Limits
 
@@ -69,11 +71,14 @@ release is that call's own work, not a property of the target path; see Limits.
 - Between the exclusive reservation and the rename that publishes the content, a concurrent reader
   can observe an incomplete target. It gets `Unavailable`, never a partially written configuration
   and never `null`.
-- A reservation is released only by the process that holds it. A process aborted between the
-  exclusive create and the rename - killed, restarted, or stopped by power loss - leaves an empty
-  file at the target path. A later `Create` then reports `TargetAlreadyExists`, and `Load` and
-  `TryLoad` report `Unavailable` rather than `null`, until that file is removed. The store does not
-  reclaim an abandoned reservation.
+- A reservation is released by the call that holds it, as a best effort, so an empty file can be
+  left at the target path in two ways. The call may never reach its release: a process aborted
+  between the exclusive create and the rename - killed, restarted, or stopped by power loss. Or the
+  release itself may be refused: a delete the operating system rejects is swallowed, and the
+  operation reports its own classified failure with the empty file still in place. In both cases a
+  later `Create` reports `TargetAlreadyExists`, and `Load` and `TryLoad` report `Unavailable` rather
+  than `null`, until that file is removed. The store does not reclaim an abandoned reservation;
+  removing it is the operator's responsibility.
 - This contract adds no single-winner guarantee for concurrent updates, no cross-process update
   exclusion, no power-loss durability, and no hard time bound.
 - `Message`, `FilePath`, and `InnerException` remain local diagnostic detail. They carry no new
