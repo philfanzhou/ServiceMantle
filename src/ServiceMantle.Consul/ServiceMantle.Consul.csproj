@@ -8,6 +8,7 @@
     <PackageTags>service-management;consul;service-discovery</PackageTags>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <ProjectReference Include="../ServiceMantle/ServiceMantle.csproj" />
     <InternalsVisibleTo Include="ServiceMantle.Consul.Tests" />
   </ItemGroup>
