@@ -20,10 +20,19 @@ namespace ServiceMantle.Management;
 /// </para>
 /// <para>
 /// The adapter must not retain or return raw credentials, must not write to the response, and must
-/// not sign anything in. ServiceMantle admits at most 64 KiB of raw request body and rejects a query
-/// string or a content encoding before the adapter runs; strict media type and schema validation
-/// inside that envelope remains the adapter's obligation. An adapter that ignores its token cannot
-/// be forcibly terminated.
+/// not sign anything in. ServiceMantle admits at most 64 KiB of raw request body, counted as the
+/// body is read rather than taken from a declared length, and rejects a query string or a content
+/// encoding before the adapter runs; strict media type and schema validation inside that envelope
+/// remains the adapter's obligation. An adapter that ignores its token cannot be forcibly
+/// terminated.
+/// </para>
+/// <para>
+/// The whole admitted body is already in memory when the adapter is called, so
+/// <see cref="HttpContext.Request"/> hands it the complete copy through
+/// <see cref="HttpRequest.Body"/> or through a <see cref="HttpRequest.BodyReader"/> obtained inside
+/// the call. Reading less than all of it, or nothing at all, cannot widen the envelope. The two
+/// readers are alternatives, not a sequence: interleaving them within one call has no defined
+/// result, and the original request stream is restored when the adapter returns.
 /// </para>
 /// <para>
 /// How the adapter left is decided after it returns or throws, in a fixed order: the caller's own
@@ -59,8 +68,11 @@ public sealed class ServiceMantleManagementSessionOptions
     /// </summary>
     /// <remarks>
     /// Valid values are 100 milliseconds through 30 seconds; anything else fails before the host
-    /// starts. The budget bounds waiting on a cooperative adapter. It is not a hard wall-clock
-    /// bound: an adapter or provider that ignores its cancellation token cannot be terminated.
+    /// starts. One budget covers reading the raw request body and the adapter call that follows it,
+    /// and it is not reset between them: a login whose budget was spent reading the body answers the
+    /// fixed unavailable result and never calls the adapter. The budget bounds waiting on a
+    /// cooperative adapter and a cooperative body stream. It is not a hard wall-clock bound: an
+    /// adapter, provider, or stream that ignores its cancellation token cannot be terminated.
     /// </remarks>
     /// <remarks>
     /// The budget still takes part in the outcome once the adapter has finished: a login whose

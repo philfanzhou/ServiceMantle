@@ -44,10 +44,27 @@ no sign-out.
 ## Login
 
 ServiceMantle admits at most 64 KiB of raw request body and rejects a query string or a
-`Content-Encoding` header before the adapter runs; a declared length over the limit is the fixed
-management `400`, and a body without a declared length is bounded through the host's own request
-size feature where the server provides one. The media type and the schema inside that envelope stay
-the adapter's obligation.
+`Content-Encoding` header before the adapter runs. The envelope is counted while the body is read,
+not taken from a header: a declared length over the limit is the fixed management `400` before a
+byte is read, a body with no declared length at all - a chunked upload, for example - meets exactly
+the same limit, and a declared length below the limit excuses nothing that follows it. At most one
+byte past the envelope is ever read, that byte is what proves the overrun, and the admitted copy is
+held in memory and never written to disk.
+
+The host's own request size limit is left exactly as the host set it. ServiceMantle never widens it,
+and never narrows it either: a server that counts a chunked request counts its framing too, so
+lowering that limit to the envelope would reject a body inside the envelope. A host whose limit is
+already smaller still rejects first, and its `413` is reported as the same fixed management `400`.
+The media type and the schema inside the envelope stay the adapter's obligation.
+
+The adapter is called with the whole admitted body already in memory. `Request.Body` and a
+`Request.BodyReader` obtained inside that call both read the complete original bytes, whether the
+adapter reads synchronously, asynchronously, through `CopyToAsync`, or through a `StreamReader`;
+they are alternatives rather than a sequence, and interleaving them within one call has no defined
+result. An adapter that reads only a prefix, or nothing at all, cannot widen the envelope, because
+the decision was already made. When the call ends - returning, throwing, or cancelled - the
+request's own body stream and body pipe feature are put back, and only the copy this endpoint
+created is released.
 
 The adapter receives the `HttpContext` and a token that is the request token additionally bounded by
 the login budget (10 seconds by default). It places credentials only into its own trusted scoped
@@ -60,7 +77,8 @@ or sign anything in.
 | Authenticated and `SignInAsync` completed | `204`, empty body | One fixed-scheme cookie is issued |
 | Unauthenticated | `401 {"errorCode":"management.session.unauthenticated"}` | None |
 | Failed, null, undefined status, authenticated without an identity | `503 {"errorCode":"management.session.unavailable"}` | None |
-| Adapter exception, internal cancellation, internal timeout | Same `503` | None |
+| Raw body over the envelope, or the host's own `413` | `400 management.request.invalid` | None; no adapter runs |
+| Body read failure, adapter exception, internal cancellation, internal timeout | Same `503` | None |
 | Response already started before the sign-in | Same `503` | None; no sign-in is attempted |
 | `SignInAsync` failed | Same `503` | Whatever it appended or replaced is rolled back |
 | Caller cancellation | The original `RequestAborted` token propagates | None |
@@ -122,8 +140,20 @@ deletes this client's own host-scoped cookie and nothing else.
   defines no universal credential schema.
 - The 64 KiB limit is ServiceMantle's admission envelope only. The consumer adapter must still parse
   its own media type and schema strictly.
-- The login budget bounds waiting on a cooperative adapter. It is not a hard wall-clock bound: an
-  adapter or provider that ignores its cancellation token cannot be forcibly terminated.
+- One login budget covers reading the raw body and the adapter call together and is not reset
+  between them. A login whose budget is spent while the body is still arriving answers the fixed
+  unavailable result and never calls the adapter.
+- The login budget bounds waiting on a cooperative adapter and a cooperative body stream. It is not
+  a hard wall-clock bound: an adapter, provider, or request stream that ignores its cancellation
+  token cannot be forcibly terminated.
+- The envelope covers the raw body bytes this endpoint reads and holds. It is not a promise about
+  the bytes a client sent on the wire, the number of connections, process memory, the exact size of
+  every allocation, or zeroing credential memory. A body an upstream component already consumed, a
+  stream or reader a component retained before the handler ran, a pre-parsed form, and same-process
+  code that bypasses `Request.Body` and the body pipe feature are outside the adapter's supported
+  surface.
+- A request the server or a proxy rejects before it reaches the handler, or one whose response has
+  already started, is not rewritten into the fixed `400` or `503`.
 - ServiceMantle's negative credential guarantee covers its own parsers, fixed responses, projections,
   and diagnostics. It does not cover a consumer accessor, provider, or identity system, third-party
   request logging, or raw request capture.
