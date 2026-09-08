@@ -21,7 +21,7 @@ env:
 
 jobs:
   release-tool-windows:
-    name: Verify ReleaseTool process isolation (Windows)
+    name: Verify Windows-specific behavior
     runs-on: windows-2025
     timeout-minutes: 10
     steps:
@@ -43,6 +43,22 @@ jobs:
           --diagnostic
           --diagnostic-synchronous-write
           --diagnostic-output-directory artifacts/test-diagnostics/release-tool-windows
+
+      # The Bootstrap file store publishes a new file with a hard link, which is a different
+      # operating system call per platform - CreateHardLinkW here, link() on Unix. The full suite
+      # runs on Linux only, so the Windows half of that call would otherwise never be executed.
+      - name: Verify Bootstrap file publishing
+        run: >-
+          dotnet test
+          --project tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj
+          --configuration Release
+          --timeout 5m
+          --filter-class "ServiceMantle.Tests.Bootstrap.*"
+          --minimum-expected-tests 1
+          --zero-tests-policy strict
+          --diagnostic
+          --diagnostic-synchronous-write
+          --diagnostic-output-directory artifacts/test-diagnostics/bootstrap-windows
 
       - name: Upload test diagnostics
         if: ${{ failure() || cancelled() }}

@@ -192,12 +192,10 @@ public sealed class BootstrapFileStore
     /// <param name="configuration">The configuration to persist.</param>
     /// <exception cref="ArgumentNullException"><paramref name="configuration"/> is null.</exception>
     /// <exception cref="BootstrapException">
-    /// The target exists or the file cannot be written. An existing target the store observed is
-    /// <see cref="BootstrapFileFailureKind.TargetAlreadyExists"/>, including the target a
-    /// concurrent creator claimed first: the exclusive create that decides the single winner leaves
-    /// every loser looking at a target that is demonstrably there. A create that failed for any
-    /// cause the store could not establish - including a conflict it could no longer prove - is
-    /// <see cref="BootstrapFileFailureKind.Unavailable"/>.
+    /// The target exists or the file cannot be written. A target the operating system refused to
+    /// publish over is <see cref="BootstrapFileFailureKind.TargetAlreadyExists"/>, including the
+    /// target a concurrent creator won first; every other failure, including a link the file system
+    /// refused, is <see cref="BootstrapFileFailureKind.Unavailable"/>.
     /// </exception>
     public void Create(BootstrapConfiguration configuration) =>
         Persist(configuration, replace: false);
@@ -309,7 +307,6 @@ public sealed class BootstrapFileStore
 
         var directoryPath = Path.GetDirectoryName(FilePath)!;
         string? temporaryPath = null;
-        var holdsReservation = false;
 
         try
         {
@@ -320,8 +317,6 @@ public sealed class BootstrapFileStore
             else
             {
                 EnsurePrivateDirectory(directoryPath);
-                ReserveNewFile();
-                holdsReservation = true;
             }
 
             temporaryPath = Path.Combine(
@@ -333,16 +328,16 @@ public sealed class BootstrapFileStore
             if (replace)
             {
                 File.Replace(temporaryPath, FilePath, destinationBackupFileName: null);
+
+                // The replace consumed the temporary name, so there is nothing left to remove.
+                temporaryPath = null;
             }
             else
             {
-                // Overwriting is safe here and only here: the destination is the empty reservation
-                // this call owns, and no other creator can hold it.
-                File.Move(temporaryPath, FilePath, overwrite: true);
-                holdsReservation = false;
+                // The content is complete before the target exists at all. The temporary name stays
+                // set so the finally block removes this call's second name for the published file.
+                PublishNewFile(temporaryPath);
             }
-
-            temporaryPath = null;
         }
         catch (BootstrapException)
         {
@@ -358,61 +353,59 @@ public sealed class BootstrapFileStore
         }
         finally
         {
+            // The temporary file is only ever this call's own work, whether the operation failed
+            // before it was published or succeeded and left it as a second name for the target. A
+            // refused delete leaves that file beside the target and changes nothing else; the
+            // target path itself is never removed here.
             if (temporaryPath is not null)
             {
                 Discard(temporaryPath);
-            }
-
-            // A reservation that never received its content is this call's own empty file, so
-            // releasing it leaves no target behind for a create this call saw fail. The release is
-            // best effort: a process that never reaches here, and a delete the operating system
-            // refuses, both leave the empty reservation on the target path.
-            if (holdsReservation)
-            {
-                Discard(FilePath);
             }
         }
     }
 
     /// <summary>
-    /// Claims the create target with the operating system's atomic exclusive create.
+    /// Publishes the completed file at the create target, which must still be free.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This, not a preceding existence check, is what decides the single winner among concurrent
-    /// creators. <see cref="File.Move(string, string)"/> without overwrite is a check followed by a
+    /// This one operating system step both decides the single winner among concurrent creators and
+    /// makes the file appear complete. It replaces a preceding existence check, which cannot do
+    /// either: <see cref="File.Move(string, string)"/> without overwrite is a check followed by a
     /// rename on Unix, so two creators can both observe an absent target and both rename, and the
-    /// second silently replaces the first - which would break the promise that
-    /// <see cref="Create"/> never overwrites an existing file. An exclusive create is performed by
-    /// the operating system in one step, so exactly one caller can hold the target.
+    /// second silently replaces the first - breaking the promise that <see cref="Create"/> never
+    /// overwrites an existing file.
     /// </para>
     /// <para>
-    /// The reservation is empty and is renamed over by the completed file. A reader that observes
-    /// the target during that window sees an incomplete file and gets
-    /// <see cref="BootstrapFileFailureKind.Unavailable"/>, never a partially written configuration.
+    /// Nothing is placed at the target before the content is complete, so a create that fails, or a
+    /// process that dies at any point, leaves the target exactly as it found it. What can be left
+    /// behind is the temporary file beside it, which no operation reads and a later create replaces
+    /// with a fresh name.
     /// </para>
     /// <para>
-    /// The reservation belongs to the call that took it, and only that call releases it, as a best
-    /// effort. It is left on the target path when that call never reaches its release - an aborted
-    /// process - and equally when the release is refused by the operating system. The store does
-    /// not reclaim it in either case: a later <see cref="Create"/> reports
-    /// <see cref="BootstrapFileFailureKind.TargetAlreadyExists"/> and a read reports
-    /// <see cref="BootstrapFileFailureKind.Unavailable"/> until that file is removed.
+    /// A refusal is classified only from the operating system's own answer. A target that is
+    /// already taken is reported as such by the link itself, which is positive evidence rather than
+    /// an inference from a separate observation; every other refusal, including a file system that
+    /// does not support links at all, leaves the cause unestablished and is
+    /// <see cref="BootstrapFileFailureKind.Unavailable"/>.
     /// </para>
     /// </remarks>
-    private void ReserveNewFile()
+    private void PublishNewFile(string temporaryPath)
     {
-        try
+        switch (HardLinkPublisher.TryPublish(temporaryPath, FilePath, out var errorCode))
         {
-            using var reservation = OpenNewPrivateFile(FilePath);
-        }
-        catch (IOException exception) when (File.Exists(FilePath))
-        {
-            // Positive evidence: the exclusive create failed and the target is demonstrably there.
-            throw Failure(
-                "already exists and cannot be overwritten by Create.",
-                exception,
-                BootstrapFileFailureKind.TargetAlreadyExists);
+            case HardLinkResult.Published:
+                return;
+
+            case HardLinkResult.TargetAlreadyExists:
+                throw Failure(
+                    "already exists and cannot be overwritten by Create.",
+                    failureKind: BootstrapFileFailureKind.TargetAlreadyExists);
+
+            default:
+                throw Failure(
+                    $"could not be published because the file system refused to link it "
+                    + $"(operating system error {errorCode}).");
         }
     }
 

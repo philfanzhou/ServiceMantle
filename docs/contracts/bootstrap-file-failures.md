@@ -32,7 +32,7 @@ operation failed. `BootstrapConfigurationManager` passes the exception through u
 | `TryLoad` on a missing file | No exception; returns `null` |
 | `Load` on a file the open reported as not found | `TargetMissing` |
 | `Replace` on a file the probe open reported as not found | `TargetMissing` |
-| `Create` on a target the store observed | `TargetAlreadyExists` |
+| `Create` on a target the operating system refused to link over | `TargetAlreadyExists` |
 | Empty file, damaged JSON, unsupported format version, invalid or missing fields | `Unavailable` |
 | A file that belongs to a different service | `Unavailable` |
 | A write requested for a different service | `Unavailable` |
@@ -49,18 +49,19 @@ evidence for `TargetMissing`. `Load` reaches that value because the read open it
 file or its directory as not found, and `Replace` opens the target for the same reason. A denied or
 failed probe leaves the cause unestablished and is reported as `Unavailable`.
 
-`Create` never overwrites an existing file, and the operating system's atomic exclusive create is
-what decides the single winner among concurrent creators - not a preceding existence check. The
-store claims the target with an exclusive create, writes the complete file to a temporary path, and
-renames it over the reservation it already owns. A creator whose exclusive create failed against a
-target that is demonstrably there reports `TargetAlreadyExists`; a creator that could not establish
-why its create failed reports `Unavailable`.
+`Create` never overwrites an existing file, and one operating system step decides the single winner
+among concurrent creators - not a preceding existence check. The store writes the complete file to a
+temporary path beside the target and then links that file to the target, which the operating system
+refuses rather than replaces when the target is already taken. A creator whose link was refused
+because the target is taken reports `TargetAlreadyExists`, on the operating system's own answer
+rather than on a separate observation; a creator whose link was refused for any other reason,
+including a file system that does not support links, reports `Unavailable`.
 
-A create that is refused, or that fails before its content is published, releases the reservation it
-took. That release is the call's own work rather than a property of the target path, and it is a
-best effort: it runs only while this process is still handling the failed create, and the operating
-system can still refuse the delete. A create whose release succeeded leaves no target behind. See
-Limits for what is left when it does not.
+Nothing is placed at the target before the content is complete. A create that fails, and a process
+that dies at any point during one, therefore leaves the target exactly as it found it: a failed
+create is indistinguishable from one that never ran, and a retry is never blocked by the remains of
+an earlier attempt. What can be left behind is the temporary file beside the target, which no
+operation reads and which never affects what a later call reports.
 
 ## Limits
 
@@ -68,17 +69,16 @@ Limits for what is left when it does not.
   matching error strings.
 - The state a check observed is not held: an external process may create, replace, or delete the
   target immediately afterwards.
-- Between the exclusive reservation and the rename that publishes the content, a concurrent reader
-  can observe an incomplete target. It gets `Unavailable`, never a partially written configuration
-  and never `null`.
-- A reservation is released by the call that holds it, as a best effort, so an empty file can be
-  left at the target path in two ways. The call may never reach its release: a process aborted
-  between the exclusive create and the rename - killed, restarted, or stopped by power loss. Or the
-  release itself may be refused: a delete the operating system rejects is swallowed, and the
-  operation reports its own classified failure with the empty file still in place. In both cases a
-  later `Create` reports `TargetAlreadyExists`, and `Load` and `TryLoad` report `Unavailable` rather
-  than `null`, until that file is removed. The store does not reclaim an abandoned reservation;
-  removing it is the operator's responsibility.
+- A reader never observes a partially written target from a create. The target becomes a second
+  name for a file that is already complete, so a concurrent reader sees the target absent or sees
+  the finished file.
+- `Create` requires a directory whose file system supports links, which the temporary file and the
+  target always share because they sit side by side. A file system that refuses links cannot
+  publish a new bootstrap file at all, and reports `Unavailable` rather than falling back to a
+  publish that could overwrite a concurrent creator.
+- A create that fails may leave its temporary file beside the target, named
+  `.{file name}.{random}.tmp`. It is never read, never consulted for any classification, and never
+  reused; removing it is housekeeping, not recovery. `Replace` consumes its temporary file instead.
 - This contract adds no single-winner guarantee for concurrent updates, no cross-process update
   exclusion, no power-loss durability, and no hard time bound.
 - `Message`, `FilePath`, and `InnerException` remain local diagnostic detail. They carry no new

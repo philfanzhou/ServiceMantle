@@ -27,8 +27,8 @@ public enum BootstrapFileFailureKind
     Unavailable = 0,
 
     /// <summary>
-    /// The operation required a target that does not yet exist, and the store observed an existing
-    /// target. Produced by a create that refuses to overwrite.
+    /// The operation required a target that does not yet exist, and the operating system refused to
+    /// publish over the one that is there. Produced by a create that refuses to overwrite.
     /// </summary>
     TargetAlreadyExists = 1,
 

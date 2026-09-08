@@ -161,18 +161,11 @@ public sealed class BootstrapFileFailureKindTests
         var winners = results.Where(result => result.Failure is null).ToArray();
         Assert.Single(winners);
 
+        // The link itself reports the taken target, so every loser carries the operating system's
+        // own evidence of the conflict rather than a separate observation it could lose a race to.
         var losers = results.Where(result => result.Failure is not null).ToArray();
-        foreach (var loser in losers)
-        {
-            // Losing the exclusive create is classified TargetAlreadyExists when the store
-            // observed the target; a conflict it could no longer prove stays Unavailable.
-            Assert.Contains(
-                loser.Failure!.FailureKind,
-                new[] { BootstrapFileFailureKind.TargetAlreadyExists, BootstrapFileFailureKind.Unavailable });
-        }
-
-        // The exclusive reservation gives every loser positive evidence of the conflict.
-        Assert.Contains(losers, loser => loser.Failure!.FailureKind == BootstrapFileFailureKind.TargetAlreadyExists);
+        Assert.All(losers, loser =>
+            Assert.Equal(BootstrapFileFailureKind.TargetAlreadyExists, loser.Failure!.FailureKind));
 
         var published = stores[0].Load();
         Assert.Equal($"Host=db;Password=writer-{winners[0].Index}", published.Database.ConnectionString);
@@ -227,15 +220,73 @@ public sealed class BootstrapFileFailureKindTests
     }
 
     [Fact]
-    public void A_create_that_fails_after_reserving_releases_the_reservation()
+    public async Task A_create_never_exposes_an_incomplete_target()
     {
         using var directory = TemporaryDirectory.Create();
-        var configurationDirectory = Path.Combine(directory.Path, "abandoned");
+
+        // A bootstrap file large enough that a publish which claims the target before writing the
+        // content would leave it readable but incomplete for a window a reader can land in.
+        var configuration = CreateConfiguration(
+            connectionString: "Host=db;Password=" + new string('p', 400_000));
+        var shortSightings = 0;
+        var totalSightings = 0;
+
+        for (var round = 0; round < 10; round++)
+        {
+            var store = CreateStore(directory, $"observed-{round}");
+            using var stopping = new CancellationTokenSource();
+            using var polling = new ManualResetEventSlim();
+            var lengths = new List<long>();
+
+            var reader = Task.Run(
+                () =>
+                {
+                    while (!stopping.IsCancellationRequested)
+                    {
+                        var file = new FileInfo(store.FilePath);
+                        if (file.Exists)
+                        {
+                            lengths.Add(file.Length);
+                        }
+
+                        polling.Set();
+                    }
+                },
+                TestContext.Current.CancellationToken);
+
+            // The reader must already be sampling, or the create can finish before it ever looks.
+            polling.Wait(TestContext.Current.CancellationToken);
+            store.Create(configuration);
+            await stopping.CancelAsync();
+            await reader;
+
+            var published = new FileInfo(store.FilePath).Length;
+            totalSightings += lengths.Count;
+            shortSightings += lengths.Count(length => length != published);
+            Assert.Equal(
+                configuration.Database.ConnectionString,
+                store.Load().Database.ConnectionString);
+            Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(store.FilePath)!, "*.tmp"));
+        }
+
+        // The target only ever becomes a second name for a file that is already complete, so a
+        // reader that saw it at all saw the finished length. Publishing by claiming the path first
+        // and writing afterwards is what this rejects, and the sighting count records that the
+        // reader really was watching rather than passing the case by never looking.
+        Assert.True(totalSightings > 0, "The reader observed the target in no round.");
+        Assert.Equal(0, shortSightings);
+    }
+
+    [Fact]
+    public void A_create_leaves_the_target_free_for_a_retry_when_it_fails()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var configurationDirectory = Path.Combine(directory.Path, "retried");
         Directory.CreateDirectory(configurationDirectory);
 
         // The content is written beside the target as ".{file name}.{12 random characters}.tmp", so
         // a target name that fits the file system's component limit while that longer name does not
-        // fails the create after the reservation was already taken.
+        // fails the create at the write, which is the last step before the target would be touched.
         const string suffix = ".bootstrap.json";
         var fileName = new string('n', 245 - suffix.Length) + suffix;
         var temporaryName = $".{fileName}.{Path.GetRandomFileName()}.tmp";
@@ -245,7 +296,7 @@ public sealed class BootstrapFileFailureKindTests
         {
             // Windows applies its length limits to the whole path rather than to one component, and
             // a file system with a longer component limit accepts both names, so neither can place
-            // the failure between the reservation and the write.
+            // a failure after the content is written but before the target would be published.
             return;
         }
 
@@ -256,12 +307,32 @@ public sealed class BootstrapFileFailureKindTests
 
         var failure = Assert.Throws<BootstrapException>(() => store.Create(CreateConfiguration()));
 
-        // The reservation is the target path itself, so the declared release is observable only as
-        // the absence of that file after a create that had already claimed it.
+        // Nothing is placed at the target before the content is complete, so a failed create is
+        // indistinguishable from one that never ran: no file to remove, and a retry is unblocked.
         Assert.Equal(BootstrapFileFailureKind.Unavailable, failure.FailureKind);
         Assert.False(File.Exists(store.FilePath));
         Assert.Null(store.TryLoad());
         Assert.Empty(Directory.GetFileSystemEntries(configurationDirectory));
+    }
+
+    [Fact]
+    public void A_published_file_stays_owner_only()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // Unix permission bits have no portable Windows equivalent to assert.
+            return;
+        }
+
+        using var directory = TemporaryDirectory.Create();
+        var store = CreateStore(directory, "private");
+        store.Create(CreateConfiguration());
+
+        // The target is a name for the file the store wrote privately, so publishing it must not
+        // widen the mode the content was created with.
+        Assert.Equal(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite,
+            File.GetUnixFileMode(store.FilePath));
     }
 
     [Fact]
