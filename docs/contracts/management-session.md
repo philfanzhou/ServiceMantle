@@ -61,8 +61,22 @@ or sign anything in.
 | Unauthenticated | `401 {"errorCode":"management.session.unauthenticated"}` | None |
 | Failed, null, undefined status, authenticated without an identity | `503 {"errorCode":"management.session.unavailable"}` | None |
 | Adapter exception, internal cancellation, internal timeout | Same `503` | None |
-| Response already started, or `SignInAsync` failed | Same `503` | No partial cookie |
+| Response already started before the sign-in | Same `503` | None; no sign-in is attempted |
+| `SignInAsync` failed | Same `503` | Whatever it appended or replaced is rolled back |
 | Caller cancellation | The original `RequestAborted` token propagates | None |
+
+### Sign-in rollback
+
+The response's own `Set-Cookie` values are copied before `SignInAsync` starts, and every failure exit
+of that sign-in restores the copy before the caller's cancellation is answered. The rollback removes
+the complete or chunked ticket the sign-in appended, and undoes a replacement of the whole header,
+including the case where the cookie was written by the handler before a `SignedIn` callback threw.
+The cookies the response already carried - unrelated ones and an earlier management cookie alike -
+come back with their original count, order, and values, and no `SignOutAsync` compensation is used.
+The snapshot belongs to the one request that took it. If the snapshot cannot be read, no sign-in is
+started at all; if the restore cannot be applied, the connection is aborted rather than completed, so
+a response still carrying part of that ticket is never sent and the original exception is not
+exposed.
 
 The unauthenticated `401` reuses the existing session error code, status, and content type. It is
 written directly instead of through a challenge, so an anonymous login response cannot reveal
@@ -113,5 +127,16 @@ deletes this client's own host-scoped cookie and nothing else.
 - ServiceMantle's negative credential guarantee covers its own parsers, fixed responses, projections,
   and diagnostics. It does not cover a consumer accessor, provider, or identity system, third-party
   request logging, or raw request capture.
+- The rollback covers `Set-Cookie` values a synchronous or asynchronous sign-in appended or replaced
+  in a writable response header collection before it threw. It does not repair a response that has
+  already started, undo a ticket copied elsewhere, revoke an external `ITicketStore` side effect, or
+  compensate for an adapter, which must not write to the response at all.
+- It does not defend against same-process code that bypasses the response headers, modifies the
+  response concurrently, or schedules its own callback to issue a ticket after the failure. For a
+  header collection that refuses or discards the restore, the fixed `503` is not promised: that
+  response is aborted instead.
+- Cookies present before the sign-in are kept. A normal sliding renewal of an earlier session that
+  was already scheduled is not this login's ticket; the cookie handler suppresses that renewal for a
+  request it was asked to sign in.
 - `X-ServiceMantle-Request` and the default `SameSite=Strict` cookie are a limited browser CSRF
   mitigation, not a CORS, TLS, origin, or proxy policy.

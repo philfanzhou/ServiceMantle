@@ -37,8 +37,17 @@ public static class ServiceMantleManagementSessionEndpointRouteBuilderExtensions
     /// signed in on the fixed cookie scheme, and only a completed sign-in answers <c>204</c>. An
     /// unauthenticated result answers the existing session <c>401</c>. A failed, null, or invalid
     /// result, an adapter exception, an internal cancellation, an internal timeout, and a failed
-    /// sign-in all answer <c>503 {"errorCode":"management.session.unavailable"}</c> and send no
-    /// partial cookie; a consumer-supplied provider error code is never forwarded.
+    /// sign-in all answer <c>503 {"errorCode":"management.session.unavailable"}</c>; a
+    /// consumer-supplied provider error code is never forwarded.
+    /// </para>
+    /// <para>
+    /// A sign-in that appended or replaced <c>Set-Cookie</c> values before it failed is rolled back
+    /// to the snapshot taken before it started, so a failed login sends no complete or chunked part
+    /// of that ticket and keeps the cookies the response already carried, in their original count
+    /// and order. The rollback runs before the caller's cancellation is answered and uses no
+    /// sign-out compensation. A response that has already started is left as sent, an unreadable
+    /// snapshot starts no sign-in, and a restore that cannot be applied aborts the connection
+    /// instead of completing a response that still carries part of the ticket.
     /// </para>
     /// <para>
     /// The current-session read answers exactly <c>authenticated</c>, the UTC <c>expiresAtUtc</c>,
