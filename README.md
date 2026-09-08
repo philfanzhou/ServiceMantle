@@ -2204,11 +2204,18 @@ services.AddServiceMantleConsul(options =>
 Every value is validated when the capability is registered, so an out-of-range or conflicting value
 fails before the host is built and therefore before any sampler, timer, or remote call exists.
 Stop cancels the sampler and every delay first, forbids any new register, and deregisters within the
-cooperative shutdown budget. That budget is total: it starts when stop begins, before the owner is
-woken, so whatever an in-flight operation spends settling is deducted from what the cleanup
-deregistration has left. An in-flight register is cancelled, because stop may never start one; an
-in-flight deregister is awaited instead, because it is already doing what stop wants and cancelling
-it would discard a `Success` and force the same call to be repeated. If the budget expires or the
+cooperative shutdown budget. That budget starts when stop begins, before the owner is woken, so
+whatever an in-flight operation spends settling is deducted from what the cleanup deregistration has
+left, and a cleanup retry delay is cut short by the remaining budget rather than by a fresh one. It
+does not shorten the operation that is already in flight: that call keeps `ConsulOperationBudget` as
+its own cancellation deadline, and one that already ran for part of that budget settles within
+whatever is left of it. For cooperative dependencies the bound on a stop is therefore
+`max(ConsulOperationBudget, ShutdownBudget)`, not `ShutdownBudget` alone - the legal combination
+`ConsulOperationBudget = 30 s` with `ShutdownBudget = 1 s` can take about 30 seconds - and it is a
+cooperative model rather than exact scheduling time or a wall-clock bound over arbitrary cleanup
+code. An in-flight register is cancelled, because stop may never start one; an in-flight deregister
+is awaited instead, because it is already doing what stop wants and cancelling it would discard a
+`Success` and force the same call to be repeated. If the budget expires or the
 `StopAsync` caller cancels, the lifecycle stops creating operations and completes **without**
 claiming remote absence. The session is disposed once, after any cooperative in-flight operation
 settles; a disposal failure is a safe classification and is neither retried nor treated as a

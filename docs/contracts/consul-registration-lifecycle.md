@@ -115,6 +115,19 @@ eventual successful registration or a maximum recovery time.
 The existing default HTTP client retains its own 10-second timeout. The lifecycle operation budget
 is an additional ownership bound and is also applied to replacement clients.
 
+The shutdown total budget and the Consul operation budget run on the same timeline but end different
+things. The shutdown budget starts when stop begins, before the owner loop is woken, and it bounds
+the cleanup deregistration: the time an already in-flight operation spends settling is deducted from
+what the cleanup has left, and a cleanup retry delay is cut short by the remaining budget rather than
+restarted with a fresh one. It does not shorten the operation that is already in flight, whose own
+cancellation deadline stays the Consul operation budget; an operation that already ran for part of
+that budget settles within whatever is left of it, which is a tighter bound than a full one. For a
+cooperative client and decision source, the resulting bound on one stop is therefore
+`max(Consul operation budget, shutdown total budget)`, not the shutdown budget alone: the legal
+combination `Consul operation budget = 30 s` with `shutdown total budget = 1 s` can take about 30
+seconds. That model is a cooperative bound, not exact scheduling time and not a wall-clock bound over
+arbitrary cleanup code.
+
 ## Transition matrix
 
 The tables below are normative. “Latest desire” includes any readiness event queued while an
@@ -185,13 +198,15 @@ starts the shutdown total budget. No new register operation may start after this
 | `Registered/Present` | Start deregister and retry within the remaining shutdown budget |
 | `Backoff` with `Present` or `Unknown` | Cancel delay; start deregister within the remaining budget |
 | `Registering` | Cancel register, await settlement, then deregister because presence may be `Present` or `Unknown` |
-| `Deregistering` | Await the current attempt; retry only while budget remains |
+| `Deregistering` | Await the current attempt under its own operation budget; retry only while shutdown budget remains |
 | `NotReady/Unknown` | Attempt deregistration within the remaining budget |
 
 If deregistration succeeds, the lifecycle disposes the session and completes. If the internal
 shutdown budget expires, it stops creating operations, emits a safe `shutdown_timeout`
 classification, disposes only after any cooperative in-flight operation has settled, and completes
-without claiming remote absence. If the `StopAsync` caller token cancels first, the original token is
+without claiming remote absence. An expired shutdown budget therefore does not end an operation that
+was already in flight when stop began: that attempt settles on its own operation budget, so a stop
+can outlast the shutdown budget by up to one operation budget. If the `StopAsync` caller token cancels first, the original token is
 propagated and no new work starts; best-effort ownership cleanup follows the same non-overlap rule.
 
 ## Failure and diagnostic classification
@@ -260,6 +275,10 @@ against a real Consul cluster.
   non-cooperative replacement client cannot be rolled back or forcibly completed.
 - Total retry attempts over the process lifetime and recovery time are not bounded. Per-call,
   per-delay, concurrency, and cooperative shutdown budgets are bounded as specified above.
+- The shutdown total budget is not a hard wall-clock bound on `StopAsync`. With a cooperative client
+  and decision source the bound is `max(Consul operation budget, shutdown total budget)`; a client,
+  factory, scope disposal, or `Dispose` that ignores cancellation has no time bound at all, and none
+  of them is abandoned or overlapped to buy one.
 - There is no configuration hot reload, cross-instance coordination, idempotency key beyond the
   stable Consul registration ID, or compensation for an unknown result.
 - The lifecycle does not turn readiness contributors into schedulers and does not trigger setup,
