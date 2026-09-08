@@ -719,15 +719,20 @@ public class DatabaseMigrationOrchestratorTests
         // Shared state: simulates a real database
         var sharedState = new SharedDatabaseState();
 
+        // Both instances contend over one lock space this test owns; no other test can enter it.
+        var lockSpace = new FakeMigrationLockSpace();
+
         // First instance
         var executor1 = new SharedStateExecutor(sharedState);
-        var lockProvider = new FakeMigrationLockProvider();
-        var registry = new DatabaseMigrationLockProviderRegistry([lockProvider], DatabaseProviderIdResolver.Empty);
-        var orchestrator1 = new DatabaseMigrationOrchestrator(executor1, registry);
+        var lockProvider1 = new FakeMigrationLockProvider(lockSpace: lockSpace);
+        var registry1 = new DatabaseMigrationLockProviderRegistry([lockProvider1], DatabaseProviderIdResolver.Empty);
+        var orchestrator1 = new DatabaseMigrationOrchestrator(executor1, registry1);
 
         // Second instance
         var executor2 = new SharedStateExecutor(sharedState);
-        var orchestrator2 = new DatabaseMigrationOrchestrator(executor2, registry);
+        var lockProvider2 = new FakeMigrationLockProvider(lockSpace: lockSpace);
+        var registry2 = new DatabaseMigrationLockProviderRegistry([lockProvider2], DatabaseProviderIdResolver.Empty);
+        var orchestrator2 = new DatabaseMigrationOrchestrator(executor2, registry2);
 
         // Run concurrently
         var task1 = orchestrator1.OrchestrateMigrationAsync(
