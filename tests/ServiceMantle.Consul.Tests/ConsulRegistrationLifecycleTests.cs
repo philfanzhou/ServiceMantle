@@ -425,9 +425,12 @@ public sealed class ConsulRegistrationLifecycleTests
             "the failed register never entered backoff");
         using var abort = new CancellationTokenSource();
         await abort.CancelAsync();
-        await harness.StopWithTokenAsync(abort.Token);
+        var cancelled = await Assert.ThrowsAsync<OperationCanceledException>(
+            () => harness.StopWithTokenAsync(abort.Token));
 
-        // No absence is claimed, no register is started, and the session is still released.
+        // The caller's own token is the stop result; no absence is claimed, no register is started,
+        // and the session is still released.
+        Assert.Equal(abort.Token, cancelled.CancellationToken);
         Assert.Equal(ConsulRemotePresence.Unknown, harness.Lifecycle.Presence);
         Assert.Equal(1, client.Registers);
         Assert.True(harness.Client.Disposed);
