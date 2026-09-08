@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 using ServiceMantle.Management;
 
@@ -93,6 +94,7 @@ internal static class ServiceMantleManagementSessionHandlers
             return ServiceMantleManagementSessionResult.Unavailable;
         }
 
+        string?[] snapshot;
         try
         {
             if (context.Response.HasStarted)
@@ -100,6 +102,18 @@ internal static class ServiceMantleManagementSessionHandlers
                 return ServiceMantleManagementSessionResult.Unavailable;
             }
 
+            // The response's own Set-Cookie values are captured before the sign-in, so a failure
+            // has an exact state to return to instead of guessing which values were this ticket's.
+            snapshot = SetCookieSnapshot(context.Response);
+        }
+        catch
+        {
+            // Without a snapshot a failed sign-in could not be rolled back, so none is started.
+            return ServiceMantleManagementSessionResult.Unavailable;
+        }
+
+        try
+        {
             await context.SignInAsync(
                     ServiceMantleManagementSessionDefaults.AuthenticationScheme,
                     result.Identity.ToClaimsPrincipal())
@@ -107,13 +121,28 @@ internal static class ServiceMantleManagementSessionHandlers
         }
         catch
         {
+            // The rollback is the shared exit of every sign-in failure and runs before the caller's
+            // cancellation is answered, so a cancelled caller still gets its own token back. A
+            // response that already started keeps what it sent: repairing it is a declared
+            // non-guarantee, and no second body is written for it either.
+            var terminated = !context.Response.HasStarted &&
+                !TryRestoreSetCookie(context.Response, snapshot);
+            if (terminated)
+            {
+                // The response may still carry a complete or chunked part of this failed ticket and
+                // cannot be repaired, so the connection is aborted rather than completed.
+                context.Abort();
+            }
+
             if (cancellationToken.IsCancellationRequested)
             {
                 throw CancelledByCaller(linked, cancellationToken);
             }
 
             // A failed sign-in sends no cookie, so the caller must not be told it has a session.
-            return ServiceMantleManagementSessionResult.Unavailable;
+            return terminated
+                ? ServiceMantleManagementSessionResult.Terminated
+                : ServiceMantleManagementSessionResult.Unavailable;
         }
 
         return ServiceMantleManagementSessionResult.NoContent;
@@ -189,6 +218,66 @@ internal static class ServiceMantleManagementSessionHandlers
         }
 
         return ServiceMantleManagementSessionResult.NoContent;
+    }
+
+    /// <summary>
+    /// Copies the response's current <c>Set-Cookie</c> values out of the header. The copy is what a
+    /// failed sign-in is restored to, so it must not share the array the sign-in appends to or
+    /// replaces.
+    /// </summary>
+    private static string?[] SetCookieSnapshot(HttpResponse response)
+    {
+        var existing = response.Headers[HeaderNames.SetCookie];
+        var snapshot = new string?[existing.Count];
+        for (var index = 0; index < snapshot.Length; index++)
+        {
+            snapshot[index] = existing[index];
+        }
+
+        return snapshot;
+    }
+
+    /// <summary>
+    /// Puts the snapshot back, dropping every value this sign-in appended or replaced and keeping
+    /// the unrelated cookies that were already there, in their original count and order. It reports
+    /// success only once the response reads the snapshot back: a header dictionary that refused or
+    /// ignored the restore still holds the failed ticket.
+    /// </summary>
+    private static bool TryRestoreSetCookie(HttpResponse response, string?[] snapshot)
+    {
+        try
+        {
+            if (snapshot.Length == 0)
+            {
+                response.Headers.Remove(HeaderNames.SetCookie);
+            }
+            else
+            {
+                response.Headers[HeaderNames.SetCookie] = new StringValues(snapshot);
+            }
+
+            var restored = response.Headers[HeaderNames.SetCookie];
+            if (restored.Count != snapshot.Length)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < snapshot.Length; index++)
+            {
+                if (!string.Equals(restored[index], snapshot[index], StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            // An unwritable or throwing header dictionary leaves the ticket where it is; the caller
+            // terminates the response instead of sending it.
+            return false;
+        }
     }
 
     /// <summary>

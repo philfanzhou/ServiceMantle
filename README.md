@@ -425,8 +425,12 @@ still receives no credential object. Only an authenticated result followed by a 
 fixed-scheme sign-in answers `204` with one cookie; an unauthenticated result keeps the existing
 session `401`; a failed, null or invalid result, an adapter exception, an internal cancellation, an
 internal timeout and a failed sign-in all answer
-`503 {"errorCode":"management.session.unavailable"}` with no partial cookie, and a consumer-supplied
-provider error code is never forwarded.
+`503 {"errorCode":"management.session.unavailable"}`, and a consumer-supplied provider error code is
+never forwarded. A sign-in that already appended a complete or chunked ticket before it failed is
+rolled back to the `Set-Cookie` snapshot taken before it started, so the failed response carries no
+part of that ticket and keeps the unrelated cookies it already had, in their original order. A
+response that already started is left exactly as it was sent, and a restore that cannot be applied
+aborts the connection instead of completing a response that still carries part of the ticket.
 
 The current-session read and the logout require any legitimate ServiceMantle management identity,
 not Admin. The read answers exactly `authenticated`, the UTC `expiresAtUtc`, and the defined

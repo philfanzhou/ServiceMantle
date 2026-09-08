@@ -43,13 +43,28 @@ internal sealed class ServiceMantleManagementSessionResult : IResult
         [],
         StatusCodes.Status204NoContent);
 
+    /// <summary>
+    /// The terminating exit of a sign-in failure whose <c>Set-Cookie</c> rollback also failed. The
+    /// handler has already aborted the connection, and this result writes no status code, header,
+    /// or body, so a response still carrying part of that ticket is never completed.
+    /// </summary>
+    internal static readonly ServiceMantleManagementSessionResult Terminated = new(
+        [],
+        StatusCodes.Status503ServiceUnavailable,
+        terminated: true);
+
     private readonly byte[] body;
     private readonly int statusCode;
+    private readonly bool terminated;
 
-    private ServiceMantleManagementSessionResult(byte[] body, int statusCode)
+    private ServiceMantleManagementSessionResult(
+        byte[] body,
+        int statusCode,
+        bool terminated = false)
     {
         this.body = body;
         this.statusCode = statusCode;
+        this.terminated = terminated;
     }
 
     /// <summary>
@@ -84,6 +99,13 @@ internal sealed class ServiceMantleManagementSessionResult : IResult
     public async Task ExecuteAsync(HttpContext httpContext)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
+
+        if (terminated)
+        {
+            // The connection was aborted because a failed sign-in's cookie could not be removed.
+            // Writing a status code or a body here would send that partial ticket after all.
+            return;
+        }
 
         var response = httpContext.Response;
         if (response.HasStarted)
