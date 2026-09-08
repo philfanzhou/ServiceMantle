@@ -2107,7 +2107,10 @@ it would discard a `Success` and force the same call to be repeated. If the budg
 `StopAsync` caller cancels, the lifecycle stops creating operations and completes **without**
 claiming remote absence. The session is disposed once, after any cooperative in-flight operation
 settles; a disposal failure is a safe classification and is neither retried nor treated as a
-deregistration.
+deregistration. Disposing the lifecycle applies the same boundary even when it replaces stop rather
+than following it - a host disposed after a failed start never calls `StopAsync` - so it forbids a
+new register, waits for both loops and any cooperative in-flight operation to settle, and only then
+releases the session. Disposal alone never deregisters.
 
 Because attempts continue while the corresponding desire stands, the number of attempts over an
 arbitrarily long process lifetime is deliberately uncapped. What is bounded is one call, one delay,

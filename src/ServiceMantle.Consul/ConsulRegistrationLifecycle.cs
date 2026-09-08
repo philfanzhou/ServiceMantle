@@ -113,15 +113,7 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
         Signal();
         await lifetime.CancelAsync().ConfigureAwait(false);
 
-        if (owner is { } loop)
-        {
-            await loop.ConfigureAwait(false);
-        }
-
-        if (sampler is { } sample)
-        {
-            await sample.ConfigureAwait(false);
-        }
+        await QuiesceAsync().ConfigureAwait(false);
 
         State = ConsulLifecycleState.Stopping;
         try
@@ -135,6 +127,12 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
         }
     }
 
+    /// <summary>
+    /// Releases the lifecycle. A disposal that follows <see cref="StopAsync"/> finds the loops
+    /// already finished; one that replaces it - a host disposed after a failed start never calls
+    /// stop - still forbids a new register and waits for the loops and any cooperative in-flight
+    /// operation to settle before it releases the session they own. Disposal never deregisters.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         if (disposed)
@@ -144,14 +142,46 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
 
         disposed = true;
         Interlocked.Exchange(ref stopping, 1);
+        Signal();
         await lifetime.CancelAsync().ConfigureAwait(false);
-        lifetime.Dispose();
-        desireChanged.Dispose();
-        if (session is { } owned)
+
+        try
         {
-            DisposeSession(owned);
-            session = null;
+            // The loops own the token source, the semaphore, and the session. Releasing any of
+            // those underneath a running loop would fault it and would dispose the session
+            // concurrently with the very operation it is waiting on.
+            await QuiesceAsync().ConfigureAwait(false);
         }
+        finally
+        {
+            lifetime.Dispose();
+            desireChanged.Dispose();
+            if (session is { } owned)
+            {
+                DisposeSession(owned);
+                session = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Waits for the sampler and the owner loop to finish. A loop that faulted still releases the
+    /// resources it held, so the fault is observed here rather than left unobserved.
+    /// </summary>
+    private async Task QuiesceAsync()
+    {
+        if (owner is { } loop)
+        {
+            await loop.ConfigureAwait(false);
+        }
+
+        if (sampler is { } sample)
+        {
+            await sample.ConfigureAwait(false);
+        }
+
+        owner = null;
+        sampler = null;
     }
 
     /// <summary>

@@ -575,6 +575,48 @@ public sealed class ConsulRegistrationLifecycleTests
     }
 
     [Fact]
+    public async Task Disposal_without_a_stop_waits_for_the_loops_and_the_in_flight_operation()
+    {
+        // A host that never reaches StopAsync - a failed start disposes the container directly -
+        // still leaves an owner loop, a sampler, and possibly an in-flight operation running.
+        // Releasing the session, the lifetime token, or the desire semaphore underneath them would
+        // contradict the documented boundary: the session is disposed once, after any cooperative
+        // in-flight operation settles.
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new Harness.ScriptedClient { Gate = gate, IgnoreCancellation = true };
+        await using var harness = await Harness.CreateAsync(client: client);
+
+        await harness.StartAsync();
+        await client.Entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var dispose = harness.Lifecycle.DisposeAsync().AsTask();
+        await Harness.WaitAsync(
+            () => harness.Lifecycle.State == ConsulLifecycleState.Stopping,
+            "the owner never observed the disposal");
+
+        // Every deadline the lifecycle owns has now passed while the call still ignores its token.
+        harness.Time.Advance(TimeSpan.FromSeconds(60));
+
+        Assert.False(dispose.IsCompleted, "disposal completed while the client's call was unfinished");
+        Assert.False(client.Disposed, "the session was disposed while its call was unfinished");
+        Assert.Equal(1, client.MaximumConcurrent);
+
+        // Only the client can end it, and disposal never deregisters on its way out.
+        gate.SetResult();
+        await dispose.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["register"], client.Operations);
+        Assert.Equal(1, client.Disposals);
+        Assert.Equal(ConsulRemotePresence.Unknown, harness.Lifecycle.Presence);
+
+        // Both loops ended before the token source and the semaphore they use were disposed, so a
+        // later advance can neither fault them nor sample again.
+        var sampled = harness.Decisions.Calls;
+        harness.Time.Advance(TimeSpan.FromSeconds(60));
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.Equal(sampled, harness.Decisions.Calls);
+    }
+
+    [Fact]
     public async Task The_observer_retains_a_bounded_window_of_the_diagnostics_it_records()
     {
         // The fail-closed readiness path records once per poll for the life of the process, so the
