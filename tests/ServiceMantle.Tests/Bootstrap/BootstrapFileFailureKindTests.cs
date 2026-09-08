@@ -316,6 +316,33 @@ public sealed class BootstrapFileFailureKindTests
     }
 
     [Fact]
+    public void A_non_ascii_path_publishes_to_the_path_that_was_asked_for()
+    {
+        using var directory = TemporaryDirectory.Create();
+
+        // The publish hands the path to the operating system directly rather than through the
+        // file APIs, so the encoding it marshals with has to survive a path that is not ASCII.
+        var configurationDirectory = Path.Combine(directory.Path, "配置-ünïcode-目录");
+        Directory.CreateDirectory(configurationDirectory);
+        var store = new BootstrapFileStore(
+            ServiceId.Parse("signacore"),
+            new BootstrapDatabaseProviderRegistry([]),
+            Path.Combine(configurationDirectory, "服务-signacore.bootstrap.json"));
+
+        store.Create(CreateConfiguration());
+
+        Assert.True(File.Exists(store.FilePath));
+        Assert.Equal(ConnectionSecret, store.Load().Database.ConnectionString);
+        Assert.Empty(Directory.GetFiles(configurationDirectory, "*.tmp"));
+
+        // A second create must still see the target the first one published, which it can only do
+        // if both resolved to the same bytes on disk.
+        Assert.Equal(
+            BootstrapFileFailureKind.TargetAlreadyExists,
+            Assert.Throws<BootstrapException>(() => store.Create(CreateConfiguration())).FailureKind);
+    }
+
+    [Fact]
     public void A_published_file_stays_owner_only()
     {
         if (OperatingSystem.IsWindows())
