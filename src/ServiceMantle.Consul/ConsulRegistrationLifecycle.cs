@@ -97,6 +97,15 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
     /// operation, then deregisters within whatever is left of that budget. An in-flight register is
     /// cancelled and an in-flight deregister is awaited. It never starts another register.
     /// </summary>
+    /// <remarks>
+    /// A caller cancellation observed before stop returns is the result of the whole call: it
+    /// outranks the internal shutdown timeout and every cleanup failure, and propagates as an
+    /// <see cref="OperationCanceledException"/> carrying only the caller's own token. Ownership is
+    /// still released first - an in-flight operation is notified, awaited until it settles, and only
+    /// then is the session disposed - so a cancelled stop can still finish later than the call that
+    /// cancelled it.
+    /// </remarks>
+    /// <exception cref="OperationCanceledException">The caller cancelled the stop.</exception>
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         Interlocked.Exchange(ref stopping, 1);
@@ -104,6 +113,7 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
         {
             // Disabled, never started, or already stopped: no loop and no session own anything.
             await lifetime.CancelAsync().ConfigureAwait(false);
+            ThrowIfCancelledByCaller(cancellationToken);
             return;
         }
 
@@ -125,6 +135,8 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
             DisposeSession(session);
             session = null;
         }
+
+        ThrowIfCancelledByCaller(cancellationToken);
     }
 
     /// <summary>
@@ -426,7 +438,9 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
 
     /// <summary>
     /// Deregisters within whatever is left of the shutdown budget that stop started. It never claims
-    /// absence it did not observe, and it starts no new register.
+    /// absence it did not observe, and it starts no new register. The caller's token bounds the
+    /// remote call as well as the loop, so a cancelled caller ends the attempt in flight instead of
+    /// waiting for the internal budget; announcing that cancellation is stop's own exit.
     /// </summary>
     private async Task CleanUpAsync(
         CancellationTokenSource shutdown,
@@ -450,7 +464,8 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
             using var budget = new CancellationTokenSource(settings.ConsulOperationBudget, timeProvider);
             using var operation = CancellationTokenSource.CreateLinkedTokenSource(
                 budget.Token,
-                shutdown.Token);
+                shutdown.Token,
+                cancellationToken);
             try
             {
                 var result = await owned.DeregisterAsync(operation.Token).ConfigureAwait(false);
@@ -544,6 +559,20 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
         }
 
         return signalled;
+    }
+
+    /// <summary>
+    /// The single cancellation exit of stop. It carries the caller's own token and nothing else: no
+    /// dependency exception, no internal budget token, and no Consul detail.
+    /// </summary>
+    private static void ThrowIfCancelledByCaller(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(
+                "The Consul registration stop was cancelled by the caller.",
+                cancellationToken);
+        }
     }
 
     private void Signal()
