@@ -25,6 +25,12 @@ namespace ServiceMantle.Management;
 /// inside that envelope remains the adapter's obligation. An adapter that ignores its token cannot
 /// be forcibly terminated.
 /// </para>
+/// <para>
+/// How the adapter left is decided after it returns or throws, in a fixed order: the caller's own
+/// cancellation first, then this call's already expired login budget, then the returned result or
+/// exception. An adapter that returns an authenticated identity after its budget has passed
+/// returned too late, and nothing it says is signed in.
+/// </para>
 /// </remarks>
 public delegate ValueTask<ManagementIdentityResult> ServiceMantleManagementLoginAdapter(
     HttpContext httpContext,
@@ -55,6 +61,13 @@ public sealed class ServiceMantleManagementSessionOptions
     /// Valid values are 100 milliseconds through 30 seconds; anything else fails before the host
     /// starts. The budget bounds waiting on a cooperative adapter. It is not a hard wall-clock
     /// bound: an adapter or provider that ignores its cancellation token cannot be terminated.
+    /// </remarks>
+    /// <remarks>
+    /// The budget still takes part in the outcome once the adapter has finished: a login whose
+    /// budget had already expired is the fixed unavailable result and issues no cookie, whatever
+    /// the adapter returned or threw. Only the caller's own cancellation outranks it. The budget
+    /// covers this login adapter call alone - not the cookie lifetime, and not any other session
+    /// operation.
     /// </remarks>
     public TimeSpan LoginTimeout { get; set; } = DefaultLoginTimeout;
 }
