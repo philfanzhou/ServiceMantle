@@ -164,8 +164,8 @@ public sealed class BootstrapFileFailureKindTests
         var losers = results.Where(result => result.Failure is not null).ToArray();
         foreach (var loser in losers)
         {
-            // Losing the non-overwriting publish is only classified TargetAlreadyExists when the
-            // store actually observed the target; a race it could not prove stays Unavailable.
+            // Losing the exclusive create is classified TargetAlreadyExists when the store
+            // observed the target; a conflict it could no longer prove stays Unavailable.
             Assert.Contains(
                 loser.Failure!.FailureKind,
                 new[] { BootstrapFileFailureKind.TargetAlreadyExists, BootstrapFileFailureKind.Unavailable });

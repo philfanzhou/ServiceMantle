@@ -193,9 +193,11 @@ public sealed class BootstrapFileStore
     /// <exception cref="ArgumentNullException"><paramref name="configuration"/> is null.</exception>
     /// <exception cref="BootstrapException">
     /// The target exists or the file cannot be written. An existing target the store observed is
-    /// <see cref="BootstrapFileFailureKind.TargetAlreadyExists"/>; a write that lost the
-    /// non-overwriting publish to a concurrent creator, or failed for any cause the store could not
-    /// establish, is <see cref="BootstrapFileFailureKind.Unavailable"/>.
+    /// <see cref="BootstrapFileFailureKind.TargetAlreadyExists"/>, including the target a
+    /// concurrent creator claimed first: the exclusive create that decides the single winner leaves
+    /// every loser looking at a target that is demonstrably there. A create that failed for any
+    /// cause the store could not establish - including a conflict it could no longer prove - is
+    /// <see cref="BootstrapFileFailureKind.Unavailable"/>.
     /// </exception>
     public void Create(BootstrapConfiguration configuration) =>
         Persist(configuration, replace: false);
