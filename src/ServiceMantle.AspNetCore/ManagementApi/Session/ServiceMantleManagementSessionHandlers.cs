@@ -55,12 +55,15 @@ internal static class ServiceMantleManagementSessionHandlers
         {
             result = await adapter(context, linked.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw CancelledByCaller(linked, cancellationToken);
-        }
         catch
         {
+            // The caller's cancellation outranks how the adapter left, so an ordinary failure
+            // raised after the request was aborted is not reported as a fixed result either.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw CancelledByCaller(linked, cancellationToken);
+            }
+
             // An adapter failure, an internal timeout, and an unrelated internal cancellation are
             // one safe outcome, and no provider code or exception is projected.
             return ServiceMantleManagementSessionResult.Unavailable;
@@ -69,6 +72,13 @@ internal static class ServiceMantleManagementSessionHandlers
         if (cancellationToken.IsCancellationRequested)
         {
             throw CancelledByCaller(linked, cancellationToken);
+        }
+
+        if (budget.Token.IsCancellationRequested)
+        {
+            // The budget for this adapter call is spent. An adapter that returns after its own
+            // deadline has passed still returns too late, so nothing it says is signed in.
+            return ServiceMantleManagementSessionResult.Unavailable;
         }
 
         if (result?.Status == ManagementIdentityStatus.Unauthenticated)
@@ -95,12 +105,13 @@ internal static class ServiceMantleManagementSessionHandlers
                     result.Identity.ToClaimsPrincipal())
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
         catch
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw CancelledByCaller(linked, cancellationToken);
+            }
+
             // A failed sign-in sends no cookie, so the caller must not be told it has a session.
             return ServiceMantleManagementSessionResult.Unavailable;
         }
@@ -133,12 +144,13 @@ internal static class ServiceMantleManagementSessionHandlers
                 .AuthenticateAsync(ServiceMantleManagementSessionDefaults.AuthenticationScheme)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
-        {
-            throw;
-        }
         catch
         {
+            if (context.RequestAborted.IsCancellationRequested)
+            {
+                throw CancelledByCaller(context.RequestAborted);
+            }
+
             return ServiceMantleManagementSessionResult.Unavailable;
         }
 
@@ -165,12 +177,13 @@ internal static class ServiceMantleManagementSessionHandlers
                 .SignOutAsync(ServiceMantleManagementSessionDefaults.AuthenticationScheme)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
-        {
-            throw;
-        }
         catch
         {
+            if (context.RequestAborted.IsCancellationRequested)
+            {
+                throw CancelledByCaller(context.RequestAborted);
+            }
+
             // Success is claimed only once the cookie deletion is on the response.
             return ServiceMantleManagementSessionResult.Unavailable;
         }
@@ -196,8 +209,13 @@ internal static class ServiceMantleManagementSessionHandlers
             // and must not replace the caller's cancellation result.
         }
 
-        return new OperationCanceledException(
-            "The management login was cancelled by the caller.",
-            cancellationToken);
+        return CancelledByCaller(cancellationToken);
     }
+
+    /// <summary>
+    /// Builds the caller's own cancellation result. It carries the request token and nothing else:
+    /// no dependency exception, no provider code, and no consumer text.
+    /// </summary>
+    private static OperationCanceledException CancelledByCaller(CancellationToken cancellationToken) =>
+        new("The management session request was cancelled by the caller.", cancellationToken);
 }
