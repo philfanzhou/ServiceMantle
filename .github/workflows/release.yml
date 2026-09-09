@@ -53,9 +53,19 @@ jobs:
     permissions:
       contents: read
 
+  # The Windows Bootstrap existence evidence lives in its own workflow, so it is a pull-request
+  # gate on its own and is not reached by reusing ci.yml. Release re-verification has to call it
+  # explicitly, or a default-branch or tag push would publish without it. A workflow with its own
+  # entry point is not wired here automatically: each one has to be checked and added.
+  bootstrap-credential-existence:
+    name: Verify Bootstrap existence evidence
+    uses: ./.github/workflows/bootstrap-credential-existence.yml
+    permissions:
+      contents: read
+
   publish:
     name: Build and publish package artifacts
-    needs: [version, verify]
+    needs: [version, verify, bootstrap-credential-existence]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
