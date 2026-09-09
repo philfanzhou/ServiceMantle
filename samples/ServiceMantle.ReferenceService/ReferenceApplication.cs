@@ -6,6 +6,7 @@ using ServiceMantle.Installation;
 using ServiceMantle.Management;
 using ServiceMantle.ReferenceService.Configuration;
 using ServiceMantle.ReferenceService.Data;
+using ServiceMantle.ReferenceService.Database.Sqlite;
 using ServiceMantle.ReferenceService.Health;
 using ServiceMantle.ReferenceService.Installation;
 using ServiceMantle.ReferenceService.Logging;
@@ -31,9 +32,13 @@ public static class ReferenceApplication
             mantle.AddSensitiveHeaders(options =>
                 options.DeniedHeaderNames = [ReferenceLoggingDefaults.SecretHeaderName]);
         }
+        // Explicit and fixed before Build. When the switch is off nothing below changes, and an
+        // unusable input fails here - before a provider, a file, or EF is touched.
+        var sqliteStartup = builder.Services.AddReferenceSqliteStartup(builder.Configuration);
         var databasePath = builder.Configuration["ReferenceService:DatabasePath"]
             ?? Path.Combine(builder.Environment.ContentRootPath, "reference.db");
-        var connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath, Pooling = false }.ConnectionString;
+        var connectionString = sqliteStartup?.TargetConnectionString
+            ?? new SqliteConnectionStringBuilder { DataSource = databasePath, Pooling = false }.ConnectionString;
         builder.Services.AddDbContext<ReferenceDbContext>(options => options.UseSqlite(connectionString));
         builder.Services.AddSingleton<IServiceSettingDefinitionProvider, ReferenceSettingDefinitions>();
         builder.Services.AddSingleton(provider => new ServiceSettingDefinitionRegistry(

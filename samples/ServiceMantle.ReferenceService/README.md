@@ -1,8 +1,10 @@
 # Reference service skeleton
 
 This is a consumer-owned acceptance host, not a production template. It deliberately exposes only
-`GET /`, which returns `status: skeleton`. Startup does not create a database, execute migrations,
-run setup contributors, provision administrators, or enable management/health/telemetry endpoints.
+`GET /`, which returns `status: skeleton`. By default startup does not create a database, execute
+migrations, run setup contributors, provision administrators, or enable management/health/telemetry
+endpoints. One opt-in startup deployment gate can be switched on explicitly; it is off unless every
+input below is stated.
 
 ```bash
 dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127.0.0.1:5080
@@ -19,17 +21,66 @@ build and test both projects without a separate sample list.
 | --- | --- | --- |
 | `ReferenceApplication` | Public composition seam, one skeleton route | Shared by integration tasks |
 | `ReferenceDbContext` and `Data/Migrations` | One workspace table; caller owns migration, save and transaction | #160 |
+| `Database/Sqlite/` | Opt-in SQLite startup deployment gate and the consumer-owned migration executor | #112 / #113 |
 | `ReferenceSetupContributor` | Read-only validation and staging-only example; never invoked at startup | [#175](https://github.com/philfanzhou/ServiceMantle/issues/175) |
 | `ReferenceSettingDefinitions` | Defaults and constraints only; no store, HTTP or activation | #177 |
 | `ReferenceReadinessContributor` | Returns `reference.health_not_integrated`; never claims readiness | #156 |
 | `ExternalManagementIdentityPlaceholder` | Returns Failed with a safe unconfigured-provider code | Future external identity integration |
 | `Logging/` | Opt-in Serilog Console wiring and one sanitized request line | Delivered by [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) |
 
-EF SQLite is configured solely as a consumer model carrier. The optional ServiceMantle SQLite
-installation provider is not registered. The default file is `reference.db` below the content root;
-`ReferenceService:DatabasePath` can change it. Merely starting the host does not create the file.
-The consumer's future maintenance/startup path must explicitly invoke `Database.MigrateAsync` and
-own its error handling. The initial migration and snapshot live here, never in ServiceMantle.
+EF SQLite is the consumer's model carrier. With the startup gate off, the ServiceMantle SQLite
+providers are not registered at all: the default file is `reference.db` below the content root,
+`ReferenceService:DatabasePath` can change it, and merely starting the host neither creates the file
+nor migrates it. The initial migration and snapshot live here, never in ServiceMantle.
+
+## Explicit SQLite startup deployment
+
+```bash
+dotnet run --project samples/ServiceMantle.ReferenceService -- \
+  --ReferenceService:SqliteStartup:Enabled true \
+  --ReferenceService:SqliteStartup:DeploymentMode SingleInstance \
+  --ReferenceService:SqliteStartup:PrepareIfMissing true \
+  --ReferenceService:DatabasePath /absolute/path/reference.db \
+  --urls http://127.0.0.1:5080
+```
+
+`ReferenceService:SqliteStartup:Enabled` defaults to `false`; only an explicit `true` activates the
+gate. When it is on:
+
+- `DeploymentMode` must be stated and must be `SingleInstance`. `Unspecified`, `MultiInstance`, and
+  any unparsable value are refused. Being the only process on the machine, holding no lock, or
+  omitting the setting is never read as authorization.
+- `ReferenceService:DatabasePath` must be an absolute local ordinary-file path.
+- `ReferenceService:SqliteStartup:PrepareIfMissing` defaults to `false`. Only an explicit `true`
+  lets a missing file be created; an unparsable value is refused.
+
+An unusable input fails before any provider, file, or EF call, and the failure names the setting, not
+the value. The preparation call and the wait for the process-local single-instance turn share one
+fixed 5-second budget; nothing bounds the migration itself or total startup. The sample builds its
+own SQLite connection - non-pooled, private cache, no administrative connection or password input -
+and EF uses `Mode=ReadWrite`, so EF's default `ReadWriteCreate` can never create the file behind the
+gate's back.
+
+The gate then runs in a fixed order and fails closed at every step: the deployment mode is validated
+from the captured capability declarations first; a read-only observation decides whether the target
+is there; a missing target stops the startup unless preparation was explicitly permitted; and the
+consumer's own scoped executor inspects, migrates at most once, and inspects again. Only a
+successful migration lets the host finish starting - the gate runs before any hosted service, so no
+request is ever served over an unmigrated database. A failure closes startup and logs one fixed
+outcome, with no path, connection string, provider message, or exception text.
+
+The inspection is deliberately conservative. An empty readable database is adoptable; the complete
+known migration set with a readable workspace table is current; a strict prefix is pending; an
+unknown history record is treated as a newer schema; and application tables without a history, a
+missing required table, or an unreadable history all refuse the database rather than adopting or
+repairing it. The inspection opens its own read-only connection and never calls `Migrate`,
+`EnsureCreated`, or `SaveChanges`.
+
+There is no cross-process or cross-host exclusion: two processes that both declare `SingleInstance`
+are a deployment error this contract cannot detect. Nothing spans the file publication and the
+migration transactionally - a committed migration or a published empty file is not undone by a later
+cancellation, and no interrupted database is repaired automatically. The sample is a consumer
+example; a production service chooses its own migration strategy.
 
 The staging example creates a new workspace on each explicit `RegisterAsync` call, with a generated
 ID and a fixed demo display name. It is not an installation workflow or an idempotency contract.
