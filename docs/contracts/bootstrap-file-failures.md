@@ -63,6 +63,26 @@ create is indistinguishable from one that never ran, and a retry is never blocke
 an earlier attempt. What can be left behind is the temporary file beside the target, which no
 operation reads and which never affects what a later call reports.
 
+## Reader sharing during a replace
+
+Every read of the target - `TryLoad`, `Load`, and the manager status read that goes through them -
+opens the file through one place, read-only, sharing read and delete. Sharing delete is what an
+atomic replace of the target needs while such a handle is open: on Windows, `ReplaceFileW` opens the
+replaced target with `DELETE` access, and a handle that does not share delete makes that open fail
+and turns the replace into `Unavailable`. On Unix the rename does not consult open handles at all,
+so a Unix run cannot show the difference.
+
+The flag widens only what *other* handles are allowed to ask for. The store's read handle still has
+read access and nothing more, and a reader keeps observing the file it opened; a replacement becomes
+visible at the next open, never inside an open stream.
+
+The guarantee is limited to the store's own read-only handle, on a normal local file system with
+usable permissions and no outside interference: such a handle does not, by missing delete sharing,
+stop a replace. Nothing here promises that a replace succeeds against an outside exclusive handle,
+a changed ACL, anti-virus software, a failing disk, or an arbitrary file system, and it adds no
+cross-process update exclusion, power-loss durability, hard I/O time bound, or snapshot consistency
+under external modification.
+
 ## Limits
 
 - The classification does not subdivide every platform I/O error, and it is never widened by
