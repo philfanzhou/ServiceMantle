@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using ServiceMantle.Bootstrap;
 using Xunit;
@@ -6,6 +7,12 @@ namespace ServiceMantle.Tests.Bootstrap;
 
 public sealed class BootstrapFileStoreTests
 {
+    private const string OriginalConnectionString =
+        "Host=db;Database=signacore;Password=original-password";
+
+    private const string ReplacedConnectionString =
+        "Host=replaced;Database=signacore;Password=replaced-password";
+
     [Fact]
     public void Load_reads_a_complete_version_one_file()
     {
@@ -436,6 +443,103 @@ public sealed class BootstrapFileStoreTests
         store.Replace(CreateConfiguration(ServiceId.Parse("signacore"), "Host=replaced"));
 
         Assert.Empty(Directory.GetFiles(directory.Path, "*.tmp", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public void Replace_publishes_while_the_store_holds_its_own_read_handle()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var store = CreateStore(directory);
+        store.Create(CreateConfiguration(connectionString: OriginalConnectionString));
+
+        // The production read open point, opened before the replace starts and closed after it
+        // returns. The overlap is the arrangement of the test, not a race it hopes to hit.
+        using var reader = store.OpenTargetForRead();
+
+        store.Replace(CreateConfiguration(connectionString: ReplacedConnectionString));
+
+        var observedByReader = ReadFromStart(reader);
+        using var readerDocument = JsonDocument.Parse(observedByReader);
+        Assert.Equal(
+            OriginalConnectionString,
+            readerDocument.RootElement
+                .GetProperty("Database")
+                .GetProperty("ConnectionString")
+                .GetString());
+        Assert.Equal("test-master-key", readerDocument.RootElement.GetProperty("MasterKey").GetString());
+
+        Assert.Equal(ReplacedConnectionString, store.Load().Database.ConnectionString);
+    }
+
+    [Fact]
+    public void Replace_is_refused_while_a_read_handle_without_delete_sharing_is_open_on_windows()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var store = CreateStore(directory);
+        store.Create(CreateConfiguration(connectionString: OriginalConnectionString));
+
+        // The same arrangement as the test above with the production sharing flags reverted, so the
+        // pair is a before/after contrast rather than a single passing assertion.
+        using var reader = OpenTargetWithoutDeleteSharing(store);
+
+        if (OperatingSystem.IsWindows())
+        {
+            var exception = Assert.Throws<BootstrapException>(
+                () => store.Replace(CreateConfiguration(connectionString: ReplacedConnectionString)));
+
+            Assert.Equal(BootstrapFileFailureKind.Unavailable, exception.FailureKind);
+            var inner = Assert.IsAssignableFrom<IOException>(exception.InnerException);
+            Assert.NotEqual(0, inner.HResult);
+            Assert.DoesNotContain(OriginalConnectionString, exception.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(ReplacedConnectionString, exception.Message, StringComparison.Ordinal);
+            Assert.Equal(OriginalConnectionString, store.Load().Database.ConnectionString);
+            return;
+        }
+
+        // A Unix rename does not consult open handles, so this half is a read and replace
+        // regression only. Passing here says nothing about the Windows sharing rules the production
+        // open point is aligned with; only the Windows job produces that evidence.
+        store.Replace(CreateConfiguration(connectionString: ReplacedConnectionString));
+
+        Assert.Equal(ReplacedConnectionString, store.Load().Database.ConnectionString);
+    }
+
+    [Fact]
+    public void Load_reads_the_target_while_another_read_handle_is_open()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var store = CreateStore(directory);
+        store.Create(CreateConfiguration(connectionString: OriginalConnectionString));
+        var bytesBeforeRead = File.ReadAllBytes(store.FilePath);
+
+        using var reader = store.OpenTargetForRead();
+
+        Assert.Equal(OriginalConnectionString, store.Load().Database.ConnectionString);
+        Assert.Equal(OriginalConnectionString, store.TryLoad()!.Database.ConnectionString);
+        Assert.Equal(bytesBeforeRead, File.ReadAllBytes(store.FilePath));
+    }
+
+    /// <summary>
+    /// Opens the target the way the store did before the sharing modes were aligned.
+    /// </summary>
+    private static FileStream OpenTargetWithoutDeleteSharing(BootstrapFileStore store) =>
+        new(
+            store.FilePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            4096,
+            FileOptions.SequentialScan);
+
+    private static string ReadFromStart(FileStream stream)
+    {
+        stream.Position = 0;
+        using var reader = new StreamReader(
+            stream,
+            Encoding.UTF8,
+            detectEncodingFromByteOrderMarks: false,
+            leaveOpen: true);
+        return reader.ReadToEnd();
     }
 
     private static BootstrapFileStore CreateStore(
