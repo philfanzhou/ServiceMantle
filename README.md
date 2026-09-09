@@ -2,7 +2,7 @@
 
 ServiceMantle is a shared .NET 10 library for reusable service-management foundations used by ASP.NET Core services.
 
-Current status: **early development**. Service identity, installation phase primitives, the one-time installation Setup Code lifecycle, the instance-local Bootstrap file model, database migration orchestration, the PostgreSQL advisory lock provider, structured logging identity context, the immutable sensitive request Header registry and diagnostic projection, the mandatory-sanitizing Serilog Host and Console defaults, the optional bounded Grafana Loki sink, core OpenTelemetry instrumentation, the optional OTLP trace and metric exporter, the isolated authorized Prometheus endpoint, the explicit forwarded-header trust boundary, the isolated setup and management rate-limit policies, the mandatory security response-header baseline, the request Correlation ID middleware, safe Problem Details exception mapping, the optional database target preparation capability (PostgreSQL server-database preparation), product-agnostic management audit persistence, and the management identity and authorization contract are implementation-complete, pending CI container verification (real PostgreSQL Testcontainers run in GitHub Actions, not locally). The optional management login, current-session read, and logout entries are also available; see [Management session login, read, and logout](#management-session-login-read-and-logout). Bootstrap creation and update over HTTP, additional telemetry exporters, automatic service discovery lifecycle, and broader observability capabilities are not yet implemented.
+Current status: **early development**. What each package currently delivers is documented in the sections below and in [docs/contracts](docs/contracts), together with the explicit non-guarantee subsections that bound it; those sections are the status, not a separate delivery matrix. Everything outside the core package is optional and inert until a host registers it explicitly, so a capability being documented does not mean it is enabled. Public APIs, defaults, and the package layout can still change, and nothing here is a production-readiness, completeness, or security-review claim. Container-backed provider tests are opt-in and run only where Docker and their environment variables are available; see [Local build commands](#local-build-commands).
 
 `ServiceId` is a stable deployment-level identifier shared by all instances of one service. `InstanceId` identifies one running instance for runtime diagnostics and must not be used as a substitute for `ServiceId`.
 
@@ -44,10 +44,19 @@ Extension fields are limited to 32, require non-null values and identifier-style
 
 [`samples/ServiceMantle.ReferenceService`](samples/ServiceMantle.ReferenceService/README.md) is a
 minimal consumer-owned host with its own DbContext, migration, setting definitions and contributor
-implementations. It exposes only a skeleton root response and does not initialize a database,
-create administrators, or activate downstream capabilities at startup. Its external management
-identity provider remains explicitly unconfigured. See the sample README for ownership boundaries,
-smoke tests and the separate integration tasks; this is not a production template.
+implementations. By default it exposes only a skeleton root response and takes no database side
+effect at startup: it neither creates nor migrates a file, runs no setup contributor, provisions no
+administrator, and maps no management, health, or telemetry endpoint. Its external management
+identity provider is a placeholder that always fails closed, and the Setup, health, and management
+capabilities are not wired into the running sample.
+
+One startup path is opt-in. When every SQLite startup deployment input is stated explicitly, the
+sample validates the declared single-instance deployment, prepares a missing file target only when
+that is explicitly permitted, and runs its own migration executor before the host finishes starting;
+the gate stays off otherwise. See
+[the sample README](samples/ServiceMantle.ReferenceService/README.md#explicit-sqlite-startup-deployment)
+for the exact inputs, ordering, failures, and limits, and the same README for ownership boundaries,
+smoke tests, and the separate integration tasks. This is not a production template.
 
 ## Core OpenTelemetry instrumentation
 
@@ -943,7 +952,7 @@ diagnosable without exposing the plaintext or the digest. See
 
 `BootstrapConfigurationManager` is the use-case layer intended for a future management API. Its status projection reports service and instance identity, provider metadata, and whether secret values are configured, but never returns the connection string or MasterKey. Create and update requests are assembled into a complete candidate configuration and must pass an `IBootstrapCandidateValidator` before the local Bootstrap file is written. Updates preserve omitted replacement values and use the existing atomic file replacement semantics.
 
-Bootstrap changes affect only the current instance's local Bootstrap file and return `RestartRequired=true`; the process must be restarted before a change is activated. The Bootstrap creation and update HTTP endpoints are not implemented yet, tracked by [#95](https://github.com/philfanzhou/ServiceMantle/issues/95); real database connectivity validation, Bootstrap hot reload, and multi-instance synchronization are not implemented either. Administrator authentication is no longer among the gaps: the management identity and cookie session entries described in [Management session login, read, and logout](#management-session-login-read-and-logout) already exist as an opt-in capability.
+Bootstrap changes affect only the current instance's local Bootstrap file and return `RestartRequired=true`; the process must be restarted before a change is activated. The optional HTTP entries that drive these use cases - anonymous first creation authorized by the one-time local credential above, and the administrator update authorized by the management cookie session described in [Management session login, read, and logout](#management-session-login-read-and-logout) - are specified in [docs/contracts/management-bootstrap.md](docs/contracts/management-bootstrap.md). Whether a candidate is checked against a live database is the registered provider's behavior, not this layer's: the PostgreSQL provider opens the target and compares the identities the server itself reports. Bootstrap hot reload and multi-instance synchronization remain outside this contract, so a change stays instance-local and takes effect only after a restart.
 
 ## Installation persistence foundation
 
@@ -1378,11 +1387,17 @@ Not guaranteed:
 
 Current and planned provider packages are:
 
-- `ServiceMantle.Database.PostgreSql` validates PostgreSQL settings, performs a minimum read probe (`SELECT 1`) against the target database, and provides session-level advisory lock capability for multi-instance migration coordination (implementation complete, pending CI container verification).
+- `ServiceMantle.Database.PostgreSql` validates PostgreSQL settings by opening the target database and
+  comparing the `current_database()` and `session_user` identities the server actually selected,
+  observes server-database targets and explicitly creates a missing one, and provides session-level
+  advisory lock capability for multi-instance migration coordination.
 - `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
 - `ServiceMantle.Database.Sqlite` validates existing local SQLite files as Bootstrap candidates,
   observes and explicitly prepares file targets, and declares single-instance-only deployment
-  support. Migration integration remains a separate follow-up capability.
+  support. It supplies no migration lock: a `SingleInstance` migration runs through the
+  orchestrator's process-local serialization described in
+  [Explicit database deployment mode](#explicit-database-deployment-mode), which coordinates nothing
+  across processes or hosts.
 - `ServiceMantle.Database.MySql` validates MySQL settings and supported Community product identity,
   observes server-database targets, explicitly creates a missing target without changing an existing
   database, and provides a dedicated-session `GET_LOCK` migration lease.
