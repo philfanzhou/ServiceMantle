@@ -46,7 +46,7 @@ only the entries it actually serves; an unmapped kind exposes nothing.
 | --- | --- | --- | --- | --- |
 | `InstallationStatus` | `GET`, `HEAD {v1}/status` | Every phase; the gate reads no snapshot | Anonymous | Management policy, anonymous client partition |
 | `BootstrapCreate` | `POST {v1}/bootstrap` | `BootstrapConfiguration`, migration `NotStarted` or `Succeeded` | Anonymous | Setup policy, client partition |
-| `BootstrapUpdate` | `PUT {v1}/bootstrap` | `Completed + Succeeded + Reachable` | `ServiceMantle.ManagementAdmin` | Management policy, operator partition |
+| `BootstrapUpdate` | `PUT {v1}/bootstrap` | `Completed + Succeeded + Reachable` | `ServiceMantle.ManagementAdmin` **and** `ServiceMantle.ManagementSession`, so the fixed management cookie scheme | Management policy, operator partition |
 | `SetupStatus` | `GET`, `HEAD {v1}/setup` | `PendingSetup` or `Completed`, with `Succeeded + Reachable` | Anonymous | Setup policy, client partition |
 | `SetupComplete` | `POST {v1}/setup` | Same as `SetupStatus`, so a completed replay reaches the handler | Anonymous | Setup policy, client partition |
 | `SessionLogin` | `POST {v1}/session/login` | `Completed + Succeeded + Reachable` | Anonymous | Setup policy, client partition |
@@ -80,6 +80,26 @@ for a consumer-supplied authentication scheme is unchanged.
 partition, so presenting a valid management cookie cannot move it onto a per-operator quota. Every
 other management entry keeps the existing per-operator partition.
 
+### The Bootstrap update pins the scheme
+
+Rewriting the Bootstrap file of a running instance is a local administrator action, so its
+authorization conclusion must come from this host's own management cookie and not from whatever
+default scheme a consuming service happens to have configured. `ServiceMantle.ManagementAdmin` is
+deliberately authentication-method agnostic and cannot express that on its own, so `BootstrapUpdate`
+is authorized with both policies. Combining them unions the schemes, and only the session policy
+names one, so the entry's effective scheme set is exactly the fixed management cookie scheme, while
+its requirements are the session policy's legitimate current operator plus the administrator
+permission.
+
+Mapping `BootstrapUpdate` therefore requires the fixed management cookie scheme to be registered.
+Its cookie results are the ones listed above: no cookie is `401 management.session.unauthenticated`,
+an unacceptable cookie `401 management.session.expired`, and a legitimate identity without the
+administrator permission `403 management.session.forbidden` - an external administrator with no
+cookie among them. No other entry and no other policy changes: the general administrator policy and
+the ordinary protected `MapServiceMantleManagementApiV1` group still accept a consuming service's
+own authentication scheme, and a host that does not map `BootstrapUpdate` gains no cookie
+prerequisite.
+
 ## Unsafe requests
 
 Every unsafe entry method requires exactly one `X-ServiceMantle-Request: 1` header. A missing, empty,
@@ -109,7 +129,13 @@ With at least one entry mapped, the host fails to start when:
 - the composed ServiceMantle pipeline did not run on the builder the entries were mapped on;
 - the security response headers, the named rate-limit policies, or the phase gate are not registered;
 - a protected entry's authorization policy or the default authenticate, challenge, and forbid schemes
-  cannot be resolved, or a session entry is mapped without the fixed management cookie scheme.
+  cannot be resolved, or an entry that resolves through `ServiceMantle.ManagementSession` - the
+  session entries and `BootstrapUpdate` - is mapped without the fixed management cookie scheme;
+- the effective authentication scheme set of `BootstrapUpdate` is not exactly the fixed management
+  cookie scheme. The set is read from the endpoint's combined authorization data, so a scheme named
+  on the endpoint and a further policy that names one are both refused. A further policy that only
+  adds requirements names no scheme, leaves the set unchanged, and is admitted as a stricter rule
+  rather than a downgrade.
 
 `MapServiceMantleManagementEntry` itself rejects an undefined kind and a host that has not registered
 `AddServiceMantleManagementApiV1` and `AddServiceMantleManagementEntries`. Startup failures name no
@@ -123,3 +149,8 @@ operator, claim, credential, or configuration value.
 - A gate snapshot is one observation at the start of a request, not a lock over later phase changes.
 - Runtime route reconfiguration is outside startup validation; the per-request checks still reject a
   mismatched surface or method conservatively.
+- The scheme pinning covers the static endpoint and policy composition of a normally started host
+  only. It does not defend against a host that replaces the implementation behind the fixed scheme,
+  a hostile custom policy provider, route or policy changes made after startup, or in-process
+  tampering, and it changes nothing about the cookie's trust root, expiry, revocation, or
+  cross-instance behaviour.
