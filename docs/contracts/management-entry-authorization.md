@@ -102,17 +102,28 @@ has restarted or that configuration has been activated elsewhere.
 ## Bootstrap create and update (#95)
 
 Both operations accept a complete, strictly parsed Bootstrap candidate. The raw body limit is 64 KiB
-and JSON depth is at most 8. Unknown or duplicate properties, malformed UTF-8, extra top-level
-values, query strings, content encoding, and non-JSON media types are invalid. Connection strings and
-MasterKeys exist only in the body and the existing input objects; responses and ServiceMantle-owned
-diagnostics use closed values.
+(65536 bytes) and JSON depth is at most 8. Unknown or duplicate properties, malformed UTF-8, a byte
+order mark, extra top-level values, query strings, content encoding, and non-JSON media types are
+invalid. Connection strings and MasterKeys exist only in the body and the existing input objects;
+responses and ServiceMantle-owned diagnostics use closed values.
+
+The wire shape is lower camel case and is independent of the PascalCase file on disk. The top level
+accepts exactly `database` and `masterKey`; `database` accepts exactly `provider`,
+`connectionString`, and `serverVersion`. `serviceId`, `instanceId`, `formatVersion`, `path`, and
+`restartRequired` are not request fields. `POST` requires both top-level properties; `PUT` requires
+at least one, retains what it does not send, and treats a supplied `database` as a complete
+replacement rather than a merge. An explicit `null` or blank `masterKey` is invalid on both, so
+"retain the old value" is never expressed by a value that reached the wire. The full field, value,
+and result rules live in
+[the Bootstrap management contract](management-bootstrap.md).
 
 ### First creation
 
 `POST {v1}/bootstrap` is anonymous only because it requires the independent credential from #324 in
 one `X-ServiceMantle-Bootstrap-Credential` header. It never accepts a Setup Code, management cookie,
-database password, or MasterKey as that credential. Missing, malformed, expired, unknown, already
-consumed, and mismatched credentials share one `401` response:
+database password, or MasterKey as that credential. Exactly one header value is read, exactly as it
+arrived. Missing, malformed, repeated, comma-combined, expired, unknown, already consumed, and
+mismatched credentials share one `401` response:
 
 ```json
 {"errorCode":"management.bootstrap.credential_invalid"}
@@ -137,24 +148,40 @@ value.
 
 ### Installed update
 
-`PUT {v1}/bootstrap` is never anonymous and never accepts the Bootstrap credential. It requires the
-existing Admin policy and a Ready Gate snapshot, then calls
-`BootstrapConfigurationManager.UpdateAsync`. Success returns
-`200 {"restartRequired":true}` after atomic replacement and sets the same latch. A phase flip after
-Gate admission does not undo a completed local replacement.
+`PUT {v1}/bootstrap` is never anonymous and never accepts the Bootstrap credential. Its mapping adds
+the fixed management cookie session policy to the existing Admin policy, so its authorization
+conclusion comes from this host's own management cookie and not from whatever default scheme a
+consuming service configured; mapping it without that scheme registered fails before the host
+starts. With a Ready Gate snapshot it then calls `BootstrapConfigurationManager.UpdateAsync`.
+Success returns `200 {"restartRequired":true}` after atomic replacement and sets the same latch. A
+phase flip after Gate admission does not undo a completed local replacement.
 
 | Bootstrap outcome | HTTP result |
 | --- | --- |
-| Invalid media, shape, size, unsafe header, or candidate validation | Fixed management 400 |
-| Create target already exists, update target is missing, or a concurrent local modification wins | Fixed management 409 |
+| Invalid media, shape, size, unsafe header, or an ordinary candidate rejection | Fixed management 400 |
+| Create target already exists, or update target is missing | Fixed management 409 |
 | Invalid first-create credential | Fixed credential 401 |
-| File/store/internal failure or internal timeout | `503 {"errorCode":"management.bootstrap.unavailable"}` |
+| File/store/internal failure, an internal validator failure, or an internal timeout | `503 {"errorCode":"management.bootstrap.unavailable"}` |
 | Successful create | `201 {"restartRequired":true}` |
 | Successful update | `200 {"restartRequired":true}` |
 
+The 400/503 split among validator failures is by code only, never by message: the four internal
+codes `candidate.validation_failed`, `candidate.invalid_result`, `database.provider_invalid_result`,
+and `database.provider_validation_failed` are storage failures, and every other validator failure is
+a rejected request. The 409/503 split is the store's own `BootstrapFileFailureKind`
+(`TargetAlreadyExists` and `TargetMissing` are the conflict); a message, a path, an inner exception,
+or a separate existence check is never consulted. No code, message, connection string, MasterKey,
+credential, provider, or server version reaches a response.
+
+The restart latch is set as soon as the manager confirms the file was published, before a later
+cancellation or a failed response is considered, so a process never claims the file is unchanged
+after it wrote one. A failure before publication sets nothing. At every call, return, and exception
+observation point an already aborted request wins over the boundary outcome and propagates its own
+`RequestAborted` token rather than a fixed result.
+
 File publication remains the existing per-instance atomic create/replace guarantee. It is not a
 cross-instance update, active configuration reload, database transaction, or atomic transaction with
-credential consumption.
+credential consumption, and it adds no compare-and-swap between concurrent updates.
 
 ## Setup status and completion (#96)
 
