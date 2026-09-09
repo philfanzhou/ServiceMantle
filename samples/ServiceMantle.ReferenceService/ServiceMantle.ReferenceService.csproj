@@ -7,5 +7,6 @@
     <ProjectReference Include="../../src/ServiceMantle/ServiceMantle.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" />
+    <ProjectReference Include="../../src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj" />
   </ItemGroup>
 </Project>

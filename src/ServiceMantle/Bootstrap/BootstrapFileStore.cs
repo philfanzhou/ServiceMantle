@@ -124,6 +124,14 @@ public sealed class BootstrapFileStore
     /// Loads the bootstrap file when it exists.
     /// </summary>
     /// <returns>The loaded configuration, or null when the file does not exist.</returns>
+    /// <remarks>
+    /// The target is opened read-only and shares read and delete access, so a reader this store
+    /// holds does not by itself keep <see cref="Replace"/> from publishing over the target. The
+    /// reader keeps observing the file it opened; a replacement becomes visible to the next open.
+    /// Sharing delete permits another handle to request delete or rename; it grants this handle no
+    /// write or delete access of its own, and it is not a guarantee about handles this store does
+    /// not own.
+    /// </remarks>
     /// <exception cref="BootstrapException">
     /// The file exists but is invalid or inaccessible. A damaged, mismatched, or unreadable file is
     /// <see cref="BootstrapFileFailureKind.Unavailable"/>; a missing file returns null instead.
@@ -132,13 +140,7 @@ public sealed class BootstrapFileStore
     {
         try
         {
-            using var stream = new FileStream(
-                FilePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                BufferSize,
-                FileOptions.SequentialScan);
+            using var stream = OpenTargetForRead();
 
             var document = JsonSerializer.Deserialize<BootstrapJsonDocument>(stream, ReadOptions);
             return ToConfiguration(document);
@@ -171,6 +173,31 @@ public sealed class BootstrapFileStore
             throw Failure("could not be read because of an I/O error.", exception);
         }
     }
+
+    /// <summary>
+    /// Opens the bootstrap file for reading, using the single sharing mode every read of the target
+    /// goes through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="TryLoad"/> and therefore <see cref="Load"/> and the manager status read all open
+    /// the target here, so there is one place where the target's read sharing is decided.
+    /// </para>
+    /// <para>
+    /// The handle shares read and delete. Delete sharing is what an atomic replace of the target
+    /// needs while this handle is open: on Windows, <c>ReplaceFileW</c> opens the replaced target
+    /// with <c>DELETE</c> access, and a handle that does not share delete makes that open fail. The
+    /// flag widens what other handles may ask for; it adds no write or delete access here.
+    /// </para>
+    /// </remarks>
+    internal FileStream OpenTargetForRead() =>
+        new(
+            FilePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete,
+            BufferSize,
+            FileOptions.SequentialScan);
 
     /// <summary>
     /// Loads the bootstrap file and fails when it does not exist.

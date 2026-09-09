@@ -25,9 +25,12 @@ public static class ServiceMantleManagementEntryEndpointRouteBuilderExtensions
     /// anonymous exception on that group. ServiceMantle fixes the path, the methods, the phase-gate
     /// surface, the anonymous or policy authentication rule, the named rate-limit policy, the
     /// security response headers, and, for unsafe methods, the
-    /// <c>X-ServiceMantle-Request: 1</c> guard. Mapping the same kind twice, a wrong path or method,
-    /// a downgraded convention, a missing capability, or an entry mapped through the protected group
-    /// fails before the host starts. This method maps no business handler of its own.
+    /// <c>X-ServiceMantle-Request: 1</c> guard. Where an entry pins the authentication scheme its
+    /// authorization conclusion may come from - the Bootstrap update requires this host's own
+    /// management cookie - that pinning is part of the same fixed baseline. Mapping the same kind
+    /// twice, a wrong path or method, a downgraded convention, a widened scheme set, a missing
+    /// capability, or an entry mapped through the protected group fails before the host starts.
+    /// This method maps no business handler of its own.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="kind"/> is not defined.</exception>
     /// <exception cref="InvalidOperationException">
@@ -63,7 +66,10 @@ public static class ServiceMantleManagementEntryEndpointRouteBuilderExtensions
         }
         else
         {
-            builder.RequireAuthorization(definition.AuthorizationPolicyName!);
+            // An entry that pins its authentication scheme carries a second policy. Combining them
+            // intersects nothing and unions the schemes, and only the scheme-pinning policy names
+            // any, so the effective scheme set is exactly that one.
+            builder.RequireAuthorization([.. definition.AuthorizationPolicyNames]);
         }
 
         if (definition.RequiresUnsafeRequestHeader)
