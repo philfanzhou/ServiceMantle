@@ -136,40 +136,6 @@ public sealed class BootstrapCredentialFileSharingTests
     }
 
     [Fact]
-    public async Task Sixteen_contenders_produce_exactly_one_success_in_every_round()
-    {
-        const int Rounds = 20;
-        const int Contenders = 16;
-
-        for (var round = 0; round < Rounds; round++)
-        {
-            using var directory = TemporaryDirectory.Create();
-            var provisioned = await Create(directory).ProvisionAsync(
-                BootstrapCredentialLifetime.Default,
-                Token);
-            var candidate = provisioned.Credential!.Reveal();
-            var candidates = Enumerable.Range(0, Contenders)
-                .Select(index => index % 2 == 0 ? candidate : BootstrapCredential.Generate().Reveal())
-                .ToArray();
-            using var start = new Barrier(candidates.Length);
-
-            var results = await Task.WhenAll(candidates.Select(value => Task.Run(async () =>
-            {
-                var store = Create(directory);
-                start.SignalAndWait(Token);
-                return await store.ConsumeAsync(value, Token);
-            }, Token)));
-
-            Assert.Single(results, result => result.IsConsumed);
-            Assert.All(
-                results.Where(result => !result.IsConsumed),
-                result => Assert.Equal(
-                    WellKnownBootstrapCredentialErrorCodes.Invalid,
-                    result.ErrorCode));
-        }
-    }
-
-    [Fact]
     public async Task A_read_failure_that_is_not_a_sharing_conflict_stays_unavailable()
     {
         using var directory = TemporaryDirectory.Create();

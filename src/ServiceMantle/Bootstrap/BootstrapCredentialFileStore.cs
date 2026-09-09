@@ -32,11 +32,6 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
     private const string ExpiresAtName = "expiresAtUtc";
     private const int BufferSize = 4096;
 
-    /// <summary>
-    /// How many times a refused read of a record is re-observed before it is reported as a failure.
-    /// </summary>
-    private const int MaximumReadObservations = 32;
-
     private static readonly JsonDocumentOptions DocumentOptions = new()
     {
         AllowTrailingCommas = false,
@@ -273,15 +268,7 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
         }
         catch (UnauthorizedAccessException)
         {
-            // A refused rename only proves that this caller did not claim the record. Windows
-            // reports a claim that is already in flight on the same record as an access denial
-            // rather than as an absence, so the record is re-observed instead of guessed at: one
-            // that is gone was claimed by somebody else, which is the caller's ordinary invalid
-            // result, while one that is still there leaves the denial unexplained and stays a
-            // storage failure.
-            return Rejected(WasClaimedElsewhere(FilePath)
-                ? WellKnownBootstrapCredentialErrorCodes.Invalid
-                : WellKnownBootstrapCredentialErrorCodes.Unavailable);
+            return Rejected(WellKnownBootstrapCredentialErrorCodes.Unavailable);
         }
 
         try
@@ -315,27 +302,6 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
 
     private static BootstrapCredentialConsumptionResult Rejected(string errorCode) =>
         BootstrapCredentialConsumptionResult.Rejected(errorCode);
-
-    /// <summary>
-    /// Re-observes the record through the same read boundary after a refused claim, and reports
-    /// whether it is gone.
-    /// </summary>
-    /// <remarks>
-    /// Only a proven absence answers true. A record that is still readable, and a re-observation
-    /// that is itself refused, both leave the refusal unexplained, so the caller keeps the storage
-    /// failure rather than being told its candidate was merely invalid.
-    /// </remarks>
-    private static bool WasClaimedElsewhere(string path)
-    {
-        try
-        {
-            return TryReadRecord(path) is null;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
-    }
 
     private static byte[] Serialize(
         BootstrapCredentialDigest digest,
@@ -389,59 +355,38 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
     /// Reads the raw record, or returns null when it does not exist. An oversized file is read only
     /// far enough to prove that it is oversized.
     /// </summary>
-    /// <remarks>
-    /// A refused open is re-observed a bounded number of times before it is reported. The claim is
-    /// a rename, and on Windows the rename holds the record for an instant without sharing read, so
-    /// an open beside one in flight is refused however this reader shares. That refusal is not
-    /// evidence of a storage failure: the claim either completes, and the next open reports the
-    /// record as absent - which is the true answer, and the caller's ordinary invalid result - or it
-    /// does not, and the refusal survives the re-observations and is reported unchanged. Nothing
-    /// here reclassifies a corrupt, oversized, or genuinely inaccessible record.
-    /// </remarks>
     private static byte[]? TryReadRecord(string path)
     {
-        for (var attempt = 0; ; attempt++)
+        FileStream stream;
+        try
         {
-            FileStream stream;
-            try
-            {
-                stream = OpenRecordForRead(path);
-            }
-            catch (FileNotFoundException)
-            {
-                return null;
-            }
-            catch (DirectoryNotFoundException)
-            {
-                return null;
-            }
-            catch (Exception exception) when (
-                attempt < MaximumReadObservations &&
-                exception is IOException or UnauthorizedAccessException)
-            {
-                // One millisecond per observation, so the whole bound stays a few tens of
-                // milliseconds and no wall-clock guarantee is created by it.
-                Thread.Sleep(1);
-                continue;
-            }
+            stream = OpenRecordForRead(path);
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return null;
+        }
 
-            using (stream)
+        using (stream)
+        {
+            var buffer = new byte[MaximumFileByteCount + 1];
+            var read = 0;
+            while (read < buffer.Length)
             {
-                var buffer = new byte[MaximumFileByteCount + 1];
-                var read = 0;
-                while (read < buffer.Length)
+                var current = stream.Read(buffer, read, buffer.Length - read);
+                if (current == 0)
                 {
-                    var current = stream.Read(buffer, read, buffer.Length - read);
-                    if (current == 0)
-                    {
-                        break;
-                    }
-
-                    read += current;
+                    break;
                 }
 
-                return buffer[..read];
+                read += current;
             }
+
+            return buffer[..read];
         }
     }
 

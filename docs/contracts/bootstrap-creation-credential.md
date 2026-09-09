@@ -107,28 +107,19 @@ The flag widens only what *other* handles are allowed to request. The read handl
 access and nothing more, no file permission is relaxed, and a reader keeps observing the record it
 opened even after the claim renames it.
 
-Sharing settles one direction. The other is the claim's own handle: while the rename is in flight it
-holds the record without sharing read, so an open beside one is refused however the reader shares. A
-refused open is therefore re-observed a bounded number of times - a few tens of milliseconds in
-total, which is a retry and not a wall-clock guarantee - before it is reported. A claim that
-completes leaves the next open reporting the record as absent, which is the true answer and the
-caller's ordinary invalid result; a refusal that survives the re-observations is reported unchanged.
-
-The claim itself is classified the same way. A rename the operating system refused only proves that
-this caller did not claim the record, and Windows reports a claim already in flight on the same
-record as an access denial rather than as an absence. The record is therefore re-observed rather
-than guessed at: one that is gone was claimed by somebody else, which is the ordinary invalid
-result, while one that is still readable - and a re-observation that is itself refused - leaves the
-denial unexplained and stays `bootstrap_credential.unavailable`. A permission denial on a record
-that is still there is never reported as an invalid candidate.
+Sharing settles one direction only. The claim's own handle is the other: while the rename is in
+flight it holds the record without sharing read, and a caller that loses the race is told so in a
+way this store does not yet distinguish from a storage failure. Under contention on Windows a valid
+candidate that lost the claim can therefore still report `bootstrap_credential.unavailable` where
+`bootstrap_credential.invalid` is the true answer. That remaining gap is tracked separately; nothing
+here reclassifies it, and no caller may read `unavailable` as a statement about the candidate.
 
 This removes only the incompatibility between the store's own read handles and its own claim, on a
 normal local file system with usable permissions. It does not promise a successful consumption
 against an outside exclusive handle, anti-virus software, an arbitrary ACL or file system, a killed
 process, or a concurrent local re-provision, and it does not turn a storage failure into
 `bootstrap_credential.invalid`: corruption, oversize, access denial, and I/O failure stay
-`bootstrap_credential.unavailable`, and a re-observed open never turns one of those into
-`bootstrap_credential.invalid`.
+`bootstrap_credential.unavailable`.
 
 ## The consume-first window
 
