@@ -40,13 +40,15 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
     };
 
     private readonly TimeProvider timeProvider;
+    private readonly Func<string, FileStream> openBootstrapProbe;
 
     /// <summary>Initializes a store using the default paths or explicit paths.</summary>
     /// <param name="serviceId">The service the credential belongs to.</param>
     /// <param name="filePath">An optional explicit credential record path.</param>
     /// <param name="bootstrapFilePath">
-    /// An optional explicit Bootstrap file path. The store only tests whether that file exists; it
-    /// never reads, returns, or modifies its connection string or MasterKey.
+    /// An optional explicit Bootstrap file path. The store only establishes whether that file
+    /// exists, with a read-only open that reads no byte; it never reads, returns, or modifies its
+    /// connection string or MasterKey.
     /// </param>
     /// <param name="timeProvider">The clock used for issuance and expiry.</param>
     /// <exception cref="ArgumentNullException"><paramref name="serviceId"/> is null.</exception>
@@ -56,12 +58,34 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
         string? filePath = null,
         string? bootstrapFilePath = null,
         TimeProvider? timeProvider = null)
+        : this(serviceId, filePath, bootstrapFilePath, timeProvider, BootstrapFilePresenceProbe.Open)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a store whose Bootstrap existence probe opens through
+    /// <paramref name="openBootstrapProbe"/>.
+    /// </summary>
+    /// <remarks>
+    /// The probe's open is the one seam in this store, so the finite set of answers the existence
+    /// classification is defined over - proven absence, a denied open, a failed open - can be
+    /// covered on every platform rather than only where the file system happens to produce them.
+    /// The production constructor always passes the real open.
+    /// </remarks>
+    internal BootstrapCredentialFileStore(
+        ServiceId serviceId,
+        string? filePath,
+        string? bootstrapFilePath,
+        TimeProvider? timeProvider,
+        Func<string, FileStream> openBootstrapProbe)
     {
         ArgumentNullException.ThrowIfNull(serviceId);
+        ArgumentNullException.ThrowIfNull(openBootstrapProbe);
         ServiceId = serviceId;
         FilePath = ResolveFilePath(serviceId, filePath);
         BootstrapFilePath = BootstrapFileStore.ResolveFilePath(serviceId, bootstrapFilePath);
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.openBootstrapProbe = openBootstrapProbe;
     }
 
     /// <summary>Gets the service the credential belongs to.</summary>
@@ -70,7 +94,7 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
     /// <summary>Gets the absolute path of the credential record.</summary>
     public string FilePath { get; }
 
-    /// <summary>Gets the absolute Bootstrap file path this store checks for existence.</summary>
+    /// <summary>Gets the absolute Bootstrap file path this store probes for existence.</summary>
     public string BootstrapFilePath { get; }
 
     /// <summary>
@@ -128,24 +152,23 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
         BootstrapCredentialLifetime lifetime,
         CancellationToken cancellationToken)
     {
-        bool bootstrapConfigured;
-        try
-        {
-            bootstrapConfigured = File.Exists(BootstrapFilePath);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return BootstrapCredentialProvisionResult.Rejected(
-                WellKnownBootstrapCredentialErrorCodes.Unavailable);
-        }
-
-        if (bootstrapConfigured)
-        {
-            return BootstrapCredentialProvisionResult.Rejected(
-                WellKnownBootstrapCredentialErrorCodes.BootstrapConfigured);
-        }
-
+        var presence = ProbeBootstrapFile();
         cancellationToken.ThrowIfCancellationRequested();
+
+        switch (presence)
+        {
+            case BootstrapFilePresence.Present:
+                return BootstrapCredentialProvisionResult.Rejected(
+                    WellKnownBootstrapCredentialErrorCodes.BootstrapConfigured);
+
+            // Only proven absence authorizes an issuance. An open that failed leaves existence
+            // unestablished, and an unestablished Bootstrap file must never produce a plaintext or
+            // a credential record.
+            case BootstrapFilePresence.Unknown:
+                return BootstrapCredentialProvisionResult.Rejected(
+                    WellKnownBootstrapCredentialErrorCodes.Unavailable);
+        }
+
         var credential = BootstrapCredential.Generate();
         var issuedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
         var expiresAtUtc = issuedAtUtc + lifetime.Value;
@@ -176,7 +199,18 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
 
     private BootstrapCredentialStatusResult ReadStatus(CancellationToken cancellationToken)
     {
-        var bootstrapConfigured = Exists(BootstrapFilePath);
+        var presence = ProbeBootstrapFile();
+        cancellationToken.ThrowIfCancellationRequested();
+        if (presence == BootstrapFilePresence.Unknown)
+        {
+            // The observation closes the failure instead of letting a false bool be read as
+            // "certainly not configured". The credential record is not read at all.
+            return BootstrapCredentialStatusResult.Absent(
+                BootstrapCredentialStatus.Unavailable,
+                bootstrapConfigured: false);
+        }
+
+        var bootstrapConfigured = presence == BootstrapFilePresence.Present;
         byte[]? content;
         try
         {
@@ -501,6 +535,12 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
         timestamp = parsed;
         return true;
     }
+
+    /// <summary>
+    /// Establishes whether the Bootstrap file exists, from one read-only open that reads nothing.
+    /// </summary>
+    private BootstrapFilePresence ProbeBootstrapFile() =>
+        BootstrapFilePresenceProbe.Probe(BootstrapFilePath, openBootstrapProbe);
 
     private static bool Exists(string path)
     {
