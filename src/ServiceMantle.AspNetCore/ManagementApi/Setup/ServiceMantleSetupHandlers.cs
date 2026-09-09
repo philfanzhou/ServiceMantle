@@ -10,19 +10,28 @@ namespace ServiceMantle.AspNetCore;
 /// completion transaction.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Neither handler introduces a second installation authority, issues or rotates a Setup Code, or
 /// writes anything of its own. ServiceMantle owns no wall-clock budget here: a Setup commit is the
 /// consumer's transaction, so an internal timeout owned by the store or the executor is mapped to
 /// the fixed unavailable result rather than imposed by this endpoint.
+/// </para>
+/// <para>
+/// The caller's own cancellation outranks everything a boundary produced. At each observation point
+/// - the store read, the body read and parse, and the executor - the request's abort is checked
+/// before the outcome is classified, so a request that was aborted while an internal failure or an
+/// unrelated internal cancellation happened is answered with the caller's cancellation rather than
+/// with a fixed result.
+/// </para>
 /// </remarks>
 internal static class ServiceMantleSetupHandlers
 {
     /// <summary>Projects only whether the installation is pending or completed.</summary>
     internal static async Task<IResult> StatusAsync(HttpContext context)
     {
-        context.RequestAborted.ThrowIfCancellationRequested();
+        ObserveCallerCancellation(context);
         var state = await TryReadAsync(context).ConfigureAwait(false);
-        context.RequestAborted.ThrowIfCancellationRequested();
+        ObserveCallerCancellation(context);
         return state switch
         {
             null => ServiceMantleSetupResult.Unavailable,
@@ -39,12 +48,12 @@ internal static class ServiceMantleSetupHandlers
         HttpContext context,
         ServiceMantleSetupExecutor executor)
     {
-        context.RequestAborted.ThrowIfCancellationRequested();
+        ObserveCallerCancellation(context);
 
         // A completed installation is a stable replay boundary: it answers the fixed conflict
         // without reading, parsing, or validating the supplied code at all.
         var state = await TryReadAsync(context).ConfigureAwait(false);
-        context.RequestAborted.ThrowIfCancellationRequested();
+        ObserveCallerCancellation(context);
         if (state is null)
         {
             return ServiceMantleSetupResult.Unavailable;
@@ -60,15 +69,13 @@ internal static class ServiceMantleSetupHandlers
         {
             code = await ServiceMantleSetupRequestParser.ParseAsync(context).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
-        {
-            throw;
-        }
         catch
         {
+            ObserveCallerCancellation(context);
             return ServiceMantleSetupResult.Unavailable;
         }
 
+        ObserveCallerCancellation(context);
         if (code is null)
         {
             // An unusable HTTP shape and an unusable code shape are one fixed rejection each, and
@@ -76,24 +83,21 @@ internal static class ServiceMantleSetupHandlers
             return ServiceMantleManagementApiResults.InvalidRequest();
         }
 
-        context.RequestAborted.ThrowIfCancellationRequested();
         ServiceMantleSetupCompletionResult? result;
         try
         {
             result = await executor(context, code, context.RequestAborted).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
-        {
-            throw;
-        }
         catch
         {
             // An executor failure, an internal timeout, and an unrelated internal cancellation are
-            // one safe outcome. The reason is never projected.
+            // one safe outcome. The reason is never projected. The executor is not called a second
+            // time and nothing is retried, rolled back, or committed here.
+            ObserveCallerCancellation(context);
             return ServiceMantleSetupResult.Unavailable;
         }
 
-        context.RequestAborted.ThrowIfCancellationRequested();
+        ObserveCallerCancellation(context);
         return result?.Status switch
         {
             ServiceMantleSetupCompletionStatus.Committed => ServiceMantleSetupResult.NoContent,
@@ -119,13 +123,31 @@ internal static class ServiceMantleSetupHandlers
                 ? null
                 : await store.FindAsync(serviceId, context.RequestAborted).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
-        {
-            throw;
-        }
         catch
         {
+            ObserveCallerCancellation(context);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Observes the caller's own cancellation, in preference to whatever a boundary produced.
+    /// </summary>
+    /// <remarks>
+    /// The thrown exception is created here and carries exactly
+    /// <see cref="HttpContext.RequestAborted"/>. It is never the exception a boundary raised, so an
+    /// internal cancellation carrying another token is not propagated as if it were the caller's,
+    /// and no internal message, inner exception, supplied code, or connection detail can reach the
+    /// caller through it. When the request was not aborted, the boundary keeps its existing fixed
+    /// result: an internal cancellation, an internal timeout, and an ordinary failure all stay the
+    /// same safe outcome.
+    /// </remarks>
+    private static void ObserveCallerCancellation(HttpContext context)
+    {
+        var token = context.RequestAborted;
+        if (token.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(token);
         }
     }
 }
