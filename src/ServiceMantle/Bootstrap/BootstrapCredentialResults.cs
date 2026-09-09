@@ -16,7 +16,9 @@ public static class WellKnownBootstrapCredentialErrorCodes
     public const string Invalid = "bootstrap_credential.invalid";
 
     /// <summary>
-    /// The credential store is corrupt, oversized, inaccessible, or failed with an I/O error.
+    /// The credential store is corrupt, oversized, inaccessible, or failed with an I/O error, or
+    /// the Bootstrap file's existence could not be established. An operation that cannot prove the
+    /// Bootstrap file is absent reports this rather than issuing a credential.
     /// </summary>
     public const string Unavailable = "bootstrap_credential.unavailable";
 
@@ -24,7 +26,9 @@ public static class WellKnownBootstrapCredentialErrorCodes
     public const string AlreadyExists = "bootstrap_credential.already_exists";
 
     /// <summary>
-    /// The Bootstrap file already exists, so a first-creation credential is never provisioned.
+    /// The store proved the Bootstrap file exists, so a first-creation credential is never
+    /// provisioned. Only proven existence produces this code; an existence the store could not
+    /// establish is <see cref="Unavailable"/>.
     /// </summary>
     public const string BootstrapConfigured = "bootstrap_credential.bootstrap_configured";
 
@@ -190,7 +194,10 @@ public enum BootstrapCredentialStatus
     /// <summary>A credential record exists but has expired.</summary>
     Expired = 2,
 
-    /// <summary>The record is corrupt, oversized, or inaccessible.</summary>
+    /// <summary>
+    /// The record is corrupt, oversized, or inaccessible, or the Bootstrap file's existence could
+    /// not be established. The observation is closed as failed rather than reported as a state.
+    /// </summary>
     Unavailable = 3,
 }
 
@@ -223,7 +230,15 @@ public sealed class BootstrapCredentialStatusResult
     /// <summary>Gets the expiry of an existing record.</summary>
     public DateTime? ExpiresAtUtc { get; }
 
-    /// <summary>Gets whether a Bootstrap file already exists for this service.</summary>
+    /// <summary>Gets whether the store proved a Bootstrap file exists for this service.</summary>
+    /// <remarks>
+    /// This is a compatible projection of proven existence, not of absence. It is
+    /// <see langword="true"/> only when an open established the file is there. When
+    /// <see cref="Status"/> is <see cref="BootstrapCredentialStatus.Unavailable"/>, a
+    /// <see langword="false"/> value is not evidence that the file is missing, and a caller must
+    /// neither provision on it nor report the service as certainly unconfigured. On every other
+    /// status the value keeps its existing meaning.
+    /// </remarks>
     public bool BootstrapConfigured { get; }
 
     /// <summary>Creates an observation for an existing record.</summary>

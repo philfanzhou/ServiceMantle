@@ -19,7 +19,10 @@ public enum ServiceMantleManagementEntryKind
     /// <summary>Anonymous <c>POST {versionedRoot}/bootstrap</c>, admitted only before configuration.</summary>
     BootstrapCreate,
 
-    /// <summary>Administrator <c>PUT {versionedRoot}/bootstrap</c>, admitted only when ready.</summary>
+    /// <summary>
+    /// Administrator <c>PUT {versionedRoot}/bootstrap</c>, admitted only when ready, authorized
+    /// through the fixed management cookie scheme.
+    /// </summary>
     BootstrapUpdate,
 
     /// <summary>Anonymous <c>GET</c>/<c>HEAD {versionedRoot}/setup</c>, admitted while pending or completed.</summary>
@@ -114,7 +117,13 @@ public static class ServiceMantleManagementEntryDefaults
                 ManagementAuthorizationDefaults.AdminPolicyName,
                 ServiceMantleRateLimitingDefaults.ManagementPolicyName,
                 AnonymousClientPartition: false,
-                RequiresUnsafeRequestHeader: true),
+                RequiresUnsafeRequestHeader: true,
+                // Rewriting the Bootstrap file of a running instance is a local administrator
+                // action, so the conclusion has to come from this host's own management cookie and
+                // not from whatever default scheme a consuming service happens to have configured.
+                // The general administrator policy stays authentication-method agnostic, so the
+                // scheme is pinned by combining it with the session policy on this entry alone.
+                RequiredSchemePolicyName: ManagementAuthorizationDefaults.SessionPolicyName),
             ServiceMantleManagementEntryKind.SetupStatus => new(
                 kind,
                 SetupPath,
@@ -177,9 +186,22 @@ internal sealed record ServiceMantleManagementEntryDefinition(
     string? AuthorizationPolicyName,
     string RateLimitPolicyName,
     bool AnonymousClientPartition,
-    bool RequiresUnsafeRequestHeader)
+    bool RequiresUnsafeRequestHeader,
+    string? RequiredSchemePolicyName = null)
 {
     internal bool IsAnonymous => AuthorizationPolicyName is null;
+
+    /// <summary>
+    /// Every policy this entry is authorized with. A second policy is present only where the entry
+    /// pins the authentication scheme its conclusion may come from.
+    /// </summary>
+    internal IReadOnlyList<string> AuthorizationPolicyNames => (AuthorizationPolicyName,
+        RequiredSchemePolicyName) switch
+        {
+            (null, _) => [],
+            (var policy, null) => [policy],
+            var (policy, scheme) => [policy, scheme],
+        };
 
     internal bool AllowsMethod(string method) =>
         Methods.Any(candidate => string.Equals(candidate, method, StringComparison.OrdinalIgnoreCase));

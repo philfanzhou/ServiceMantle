@@ -46,7 +46,7 @@ internal sealed class ServiceMantleManagementEntryState(IServiceProvider service
         }
 
         var seen = new HashSet<ServiceMantleManagementEntryKind>();
-        var definitions = new List<ServiceMantleManagementEntryDefinition>();
+        var validated = new List<ValidatedEntry>();
         foreach (var endpoint in endpoints)
         {
             var definition = Validate(endpoint, root);
@@ -55,10 +55,10 @@ internal sealed class ServiceMantleManagementEntryState(IServiceProvider service
                 throw Failure();
             }
 
-            definitions.Add(definition);
+            validated.Add(new ValidatedEntry(endpoint, definition));
         }
 
-        await ValidateCapabilitiesAsync(definitions, cancellationToken).ConfigureAwait(false);
+        await ValidateCapabilitiesAsync(validated, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -141,10 +141,11 @@ internal sealed class ServiceMantleManagementEntryState(IServiceProvider service
             }
         }
         else if (anonymous ||
-            !endpoint.Metadata.OfType<IAuthorizeData>().Any(data => string.Equals(
-                data.Policy,
-                definition.AuthorizationPolicyName,
-                StringComparison.Ordinal)))
+            !definition.AuthorizationPolicyNames.All(policyName =>
+                endpoint.Metadata.OfType<IAuthorizeData>().Any(data => string.Equals(
+                    data.Policy,
+                    policyName,
+                    StringComparison.Ordinal))))
         {
             throw Failure();
         }
@@ -153,7 +154,7 @@ internal sealed class ServiceMantleManagementEntryState(IServiceProvider service
     }
 
     private async Task ValidateCapabilitiesAsync(
-        IReadOnlyList<ServiceMantleManagementEntryDefinition> definitions,
+        IReadOnlyList<ValidatedEntry> validated,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -164,7 +165,7 @@ internal sealed class ServiceMantleManagementEntryState(IServiceProvider service
             throw MissingCapability();
         }
 
-        var protectedEntries = definitions.Where(definition => !definition.IsAnonymous).ToArray();
+        var protectedEntries = validated.Where(entry => !entry.Definition.IsAnonymous).ToArray();
         if (protectedEntries.Length == 0)
         {
             return;
@@ -172,7 +173,7 @@ internal sealed class ServiceMantleManagementEntryState(IServiceProvider service
 
         var policies = services.GetService<IAuthorizationPolicyProvider>() ?? throw MissingCapability();
         foreach (var policyName in protectedEntries
-            .Select(definition => definition.AuthorizationPolicyName!)
+            .SelectMany(entry => entry.Definition.AuthorizationPolicyNames)
             .Distinct(StringComparer.Ordinal))
         {
             if (await policies.GetPolicyAsync(policyName).ConfigureAwait(false) is null)
@@ -189,17 +190,56 @@ internal sealed class ServiceMantleManagementEntryState(IServiceProvider service
             throw MissingCapability();
         }
 
-        // The session entries pin the fixed management cookie scheme, so that handler must exist.
-        if (protectedEntries.Any(definition => string.Equals(
-                definition.AuthorizationPolicyName,
+        // The entries that pin the fixed management cookie scheme need that handler to exist.
+        if (protectedEntries.Any(entry => entry.Definition.AuthorizationPolicyNames.Contains(
                 ManagementAuthorizationDefaults.SessionPolicyName,
-                StringComparison.Ordinal)) &&
+                StringComparer.Ordinal)) &&
             await schemes.GetSchemeAsync(
                 ServiceMantleManagementSessionDefaults.AuthenticationScheme).ConfigureAwait(false) is null)
         {
             throw MissingCapability();
         }
+
+        foreach (var entry in protectedEntries.Where(
+            entry => entry.Definition.RequiredSchemePolicyName is not null))
+        {
+            await ValidatePinnedSchemeAsync(entry, policies).ConfigureAwait(false);
+        }
     }
+
+    /// <summary>
+    /// Rejects an entry whose effective authentication scheme set is not exactly the fixed
+    /// management cookie scheme.
+    /// </summary>
+    /// <remarks>
+    /// The set is read from the endpoint's combined authorization policy rather than from the two
+    /// policy names the mapping applied, because a handler may add authorization data of its own.
+    /// Anything that widens the set - a scheme named directly on the endpoint, or a further policy
+    /// that names one - is refused here. A further policy that only adds requirements names no
+    /// scheme, leaves the set unchanged, and is a stricter rule rather than a downgrade, so it is
+    /// admitted.
+    /// </remarks>
+    private static async Task ValidatePinnedSchemeAsync(
+        ValidatedEntry entry,
+        IAuthorizationPolicyProvider policies)
+    {
+        var combined = await AuthorizationPolicy.CombineAsync(
+            policies,
+            entry.Endpoint.Metadata.OfType<IAuthorizeData>()).ConfigureAwait(false);
+        if (combined is null ||
+            combined.AuthenticationSchemes.Count != 1 ||
+            !string.Equals(
+                combined.AuthenticationSchemes[0],
+                ServiceMantleManagementSessionDefaults.AuthenticationScheme,
+                StringComparison.Ordinal))
+        {
+            throw Failure();
+        }
+    }
+
+    private sealed record ValidatedEntry(
+        RouteEndpoint Endpoint,
+        ServiceMantleManagementEntryDefinition Definition);
 
     internal static InvalidOperationException Failure() =>
         new("The ServiceMantle management entry mapping is invalid.");
