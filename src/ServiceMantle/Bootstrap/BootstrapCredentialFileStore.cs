@@ -358,6 +358,34 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
         DateTime.SpecifyKind(value, DateTimeKind.Utc).ToString("O", CultureInfo.InvariantCulture);
 
     /// <summary>
+    /// Opens a credential record for reading, using the one sharing mode every read of a record
+    /// goes through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The initial read, the status read, and the re-check of the claimed record all open here, so
+    /// there is a single place where a record's read sharing is decided.
+    /// </para>
+    /// <para>
+    /// The handle is read-only and shares read and delete. Delete sharing is what the one-time
+    /// claim needs: the claim renames the record, which on Windows requires <c>DELETE</c> access on
+    /// it, and two handles are compatible only when each one's share mode covers what the other was
+    /// granted. Without it a reader and a concurrent claim refuse each other, and a refused read
+    /// turns a merely invalid candidate into <c>bootstrap_credential.unavailable</c>. The flag
+    /// widens what other handles may request; it grants this handle no write or delete access, and
+    /// it relaxes no file permission.
+    /// </para>
+    /// </remarks>
+    internal static FileStream OpenRecordForRead(string path) =>
+        new(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete,
+            BufferSize,
+            FileOptions.SequentialScan);
+
+    /// <summary>
     /// Reads the raw record, or returns null when it does not exist. An oversized file is read only
     /// far enough to prove that it is oversized.
     /// </summary>
@@ -366,13 +394,7 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
         FileStream stream;
         try
         {
-            stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                BufferSize,
-                FileOptions.SequentialScan);
+            stream = OpenRecordForRead(path);
         }
         catch (FileNotFoundException)
         {
