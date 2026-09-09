@@ -44,21 +44,21 @@ jobs:
           --diagnostic-synchronous-write
           --diagnostic-output-directory artifacts/test-diagnostics/release-tool-windows
 
-      # The Bootstrap file store publishes a new file with a hard link, which is a different
-      # operating system call per platform - CreateHardLinkW here, link() on Unix. The full suite
-      # runs on Linux only, so the Windows half of that call would otherwise never be executed.
+      # The Bootstrap file operations are different operating system calls per platform -
+      # CreateHardLinkW and MoveFileExW here, link() and rename() on Unix - and Windows decides
+      # handle compatibility from the share modes of both sides, which Unix does not do at all. The
+      # full suite runs on Linux only, so the Windows half of those calls and of every sharing rule
+      # they depend on would otherwise never be executed.
       #
-      # Scoped to the two classes that exercise that publish. The wider Bootstrap namespace cannot
-      # run here yet: BootstrapCredentialFileStore has a Windows-only sharing defect, tracked in
-      # #355, that is unrelated to this store and fails independently of this step.
+      # The whole Bootstrap namespace runs here. The credential record's Windows-only sharing
+      # defect that had narrowed this filter to two classes is fixed in #355.
       - name: Verify Bootstrap file publishing
         run: >-
           dotnet test
           --project tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj
           --configuration Release
           --timeout 5m
-          --filter-class "ServiceMantle.Tests.Bootstrap.BootstrapFileStoreTests"
-          --filter-class "ServiceMantle.Tests.Bootstrap.BootstrapFileFailureKindTests"
+          --filter-class "ServiceMantle.Tests.Bootstrap.*"
           --minimum-expected-tests 1
           --zero-tests-policy strict
           --diagnostic

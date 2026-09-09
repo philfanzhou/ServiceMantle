@@ -93,6 +93,27 @@ Consumption is one-way. The endpoint that owns Bootstrap creation consumes the c
 calling `BootstrapConfigurationManager.CreateAsync`, so a later validation, write, response, or
 process failure leaves the credential consumed.
 
+## Record sharing during a claim
+
+Every read of a record - the initial read, the status read, and the re-check of the claimed record -
+goes through one place, read-only, sharing read and delete. Sharing delete is what the claim needs:
+the claim renames the record, which on Windows requires `DELETE` access on it, and two handles are
+compatible there only when each one's share mode covers what the other was granted. Without it, a
+reader and a concurrent claim refuse each other, and a refused read reports
+`bootstrap_credential.unavailable` for a candidate that is merely wrong. Unix renames never consult
+open handles, so this rule has no Unix equivalent.
+
+The flag widens only what *other* handles are allowed to request. The read handle still has read
+access and nothing more, no file permission is relaxed, and a reader keeps observing the record it
+opened even after the claim renames it.
+
+This removes only the incompatibility between the store's own read handles and its own claim, on a
+normal local file system with usable permissions. It does not promise a successful consumption
+against an outside exclusive handle, anti-virus software, an arbitrary ACL or file system, a killed
+process, or a concurrent local re-provision, and it does not turn a storage failure into
+`bootstrap_credential.invalid`: corruption, oversize, access denial, and I/O failure stay
+`bootstrap_credential.unavailable`.
+
 ## The consume-first window
 
 Consuming the credential and publishing the Bootstrap file are two files and are not one atomic
