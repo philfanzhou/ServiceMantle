@@ -114,6 +114,14 @@ total, which is a retry and not a wall-clock guarantee - before it is reported. 
 completes leaves the next open reporting the record as absent, which is the true answer and the
 caller's ordinary invalid result; a refusal that survives the re-observations is reported unchanged.
 
+The claim itself is classified the same way. A rename the operating system refused only proves that
+this caller did not claim the record, and Windows reports a claim already in flight on the same
+record as an access denial rather than as an absence. The record is therefore re-observed rather
+than guessed at: one that is gone was claimed by somebody else, which is the ordinary invalid
+result, while one that is still readable - and a re-observation that is itself refused - leaves the
+denial unexplained and stays `bootstrap_credential.unavailable`. A permission denial on a record
+that is still there is never reported as an invalid candidate.
+
 This removes only the incompatibility between the store's own read handles and its own claim, on a
 normal local file system with usable permissions. It does not promise a successful consumption
 against an outside exclusive handle, anti-virus software, an arbitrary ACL or file system, a killed

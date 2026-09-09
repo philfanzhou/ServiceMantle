@@ -273,7 +273,15 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
         }
         catch (UnauthorizedAccessException)
         {
-            return Rejected(WellKnownBootstrapCredentialErrorCodes.Unavailable);
+            // A refused rename only proves that this caller did not claim the record. Windows
+            // reports a claim that is already in flight on the same record as an access denial
+            // rather than as an absence, so the record is re-observed instead of guessed at: one
+            // that is gone was claimed by somebody else, which is the caller's ordinary invalid
+            // result, while one that is still there leaves the denial unexplained and stays a
+            // storage failure.
+            return Rejected(WasClaimedElsewhere(FilePath)
+                ? WellKnownBootstrapCredentialErrorCodes.Invalid
+                : WellKnownBootstrapCredentialErrorCodes.Unavailable);
         }
 
         try
@@ -307,6 +315,27 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
 
     private static BootstrapCredentialConsumptionResult Rejected(string errorCode) =>
         BootstrapCredentialConsumptionResult.Rejected(errorCode);
+
+    /// <summary>
+    /// Re-observes the record through the same read boundary after a refused claim, and reports
+    /// whether it is gone.
+    /// </summary>
+    /// <remarks>
+    /// Only a proven absence answers true. A record that is still readable, and a re-observation
+    /// that is itself refused, both leave the refusal unexplained, so the caller keeps the storage
+    /// failure rather than being told its candidate was merely invalid.
+    /// </remarks>
+    private static bool WasClaimedElsewhere(string path)
+    {
+        try
+        {
+            return TryReadRecord(path) is null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 
     private static byte[] Serialize(
         BootstrapCredentialDigest digest,
