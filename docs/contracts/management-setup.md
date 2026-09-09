@@ -91,11 +91,42 @@ failure must roll back, discard the whole scope without retrying, and never reus
 | Invalid, malformed, expired, mismatched, never-issued, or replayed code while pending | `401 {"errorCode":"management.setup.credential_invalid"}` |
 | Already completed, concurrent completion, or version conflict | Fixed management `409` |
 | Store, orchestrator, save, commit, cleanup failure, or internal timeout | `503 {"errorCode":"management.setup.unavailable"}` |
-| Caller cancellation | The original `RequestAborted` token propagates |
+| Caller cancellation | No `IResult`: the original `RequestAborted` token propagates, in preference to any boundary outcome |
 
 The `401` discloses no sub-reason: invalid, malformed, expired, mismatched, never-issued, and
 replayed codes are indistinguishable to the caller. A null completion result and an undefined status
 value are treated as unavailable, never guessed.
+
+## Cancellation priority
+
+The caller's own cancellation outranks everything a boundary produced. At each of the handlers' three
+observation points - the installation store read, the body read and parse, and the executor - the
+request's abort is checked before the outcome is classified. If `HttpContext.RequestAborted` is
+already cancelled, the handler throws an `OperationCanceledException` carrying exactly that token and
+returns no `IResult`, whatever the boundary answered:
+
+| At an observation point, with `RequestAborted` cancelled | Result |
+| --- | --- |
+| The boundary returned a usable value, a rejection, or null | The caller's cancellation |
+| The boundary threw an ordinary failure or an internal timeout | The caller's cancellation |
+| The boundary threw a cancellation carrying another token | The caller's cancellation, with the caller's token |
+
+The thrown exception is created by the handler. It is never the exception the boundary raised, so an
+internal cancellation is not passed through as if it were the caller's, and its message, inner
+exception, the supplied code, and any connection or store detail stay out of it.
+
+When the request was **not** cancelled, nothing changes: an ordinary failure, an internal timeout,
+and an internal cancellation carrying a foreign token remain the one fixed
+`503 {"errorCode":"management.setup.unavailable"}`, and every other result in the table above keeps
+its meaning. A cancellation observed between two phases stops the request there: the parser and the
+executor are not entered, and a cancellation observed after the executor returned or threw does not
+call it a second time, retry it, or roll anything back on its behalf.
+
+The priority covers these observable boundaries only. It says nothing about a cancellation that
+happens after the handler returned, cannot terminate uncooperative synchronous I/O, and imposes no
+wall-clock bound. A consumer transaction that already committed is not rolled back by a later
+cancellation, no compensation is provided for a malformed or malicious executor, and
+`Response.HasStarted` and a failed response write keep following the existing serializer contract.
 
 ## Negative disclosure guarantee
 
