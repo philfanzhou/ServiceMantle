@@ -77,6 +77,18 @@ public sealed class OracleDatabaseTargetPreparationProvider : IDatabaseTargetPre
     /// Creates and grants <c>CREATE SESSION</c> only to a user proved absent in the target PDB.
     /// File-shaped requests are rejected before connection parsing or database operations.
     /// </summary>
+    /// <remarks>
+    /// Once the underlying database operations have returned or failed, the outcome is resolved at a
+    /// single completion checkpoint that applies the fixed precedence of ADR 0001: a permitted
+    /// compensation that did not verifiably remove this call's new user, then caller cancellation,
+    /// then the caller-provided overall timeout, then the triggered outcome itself. Cancellation or
+    /// timeout observed at that checkpoint therefore outranks a successful underlying result. This
+    /// method does not promise to reclassify a cancellation that first becomes observable after the
+    /// checkpoint, while the result is being returned or the administrative session is being
+    /// released, and it neither interrupts an uncooperative driver nor bounds the total elapsed time.
+    /// Cancellation and timeout never widen the compensation window: no additional
+    /// <c>DROP USER</c>, re-grant, or retry is issued once <c>GRANT CREATE SESSION</c> has been sent.
+    /// </remarks>
     public async ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
         DatabaseTargetPreparationRequest request,
         TimeSpan timeout,
@@ -149,6 +161,7 @@ public sealed class OracleDatabaseTargetPreparationProvider : IDatabaseTargetPre
         IOracleAdministrativeSession? session = null;
         var creationAcknowledged = false;
         var grantIssued = false;
+        DatabaseTargetPreparationResult triggeredResult;
         try
         {
             session = await operations.OpenAdministrativeSessionAsync(
@@ -160,44 +173,17 @@ public sealed class OracleDatabaseTargetPreparationProvider : IDatabaseTargetPre
             var match = await session.FindUserAsync(targetUserName, operationToken).ConfigureAwait(false);
             if (match == OracleUserMatch.Conflicting)
             {
-                return Failure(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict);
+                triggeredResult = Failure(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict);
             }
-
-            if (match == OracleUserMatch.Exact)
+            else if (match == OracleUserMatch.Exact)
             {
-                return await ResolveExistingAsync(targetBuilder, targetUserName, operationToken)
+                triggeredResult = await ResolveExistingAsync(targetBuilder, targetUserName, operationToken)
                     .ConfigureAwait(false);
             }
-
-            try
+            else
             {
-                await session.CreateUserAsync(targetUserName, targetPassword, operationToken)
-                    .ConfigureAwait(false);
-                creationAcknowledged = true;
+                triggeredResult = await CreateAndVerifyAsync(session).ConfigureAwait(false);
             }
-            catch (OracleOperationException exception)
-                when (exception.Kind == OracleFailureKind.TargetConflict)
-            {
-                return await ResolveCreateRaceAsync(
-                        session,
-                        targetBuilder,
-                        targetUserName,
-                        operationToken)
-                    .ConfigureAwait(false);
-            }
-
-            operationToken.ThrowIfCancellationRequested();
-            grantIssued = true;
-            await session.GrantCreateSessionAsync(targetUserName, operationToken).ConfigureAwait(false);
-
-            var freshOutcome = await operations.ProbeTargetAsync(
-                    targetBuilder,
-                    targetUserName,
-                    operationToken)
-                .ConfigureAwait(false);
-            return freshOutcome == OracleTargetProbeOutcome.Success
-                ? DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)
-                : Failure(MapPreparationProbeFailure(freshOutcome));
         }
         catch (Exception exception)
         {
@@ -229,6 +215,64 @@ public sealed class OracleDatabaseTargetPreparationProvider : IDatabaseTargetPre
         {
             await DisposeSafelyAsync(session).ConfigureAwait(false);
         }
+
+        // Every path that produced a triggered result did so without a permitted, failed
+        // compensation, so ADR 0001 leaves caller cancellation ahead of the overall timeout.
+        return CompleteTriggeredResult(triggeredResult, callerToken, timeoutToken);
+
+        async ValueTask<DatabaseTargetPreparationResult> CreateAndVerifyAsync(
+            IOracleAdministrativeSession openSession)
+        {
+            try
+            {
+                await openSession.CreateUserAsync(targetUserName, targetPassword, operationToken)
+                    .ConfigureAwait(false);
+                creationAcknowledged = true;
+            }
+            catch (OracleOperationException exception)
+                when (exception.Kind == OracleFailureKind.TargetConflict)
+            {
+                return await ResolveCreateRaceAsync(
+                        openSession,
+                        targetBuilder,
+                        targetUserName,
+                        operationToken)
+                    .ConfigureAwait(false);
+            }
+
+            operationToken.ThrowIfCancellationRequested();
+            grantIssued = true;
+            await openSession.GrantCreateSessionAsync(targetUserName, operationToken).ConfigureAwait(false);
+
+            var freshOutcome = await operations.ProbeTargetAsync(
+                    targetBuilder,
+                    targetUserName,
+                    operationToken)
+                .ConfigureAwait(false);
+            return freshOutcome == OracleTargetProbeOutcome.Success
+                ? DatabaseTargetPreparationResult.Success(DatabaseTargetPreparationOutcome.Created)
+                : Failure(MapPreparationProbeFailure(freshOutcome));
+        }
+    }
+
+    /// <summary>
+    /// Applies the ADR 0001 completion precedence to a result the underlying operations returned
+    /// normally, so caller cancellation and the overall timeout are not lost when no exception
+    /// carried them out of the orchestration.
+    /// </summary>
+    private static DatabaseTargetPreparationResult CompleteTriggeredResult(
+        DatabaseTargetPreparationResult triggeredResult,
+        CancellationToken callerToken,
+        CancellationToken timeoutToken)
+    {
+        if (callerToken.IsCancellationRequested)
+        {
+            throw SafeCancellation(callerToken);
+        }
+
+        return timeoutToken.IsCancellationRequested
+            ? Failure(WellKnownDatabaseTargetPreparationErrorCodes.Timeout)
+            : triggeredResult;
     }
 
     private async ValueTask<DatabaseTargetPreparationResult> ResolveExistingAsync(
