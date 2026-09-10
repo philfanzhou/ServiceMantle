@@ -85,6 +85,9 @@ that package is expected to reach.
 
 `verify` requires exactly one `.nupkg` and one `.snupkg` per registration. It validates IDs, versions, MIT license, repository URL/commit, framework references, the complete dependency set, and same-version references between ServiceMantle packages before artifacts are uploaded.
 
+The tag procedure, the gates a release has to clear, and the one-time NuGet.org account
+configuration are described in [RELEASING.md](../RELEASING.md).
+
 ## Release versions
 
 `resolve-version` is the only place a release version is decided, so a workflow never repeats the
