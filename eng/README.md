@@ -64,4 +64,23 @@ dotnet run --project eng/ServiceMantle.ReleaseTool -- pack --version 0.0.0-local
 dotnet run --project eng/ServiceMantle.ReleaseTool -- verify --version 0.0.0-local.1 --commit local --input artifacts/packages
 ```
 
+`eng/tests/package-consumption.sh` closes the loop that `verify` cannot: it builds and starts a
+throwaway consumer against the packed artifacts, using a local folder feed, package source mapping
+that pins every `ServiceMantle*` id to that feed, and a private `NUGET_PACKAGES` cache. A passing
+run proves the shipped package stands on its own - no `ProjectReference`, no sibling repository
+path, and no ServiceMantle package silently reused from the shared global cache. It also fails if
+the consumer resolves a ServiceMantle library the local feed does not provide, which is how a
+retired package id would show up if something still depended on it.
+
+```bash
+eng/tests/package-consumption.sh \
+  --version 0.0.0-local.1 \
+  --packages artifacts/packages \
+  --consumer eng/tests/consumers/opentelemetry
+```
+
+Each directory under `eng/tests/consumers/` is one consumer: a `.csproj` whose package references
+use the `__SERVICEMANTLE_VERSION__` placeholder, plus the program that exercises the entry points
+that package is expected to reach.
+
 `verify` requires exactly one `.nupkg` and one `.snupkg` per registration. It validates IDs, versions, MIT license, repository URL/commit, framework references, the complete dependency set, and same-version references between ServiceMantle packages before artifacts are uploaded.

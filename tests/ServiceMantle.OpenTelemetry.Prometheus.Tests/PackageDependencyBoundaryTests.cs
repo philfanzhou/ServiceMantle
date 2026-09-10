@@ -1,50 +1,52 @@
-using System.Text.Json;
-using System.Xml.Linq;
+using Microsoft.Extensions.DependencyInjection;
+using ServiceMantle.AspNetCore;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Prometheus.Tests;
 
 public sealed class PackageDependencyBoundaryTests
 {
-    [Theory]
-    [InlineData("ServiceMantle", "ServiceMantle.csproj")]
-    [InlineData("ServiceMantle.AspNetCore", "ServiceMantle.AspNetCore.csproj")]
-    [InlineData("ServiceMantle.OpenTelemetry", "ServiceMantle.OpenTelemetry.csproj")]
-    public void Existing_packages_have_no_Prometheus_dependency(string directory, string projectFile)
+    [Fact]
+    public void Prometheus_public_surface_ships_in_the_merged_assembly_with_its_namespace_unchanged()
     {
-        var repositoryRoot = FindRepositoryRoot();
-        var projectPath = Path.Combine(repositoryRoot, "src", directory, projectFile);
-        var project = XDocument.Load(projectPath);
-
-        Assert.DoesNotContain(project.Descendants("PackageReference"), reference =>
-            IsPrometheus((string?)reference.Attribute("Include")));
-        Assert.DoesNotContain(project.Descendants("ProjectReference"), reference =>
-            IsPrometheus((string?)reference.Attribute("Include")));
-
-        var assetsPath = Path.Combine(repositoryRoot, "artifacts", "obj", directory, "project.assets.json");
-        Assert.True(File.Exists(assetsPath), $"Missing restored dependency graph: {assetsPath}");
-        using var assets = JsonDocument.Parse(File.ReadAllText(assetsPath));
-        Assert.DoesNotContain(
-            assets.RootElement.GetProperty("libraries").EnumerateObject(),
-            library => IsPrometheus(library.Name.Split('/')[0]));
-    }
-
-    private static bool IsPrometheus(string? value) =>
-        value?.Contains("Prometheus", StringComparison.OrdinalIgnoreCase) == true;
-
-    private static string FindRepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
+        foreach (var type in new[]
+                 {
+                     typeof(ServiceMantlePrometheusOptions),
+                     typeof(ServiceMantlePrometheusConfigurationException),
+                     typeof(WellKnownServiceMantlePrometheusErrorCodes),
+                 })
         {
-            if (File.Exists(Path.Combine(directory.FullName, "eng", "packages.json")))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
+            Assert.Equal("ServiceMantle.OpenTelemetry", type.Assembly.GetName().Name);
+            Assert.Equal("ServiceMantle.OpenTelemetry.Prometheus", type.Namespace);
         }
 
-        throw new InvalidOperationException("Could not locate the repository root.");
+        Assert.Equal(
+            "ServiceMantle.OpenTelemetry",
+            typeof(ServiceMantlePrometheusBuilderExtensions).Assembly.GetName().Name);
+        Assert.Equal(
+            "ServiceMantle.OpenTelemetry",
+            typeof(global::Microsoft.AspNetCore.Builder.ServiceMantlePrometheusEndpointRouteBuilderExtensions).Assembly.GetName().Name);
+    }
+
+    // Merging the scraping endpoint into the instrumentation package removes the dependency
+    // isolation that used to keep the Prometheus exporter out of a host that never asked for it.
+    // Referencing the package, and even enabling the base instrumentation, must therefore still
+    // register no exporter, no endpoint state, and no scrape gate.
+    [Fact]
+    public void Referencing_the_merged_package_registers_no_prometheus_service()
+    {
+        var services = new ServiceCollection();
+        services.AddServiceMantle(
+            ServiceId.Parse("catalog"),
+            InstanceId.Parse("catalog-01"),
+            serviceVersion: "1.2.3")
+            .AddOpenTelemetryInstrumentation();
+
+        Assert.DoesNotContain(services, descriptor =>
+            descriptor.ServiceType == typeof(ServiceMantlePrometheusRegistration) ||
+            descriptor.ImplementationType == typeof(ServiceMantlePrometheusSnapshotProvider) ||
+            descriptor.ImplementationType == typeof(ServiceMantlePrometheusEndpointState) ||
+            descriptor.ImplementationType == typeof(ServiceMantlePrometheusStartupValidator) ||
+            descriptor.ImplementationType == typeof(ServiceMantlePrometheusExporterOptionsPolicy));
     }
 }

@@ -1,5 +1,5 @@
-using System.Text.Json;
-using System.Xml.Linq;
+using Microsoft.Extensions.DependencyInjection;
+using ServiceMantle.AspNetCore;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Otlp.Tests;
@@ -7,63 +7,44 @@ namespace ServiceMantle.OpenTelemetry.Otlp.Tests;
 public sealed class PackageDependencyBoundaryTests
 {
     [Fact]
-    public void Otlp_package_is_isolated_and_base_package_has_no_exporter_dependency()
+    public void Otlp_public_surface_ships_in_the_merged_assembly_with_its_namespace_unchanged()
     {
-        var root = FindRepositoryRoot();
-        var otlpProject = XDocument.Load(Path.Combine(
-            root,
-            "src",
-            "ServiceMantle.OpenTelemetry.Otlp",
-            "ServiceMantle.OpenTelemetry.Otlp.csproj"));
-        var dependencies = otlpProject.Descendants("PackageReference")
-            .Select(element => (string?)element.Attribute("Include"))
-            .Concat(otlpProject.Descendants("ProjectReference").Select(element =>
-                Path.GetFileNameWithoutExtension(
-                    ((string?)element.Attribute("Include"))!
-                        .Replace('\\', Path.DirectorySeparatorChar))))
-            .Order(StringComparer.OrdinalIgnoreCase);
-        Assert.Equal(
-            new[] { "OpenTelemetry.Exporter.OpenTelemetryProtocol", "ServiceMantle.OpenTelemetry" }
-                .Order(StringComparer.OrdinalIgnoreCase),
-            dependencies,
-            StringComparer.OrdinalIgnoreCase);
-
-        foreach (var package in new[]
+        foreach (var type in new[]
                  {
-                     "ServiceMantle",
-                     "ServiceMantle.AspNetCore",
-                     "ServiceMantle.OpenTelemetry",
+                     typeof(ServiceMantleOtlpOptions),
+                     typeof(ServiceMantleOtlpProtocol),
+                     typeof(ServiceMantleOtlpConfigurationException),
+                     typeof(WellKnownServiceMantleOtlpErrorCodes),
+                     typeof(IServiceMantleOtlpAuthenticationHeaderResolver),
+                     typeof(ServiceMantleOtlpAuthenticationHeader),
                  })
         {
-            var assetsPath = Path.Combine(
-                root,
-                "artifacts",
-                "obj",
-                package,
-                "project.assets.json");
-            Assert.True(File.Exists(assetsPath));
-            using var assets = JsonDocument.Parse(File.ReadAllText(assetsPath));
-            Assert.DoesNotContain(
-                assets.RootElement.GetProperty("libraries").EnumerateObject(),
-                library => library.Name.StartsWith(
-                    "OpenTelemetry.Exporter.OpenTelemetryProtocol/",
-                    StringComparison.OrdinalIgnoreCase));
+            Assert.Equal("ServiceMantle.OpenTelemetry", type.Assembly.GetName().Name);
+            Assert.Equal("ServiceMantle.OpenTelemetry.Otlp", type.Namespace);
         }
+
+        Assert.Equal(
+            "ServiceMantle.OpenTelemetry",
+            typeof(ServiceMantleOtlpBuilderExtensions).Assembly.GetName().Name);
     }
 
-    private static string FindRepositoryRoot()
+    // Merging the exporter into the instrumentation package removes the dependency isolation that
+    // used to keep the OTLP driver out of a host that never asked for it. Referencing the package,
+    // and even enabling the base instrumentation, must therefore still activate nothing OTLP-owned.
+    [Fact]
+    public void Referencing_the_merged_package_registers_no_otlp_service()
     {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "eng", "packages.json")))
-            {
-                return directory.FullName;
-            }
+        var services = new ServiceCollection();
+        services.AddServiceMantle(
+            ServiceId.Parse("catalog"),
+            InstanceId.Parse("catalog-01"),
+            serviceVersion: "1.2.3")
+            .AddOpenTelemetryInstrumentation();
 
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Could not locate the repository root.");
+        Assert.DoesNotContain(services, descriptor =>
+            descriptor.ServiceType == typeof(ServiceMantleOtlpRuntime) ||
+            descriptor.ImplementationType == typeof(ServiceMantleOtlpRuntime) ||
+            descriptor.ImplementationType == typeof(ServiceMantleOtlpOptionsConfigurator) ||
+            descriptor.ImplementationType == typeof(ServiceMantleOtlpStartupValidator));
     }
 }

@@ -43,7 +43,8 @@ exactly as before, and telemetry introduces no second authentication policy and 
 | Controlled disposal failure | `true`, an instrumentation that throws once on dispose | the failure reaches the caller instead of being swallowed; the fixture then releases the handles it owns, and the process-wide listeners are detached |
 | Equivalent repeated registration | `true`, registered twice | still one `TracerProvider`, one `MeterProvider`, one instrumentation instance, and one server span per request |
 | Conflicting extra registration | `true` plus a registration that disables runtime metrics | the public package's own start-up validation refuses it; `ApplicationStarted` is never signalled and no listener is attached. The sample does not bypass or weaken that validation |
-| Restored graph | - | the sample's `project.assets.json` contains the base instrumentation packages and no `OpenTelemetry.Exporter*` or Prometheus library |
+| Restored graph | - | the sample's `project.assets.json` contains the base instrumentation packages, and also the OTLP and Prometheus exporter drivers that `ServiceMantle.OpenTelemetry` now ships in one package |
+| Enabled composition | `true` | the sample's container holds no service owned by `ServiceMantle.OpenTelemetry.Otlp`, `ServiceMantle.OpenTelemetry.Prometheus`, or `OpenTelemetry.Exporter`, so a driver in the graph is still not an activated exporter |
 
 ## Isolation
 

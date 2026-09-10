@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\ServiceMantle.OpenTelemetry.Otlp\ServiceMantle.OpenTelemetry.Otlp.csproj" />
+    <ProjectReference Include="..\..\src\ServiceMantle.OpenTelemetry\ServiceMantle.OpenTelemetry.csproj" />
   </ItemGroup>
 
 </Project>

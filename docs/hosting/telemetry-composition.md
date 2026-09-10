@@ -139,9 +139,10 @@ Tests use assembly-wide serialization for global listeners and manual metric col
 sleep-based periodic export checks.
 
 The new tests also inspect Core/AspNetCore restored dependency graphs for transitive telemetry
-references. Existing OpenTelemetry package tests check that the base package and its restored graph
-contain no Exporter or Prometheus driver. These packages retain their current dependency boundaries;
-this composition does not add packages, framework references or `eng/packages.json` entries.
+references: neither may reach an Exporter or Prometheus driver. `ServiceMantle.OpenTelemetry` itself
+ships the OTLP and Prometheus exporters, so the boundary it keeps is behavioural rather than
+transitive - installing it activates no exporter until the matching registration call is made. This
+composition does not add packages, framework references or `eng/packages.json` entries.
 
 ## Limits
 

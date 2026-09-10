@@ -317,7 +317,7 @@ public sealed class ReferenceTelemetryTests
     }
 
     [Fact]
-    public void The_samples_restored_graph_carries_the_base_package_and_no_exporter_driver()
+    public void The_samples_restored_graph_carries_the_base_package_and_registers_no_exporter()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "eng", "packages.json")))
@@ -337,11 +337,48 @@ public sealed class ReferenceTelemetryTests
             name.StartsWith("OpenTelemetry.Instrumentation.AspNetCore/", StringComparison.Ordinal));
         Assert.Contains(libraries, name =>
             name.StartsWith("OpenTelemetry.Instrumentation.Runtime/", StringComparison.Ordinal));
-        // No exporter driver came with them, so nothing here can reach a remote destination.
-        Assert.DoesNotContain(libraries, name =>
-            name.Contains("OpenTelemetry.Exporter", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("Prometheus", StringComparison.OrdinalIgnoreCase));
+        // ServiceMantle.OpenTelemetry now ships the OTLP and Prometheus exporters in the same
+        // package as the instrumentation, so both drivers are in the sample's graph whether it wants
+        // them or not. Absence from the graph is therefore no longer the guarantee. The guarantee is
+        // that presence is not activation: the sample calls AddOpenTelemetryInstrumentation and
+        // nothing else, so no exporter-owned service reaches its container and nothing it composes
+        // can reach a remote destination.
+        Assert.Contains(libraries, name =>
+            name.StartsWith("OpenTelemetry.Exporter.OpenTelemetryProtocol/", StringComparison.Ordinal));
+        Assert.Contains(libraries, name =>
+            name.StartsWith("OpenTelemetry.Exporter.Prometheus.AspNetCore/", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void The_enabled_sample_registers_no_exporter_owned_service()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"sm-reference-telemetry-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var builder = ReferenceApplication.CreateBuilder([
+                "--ReferenceService:DatabasePath", Path.Combine(directory, "reference.db"),
+                "--" + ReferenceTelemetryDefaults.EnabledKey, "true",
+            ]);
+
+            Assert.Contains(builder.Services, descriptor =>
+                descriptor.ServiceType == typeof(ReferenceTelemetryRegistration));
+            Assert.DoesNotContain(builder.Services, descriptor =>
+                IsExporterOwned(descriptor.ServiceType) ||
+                IsExporterOwned(descriptor.ImplementationType) ||
+                IsExporterOwned(descriptor.ImplementationInstance?.GetType()));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static bool IsExporterOwned(Type? type) =>
+        type?.Namespace is { } space &&
+        (space.StartsWith("ServiceMantle.OpenTelemetry.Otlp", StringComparison.Ordinal) ||
+            space.StartsWith("ServiceMantle.OpenTelemetry.Prometheus", StringComparison.Ordinal) ||
+            space.StartsWith("OpenTelemetry.Exporter", StringComparison.Ordinal));
 
     /// <summary>
     /// Starts the sample's real composition on loopback Kestrel and owns every handle it creates.
