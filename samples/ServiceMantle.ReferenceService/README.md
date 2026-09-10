@@ -27,6 +27,7 @@ build and test both projects without a separate sample list.
 | `ReferenceReadinessContributor` | Returns `reference.health_not_integrated`; never claims readiness | #156 |
 | `ExternalManagementIdentityPlaceholder` | Returns Failed with a safe unconfigured-provider code | Future external identity integration |
 | `Logging/` | Opt-in Serilog Console wiring and one sanitized request line | Delivered by [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) |
+| `Telemetry/` | Opt-in base ASP.NET Core, HttpClient and runtime instrumentation; no exporter | [#158](https://github.com/philfanzhou/ServiceMantle/issues/158) |
 
 EF SQLite is the consumer's model carrier. With the startup gate off, the ServiceMantle SQLite
 providers are not registered at all: the default file is `reference.db` below the content root,
@@ -129,8 +130,8 @@ Header the sample never declared — are projected under the free-text rules of
 [the structured logging security contract](../../LOGGING_SECURITY.md) and therefore do reach the log
 line. Only the shapes that contract recognizes are redacted there. Add a Header name through
 `AddSensitiveHeaders` to keep its values out. Caller cancellation stays cancellation and is never
-swallowed. The phase gate, health endpoints, management routes, telemetry, and rate limiting stay
-unwired here.
+swallowed. The phase gate, health endpoints, management routes, and rate limiting stay unwired here;
+base telemetry has a switch of its own, described below, and neither switch changes the other.
 
 The safety boundary is the one documented in [the structured logging security
 contract](../../LOGGING_SECURITY.md). Denied structured field names, denied Headers, supported
@@ -140,6 +141,41 @@ framework events, and remote systems are not covered. Enabling logging does not 
 run migrations, invoke setup, or save a consumer `DbContext`. The failure, rejection, and exception
 routes used by the tests are mapped by the tests on the public `Build` seam; the running sample keeps
 only the skeleton route.
+
+## Base telemetry instrumentation
+
+`ReferenceService:Telemetry:Enabled` is an explicit boolean switch that defaults to `false`. Only a
+value that parses to `true` registers instrumentation; a missing, empty, or unparsable value leaves
+every ServiceMantle-owned OpenTelemetry provider unregistered. The value is read before the host
+builder is created, is fixed before `Build`, and is never reloaded.
+
+```bash
+dotnet run --project samples/ServiceMantle.ReferenceService -- \
+  --ReferenceService:Telemetry:Enabled true --urls http://127.0.0.1:5080
+```
+
+When it is on, the sample calls `AddOpenTelemetryInstrumentation` and nothing else. That is the fixed
+set the public `ServiceMantle.OpenTelemetry` package already ships: ASP.NET Core request tracing,
+`HttpClient` tracing, and .NET runtime metrics. The sample adds no options system of its own on top
+of it. The OpenTelemetry resource is exactly the identity `AddServiceMantle` already registered — the
+service name, the service version, and the instance ID — so the sample contributes no attribute, no
+high-cardinality dimension, and reads no Header, body, query, or connection field.
+
+What this switch does **not** do: it wires no OTLP exporter, no Prometheus endpoint, no
+`ServiceMantleMetrics`, no health endpoint, and no service or installation phase metric, and it
+fabricates no phase. `/metrics`, `/health`, and `/management` still return 404 with the switch on.
+Nothing here creates a remote export target, so with no exporter registered the collected signals
+have nowhere to go. Those capabilities stay with
+[#158](https://github.com/philfanzhou/ServiceMantle/issues/158) and the tasks that own them.
+
+The sample now takes a **static** dependency on `ServiceMantle.OpenTelemetry` and its instrumentation
+packages: they are in the build output whether or not the switch is on. Turning the switch off stops
+the ServiceMantle-owned providers and listeners from being registered; it does not remove those
+assemblies from the published output, and it is not a claim that the .NET process runs no thread,
+timer, or socket of any kind.
+
+See [`docs/testing/reference-telemetry.md`](../../docs/testing/reference-telemetry.md) for the
+acceptance matrix and the full list of things this wiring does not guarantee.
 
 ```bash
 dotnet test --project tests/ServiceMantle.ReferenceService.Tests -c Release

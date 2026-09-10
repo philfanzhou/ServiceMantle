@@ -11,6 +11,7 @@ using ServiceMantle.ReferenceService.Health;
 using ServiceMantle.ReferenceService.Installation;
 using ServiceMantle.ReferenceService.Logging;
 using ServiceMantle.ReferenceService.Management;
+using ServiceMantle.ReferenceService.Telemetry;
 
 namespace ServiceMantle.ReferenceService;
 
@@ -32,6 +33,11 @@ public static class ReferenceApplication
             mantle.AddSensitiveHeaders(options =>
                 options.DeniedHeaderNames = [ReferenceLoggingDefaults.SecretHeaderName]);
         }
+        // Explicit and fixed before Build, on the same shape as the logging switch: only a value
+        // that parses to true registers the base ASP.NET Core, HttpClient, and runtime
+        // instrumentation. No exporter, no Prometheus endpoint, and no fixed phase metric is wired
+        // here - those stay with the tasks that own them.
+        mantle.AddReferenceTelemetry(builder.Configuration);
         // Explicit and fixed before Build. When the switch is off nothing below changes, and an
         // unusable input fails here - before a provider, a file, or EF is touched.
         var sqliteStartup = builder.Services.AddReferenceSqliteStartup(builder.Configuration);
