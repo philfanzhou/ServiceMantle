@@ -1,3 +1,4 @@
+using System.Text;
 using ServiceMantle.ReleaseTool;
 using Xunit;
 
@@ -21,6 +22,30 @@ public sealed class RedactingTextWriterTests
         Assert.DoesNotContain(Secret, written, StringComparison.Ordinal);
         Assert.Contains(RedactingTextWriter.Replacement, written, StringComparison.Ordinal);
         Assert.Contains("key=", written, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_buffer_shaped_write_is_redacted_like_a_string_one()
+    {
+        // Left to the base class these all decompose into single characters, and a single character
+        // can never match a credential, so the redaction would silently do nothing on these paths.
+        var buffer = new StringWriter();
+        var writer = new RedactingTextWriter(buffer, Secret);
+
+        writer.Write($"array={Secret}".ToCharArray());
+        writer.Write($"segment={Secret}".ToCharArray(), 0, $"segment={Secret}".Length);
+        writer.Write($"span={Secret}".AsSpan());
+        writer.WriteLine($"line={Secret}".ToCharArray());
+        writer.WriteLine($"lineSpan={Secret}".AsSpan());
+        writer.Write(new StringBuilder($"builder={Secret}"));
+        writer.Write((object)$"boxed={Secret}");
+
+        var written = buffer.ToString();
+        Assert.DoesNotContain(Secret, written, StringComparison.Ordinal);
+        foreach (var prefix in new[] { "array=", "segment=", "span=", "line=", "lineSpan=", "builder=", "boxed=" })
+        {
+            Assert.Contains($"{prefix}{RedactingTextWriter.Replacement}", written, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

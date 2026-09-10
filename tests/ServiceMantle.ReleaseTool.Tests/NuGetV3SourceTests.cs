@@ -218,11 +218,86 @@ public sealed class NuGetV3SourceTests : IDisposable
         Assert.Equal(1, handler.IndexReads);
     }
 
+    [Fact]
+    public async Task A_lookup_that_outlives_the_timeout_is_reported_as_a_feed_failure()
+    {
+        // HttpClient raises its own timeout as a cancellation, so without the caller's token to
+        // judge by, a slow feed would be indistinguishable from a maintainer stopping the release.
+        var handler = new StubHandler(Index) { Stall = true };
+        var source = Create(handler, ShortTimeout);
+
+        var response = await source.TryGetPackageAsync(
+            "ServiceMantle",
+            "0.1.0",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(FeedLookup.Failed, response.Lookup);
+        Assert.Contains("did not complete", response.Diagnostic!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_push_that_outlives_the_timeout_is_reported_as_a_push_failure()
+    {
+        var handler = new StubHandler(Index) { Stall = true };
+        var source = Create(handler, ShortTimeout);
+
+        var response = await source.PushAsync(
+            WriteArtifact("ServiceMantle.0.1.0.nupkg"),
+            symbols: false,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(PushStatus.Failed, response.Status);
+        Assert.Contains("did not complete", response.Diagnostic!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_index_read_that_outlives_the_timeout_fails_the_lookup()
+    {
+        var handler = new StubHandler(Index) { StallIndex = true };
+        var source = Create(handler, ShortTimeout);
+
+        var response = await source.TryGetPackageAsync(
+            "ServiceMantle",
+            "0.1.0",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(FeedLookup.Failed, response.Lookup);
+        Assert.Contains("index could not be read", response.Diagnostic!, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_caller_who_cancels_gets_a_cancellation_rather_than_a_reported_failure(bool push)
+    {
+        var handler = new StubHandler(Index) { Stall = true };
+        var source = Create(handler);
+        using var cancellation = new CancellationTokenSource();
+
+        var pending = push
+            ? source.PushAsync(
+                WriteArtifact("ServiceMantle.0.1.0.nupkg"),
+                symbols: false,
+                cancellation.Token)
+            : (Task)source.TryGetPackageAsync("ServiceMantle", "0.1.0", cancellation.Token);
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+    }
+
     private readonly List<NuGetV3Source> sources = [];
 
-    private NuGetV3Source Create(StubHandler handler)
+    private static readonly TimeSpan ShortTimeout = TimeSpan.FromMilliseconds(200);
+
+    private NuGetV3Source Create(StubHandler handler, TimeSpan? timeout = null)
     {
-        var source = new NuGetV3Source(new HttpClient(handler), SourceUrl, ApiKey);
+        var client = new HttpClient(handler);
+        if (timeout is { } limit)
+        {
+            client.Timeout = limit;
+        }
+
+        var source = new NuGetV3Source(client, SourceUrl, ApiKey);
         sources.Add(source);
         return source;
     }
@@ -245,10 +320,16 @@ public sealed class NuGetV3SourceTests : IDisposable
 
         internal int IndexReads { get; private set; }
 
+        /// <summary>A request that never answers, so only the timeout or the caller can end it.</summary>
+        internal bool Stall { get; set; }
+
+        /// <summary>The same, for the service index read.</summary>
+        internal bool StallIndex { get; set; }
+
         internal void Respond(string address, HttpStatusCode status, string body = "") =>
             responses[address] = (status, body);
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
@@ -256,9 +337,14 @@ public sealed class NuGetV3SourceTests : IDisposable
             if (address == SourceUrl)
             {
                 IndexReads++;
-                return Task.FromResult(index is null
+                if (StallIndex)
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+
+                return index is null
                     ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
-                    : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(index) });
+                    : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(index) };
             }
 
             if (request.Method == HttpMethod.Put)
@@ -269,9 +355,14 @@ public sealed class NuGetV3SourceTests : IDisposable
                     : null);
             }
 
-            return Task.FromResult(responses.TryGetValue(address, out var response)
+            if (Stall)
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
+            return responses.TryGetValue(address, out var response)
                 ? new HttpResponseMessage(response.Status) { Content = new StringContent(response.Body) }
-                : new HttpResponseMessage(HttpStatusCode.NotImplemented));
+                : new HttpResponseMessage(HttpStatusCode.NotImplemented);
         }
     }
 }
