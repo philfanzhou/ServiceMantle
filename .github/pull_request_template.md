@@ -35,7 +35,7 @@ Closes #
 - [ ] 适用的失败、取消、安全和并发测试通过
 - [ ] 触及 PostgreSQL 或 SQL Server 行为时，对应容器集成测试通过，或已明确等待 CI
 - [ ] 触及包清单、依赖或发布路径时，ReleaseTool 的 `validate` / `pack` / `verify` 通过
-- [ ] 行为、公开 API 或用法变化时，英文使用者文档和 XML 文档已同步
+- [ ] 行为、公开 API 或用法变化时，仓库文档（中文）、英文 `README.md` 和公开 API 的 XML 文档注释已同步
 - [ ] 不包含密钥、连接字符串、凭据或其他敏感数据
 
 ## Review 收敛

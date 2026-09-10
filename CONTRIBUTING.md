@@ -1,33 +1,47 @@
-# Contributing
+# 贡献指南
 
-## Delivery scope
+## 交付范围
 
-One pull request closes exactly one task issue. Implementation, failure, cancellation, security, and applicable concurrency tests land in that same pull request. When a change grows a second independent package, contract, or endpoint group, split the issue instead of widening the pull request.
+一个 PR 只关闭一个 task issue。实现，以及适用的失败、取消、安全和并发测试，都在同一个 PR 中交付。
+当一个改动长出第二个独立的包、契约或 endpoint 组时，拆 issue，不要把 PR 撑大。
 
-## Review policy
+## Review 政策
 
-These three rules exist because a pull request can converge on its acceptance criteria and still fail to close. Each rule names a specific way that happens.
+下面三条规则的存在，是因为一个 PR 可以一路逼近它的验收标准，却始终关不掉。每条规则各自点出一种
+具体的关不掉的方式。
 
-### 1. Write the non-guarantees before the code
+### 1. 先写非保证，再写代码
 
-An acceptance criterion phrased as a universal claim — "no secret ever reaches the sink", "any input is handled safely", "traversal is always bounded" — has no natural stopping point. Review can always produce one more input shape that was not considered, so the pull request never reaches a state its author can call finished.
+写成全称命题的验收标准——「任何 secret 都不会到达 sink」「任何输入都被安全处理」「遍历始终有界」
+——没有天然的收敛点。Review 永远能再举出一种没被考虑到的输入形状，于是这个 PR 永远到不了作者可以
+称之为「做完了」的状态。
 
-Before implementation starts, a security- or robustness-sensitive issue must state what it does **not** guarantee, with the same precision as what it does. `LOGGING_SECURITY.md` is the reference shape: alongside the guaranteed boundaries it declares the exact free-text limits, the output types the caller may rely on, and the costs the traversal limits do not bound.
+在动手实现之前，安全或健壮性相关的 issue 必须以与「保证什么」同等的精度，写清它**不**保证什么。
+`LOGGING_SECURITY.md` 是参照样式：在给出保证边界的同时，它声明了确切的自由文本上限、调用方可以
+依赖的输出类型，以及那些遍历上限并不约束的开销。
 
-A declared non-guarantee turns "this path is unbounded" from a review finding into a known, accepted boundary. Without that section, the same observation reopens the pull request indefinitely.
+一条声明出来的非保证，把「这条路径无界」从一个 review 发现变成一个已知且已接受的边界。缺了这一节，
+同一个观察就会无限次地把 PR 重新打开。
 
-### 2. Fix by invariant, not by branch
+### 2. 按不变量修，而不是按分支修
 
-When a finding names one code path, first ask whether the same defect exists on the other paths that reach the same output. If it does, the fix belongs at the point where those paths converge — and if no such point exists, creating one is the fix.
+当一条意见指出某一条代码路径时，先问同样的缺陷是否也存在于到达同一输出的其他路径上。如果存在，
+修复就应该落在这些路径的汇合处——如果不存在这样一个汇合点，那么造出一个就是修复本身。
 
-`StructuredLogSanitizer.NormalizeSafeScalar` is the worked example: every safe scalar becomes output through that one method, so a value shape that no sink can represent is rejected once rather than per branch. Patching the reported branch alone tends to relocate the defect instead of removing it, and the relocated defect returns as the next round's finding.
+`StructuredLogSanitizer.NormalizeSafeScalar` 是那个已经做过的例子：每一个安全标量都经由这一个方法
+成为输出，因此一种没有任何 sink 能表达的值形状会被拒绝一次，而不是每条分支各拒绝一遍。只补报告里
+那一条分支，往往是把缺陷挪了个位置而不是移除它，被挪走的缺陷会作为下一轮的意见回来。
 
-Pair such a fix with a test that asserts the invariant over a set of inputs, not the single reported case. `Sanitized_output_is_always_serializable_by_the_default_serializer` is that test for the example above.
+这类修复要配一个对**一组输入**断言该不变量的测试，而不是只针对报告里的那一个用例。上面这个例子
+对应的测试是 `Sanitized_output_is_always_serializable_by_the_default_serializer`。
 
-### 3. Budget the review rounds by severity
+### 3. 按严重程度给 review 轮次做预算
 
-Findings that break a stated guarantee are fixed in the pull request, however many rounds it takes.
+破坏已声明保证的发现，无论要几轮，都在本 PR 里修完。
 
-Findings that do not break a stated guarantee — resource shaping, defence in depth, internal structure — are fixed for at most three rounds. After that they move to a follow-up issue carrying the finding text verbatim, and the pull request merges. Deferring them is a scheduling decision, not a quality concession: their cost is bounded and visible in the tracker, whereas an open pull request accrues rebase, re-review, and integration cost on every round.
+不破坏已声明保证的发现——资源整形、纵深防御、内部结构——最多修三轮。之后它们连同意见原文一起转入
+follow-up issue，PR 合并。推迟它们是排期决策，不是质量让步：它们的成本有界且在 tracker 里可见，
+而一个开着的 PR 每多一轮就多积累一份 rebase、重新 review 和集成成本。
 
-State the deferral in the pull request description with a link to the follow-up issue.
+在 PR 描述里写明这次推迟了什么，并链接对应的 follow-up issue。
+
