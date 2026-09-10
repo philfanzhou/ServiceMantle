@@ -91,7 +91,7 @@ ASP.NET Core、数据库 provider 与 EF Core 持久化能力通过独立包提�
 3. 核对字符串字面量：日志分类、诊断码、配置键、HTTP 路由与 Header、JSON 字段、数据库表列、
    Data Protection purpose、认证方案名、指标名、`InternalsVisibleTo` 与包/程序集标识都不随类型
    改名变化。确因类型全名改变的反射或诊断输出单独列出并更新验证。
-4. 公开类型改名属于源码和二进制破坏性变更：完整映射写入 `NAMING_MIGRATION.md`（英文），
+4. 公开类型改名属于源码和二进制破坏性变更：完整映射写入 `NAMING_MIGRATION.md`，
    在后续新版本交付，不覆盖历史版本。
 5. 验证用非增量构建加打包产物消费验证：`dotnet build ... --no-incremental` 之后跑 ReleaseTool
    `validate / restore / build / test / pack / verify`，并用 `eng/tests/consumers` 的最小消费项目

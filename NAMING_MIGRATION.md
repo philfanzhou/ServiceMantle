@@ -1,78 +1,72 @@
-# Naming migration
+# 命名迁移说明
 
-ServiceMantle now derives a type's module from its directory and namespace, and names the type after
-what it does. The product name is no longer repeated in ordinary type and file names.
+ServiceMantle 现在由目录和 namespace 表达一个类型属于哪个模块，由类型名表达它做什么。普通类型和
+文件名里不再重复产品名。
 
-This is a source and binary breaking change for every renamed type. Nothing else changed: no
-signature, no default, no runtime behaviour, no package boundary, no assembly name, and no package
-identifier. No previously published version is overwritten; the renames ship in a later version and
-are listed here in full.
+对每一个被改名的类型，这都是源码与二进制破坏性变更。除此之外没有任何变化：签名、默认值、运行时
+行为、包边界、程序集名和包 ID 都不变。已发布的版本不会被覆盖，改名在后续新版本中交付，本文完整
+列出全部变更。
 
-## The rules
+## 规则
 
-1. A type's namespace is its project's root namespace plus its functional subdirectory. Ordinary
-   types carry no product prefix, because the namespace already carries it.
-2. Extension entry points keep their framework namespace (`Microsoft.Extensions.DependencyInjection`,
-   `Microsoft.Extensions.Hosting`, `Microsoft.AspNetCore.*`) and keep the product prefix in both the
-   class name and the method name - `AddServiceMantle*`, `UseServiceMantle*`, `MapServiceMantle*`,
-   `WithServiceMantle*`. Those namespaces say nothing about the product, so the name is the only
-   thing that separates a ServiceMantle entry point from the framework's own.
-3. A file is named after its main type. Public types that belong to one contract family stay in that
-   family's file, as they did before.
+1. 类型的 namespace 是它所在项目的根 namespace 加功能子目录。普通类型不带产品前缀，因为 namespace
+   已经带了。
+2. 扩展入口保留它们的框架 namespace（`Microsoft.Extensions.DependencyInjection`、
+   `Microsoft.Extensions.Hosting`、`Microsoft.AspNetCore.*`），并且类名与方法名都保留产品前缀——
+   `AddServiceMantle*`、`UseServiceMantle*`、`MapServiceMantle*`、`WithServiceMantle*`。这些
+   namespace 不含任何产品信息，名字是把 ServiceMantle 的入口与框架自带 API 区分开的唯一手段。
+3. 文件按其主类型命名。属于同一契约族的公开类型仍然放在该族的文件里，与改名前一致。
 
-## Exceptions, and why
+## 例外及其理由
 
-| Type | Kept or renamed as | Reason |
+| 类型 | 保留或改为 | 理由 |
 | --- | --- | --- |
-| `ServiceMantle.AspNetCore.ServiceMantleBuilder` | unchanged | It is the type `AddServiceMantle` returns and the receiver every `AddServiceMantle*` extension hangs off, so it is named for the product like those entry points. `Builder` would also collide with the `Microsoft.AspNetCore.Builder` namespace. |
-| `ServiceMantleHeaderNames` | `ServiceHeaderNames` | `HeaderNames` collides with `Microsoft.Net.Http.Headers.HeaderNames`. `Service*` is the repository's existing family for "this host service's X" (`ServiceLogContext`, `ServiceLogFieldNames`, `ServiceHealthSnapshot`). |
-| `ServiceMantleMetrics` | `ServiceMetrics` | `Metrics` collides with the `System.Diagnostics.Metrics` namespace. |
-| `ServiceMantleForwardedHeadersOptions` | `ForwardedHeadersTrustOptions` | `ForwardedHeadersOptions` collides with `Microsoft.AspNetCore.Builder.ForwardedHeadersOptions`, which a web application imports implicitly. The new name states the responsibility: the explicit trust boundary. |
-| `IServiceMantleDbContext` | `IServiceDbContext` | `IDbContext` is a name consuming applications commonly define for themselves. |
-| `ServiceMantleRegistration` | `HostRegistration` | `Registration` alone says nothing; the record marks the host identity fixed by `AddServiceMantle`. |
-| `ServiceMantleSerilogLoggerProvider` | `RuntimeLoggerProvider` | `SerilogLoggerProvider` collides with `Serilog.Extensions.Logging.SerilogLoggerProvider`, which this type wraps. |
-| `IServiceMantleStructuredLogSanitizer` / `ServiceMantleStructuredLogSanitizer` | `ILogFieldSanitizer` / `LogFieldSanitizer` | `StructuredLogSanitizer` is the core type these adapt. |
+| `ServiceMantle.AspNetCore.ServiceMantleBuilder` | 不变 | 它是 `AddServiceMantle` 的返回类型，也是每个 `AddServiceMantle*` 扩展挂靠的接收者，因此与那些入口一样以产品命名。另外 `Builder` 会与 `Microsoft.AspNetCore.Builder` namespace 撞名。 |
+| `ServiceMantleHeaderNames` | `ServiceHeaderNames` | `HeaderNames` 与 `Microsoft.Net.Http.Headers.HeaderNames` 撞名。`Service*` 是本仓库既有的「本宿主服务的 X」命名族（`ServiceLogContext`、`ServiceLogFieldNames`、`ServiceHealthSnapshot`）。 |
+| `ServiceMantleMetrics` | `ServiceMetrics` | `Metrics` 与 `System.Diagnostics.Metrics` namespace 撞名。 |
+| `ServiceMantleForwardedHeadersOptions` | `ForwardedHeadersTrustOptions` | `ForwardedHeadersOptions` 与 `Microsoft.AspNetCore.Builder.ForwardedHeadersOptions` 撞名，而 Web 应用会隐式 using 那个 namespace。新名字直接说明职责：显式的信任边界。 |
+| `IServiceMantleDbContext` | `IServiceDbContext` | `IDbContext` 是消费方应用常见的自定义名字。 |
+| `ServiceMantleRegistration` | `HostRegistration` | 单独一个 `Registration` 什么也没说明；这个 record 记录的是 `AddServiceMantle` 固定下来的宿主身份。 |
+| `ServiceMantleSerilogLoggerProvider` | `RuntimeLoggerProvider` | `SerilogLoggerProvider` 与它所包装的 `Serilog.Extensions.Logging.SerilogLoggerProvider` 撞名。 |
+| `IServiceMantleStructuredLogSanitizer` / `ServiceMantleStructuredLogSanitizer` | `ILogFieldSanitizer` / `LogFieldSanitizer` | `StructuredLogSanitizer` 是它们所适配的核心类型。 |
 
-## What did not change
+## 没有变化的部分
 
-These are external contracts. A type rename must not move them, and none of them moved:
+以下都是外部契约。类型改名不得移动它们，本次也确实一个都没有移动：
 
-- Log category strings `ServiceMantle.Http.CorrelationId`, `ServiceMantle.Http.ProblemDetails`,
-  `ServiceMantle.Http.RateLimiting`.
-- Authentication scheme and policy names `ServiceMantle.ManagementCookie`,
-  `ServiceMantle.ManagementAdmin`, `ServiceMantle.ManagementSession`.
-- The Data Protection purpose `ServiceMantle.Management:<serviceId>`.
-- The meter name `ServiceMantle`, its version, and every metric name.
-- OTLP option section names `ServiceMantle.Otlp.Traces` and `ServiceMantle.Otlp.Metrics`.
-- Every HTTP route, header name, JSON field, error code, configuration key, database table and
-  column, migration lock key prefix, package identifier, assembly name, and `InternalsVisibleTo`
-  target.
+- 日志分类字符串 `ServiceMantle.Http.CorrelationId`、`ServiceMantle.Http.ProblemDetails`、
+  `ServiceMantle.Http.RateLimiting`。
+- 认证方案与策略名 `ServiceMantle.ManagementCookie`、`ServiceMantle.ManagementAdmin`、
+  `ServiceMantle.ManagementSession`。
+- Data Protection purpose `ServiceMantle.Management:<serviceId>`。
+- meter 名 `ServiceMantle`、它的版本号，以及全部指标名。
+- OTLP 配置节名 `ServiceMantle.Otlp.Traces` 与 `ServiceMantle.Otlp.Metrics`。
+- 全部 HTTP 路由、Header 名、JSON 字段、错误码、配置键、数据库表与列、迁移锁键前缀、包 ID、
+  程序集名和 `InternalsVisibleTo` 目标。
 
-Two diagnostics do name a type and therefore changed with it: reflection-by-name assertions over
-`HealthStartupValidator` and `SensitiveHeaderStartupValidator`. Both are assembly-internal
-registrations, not a published contract.
+有两处诊断确实以名字指向类型，因此随类型一起变化：对 `HealthStartupValidator` 与
+`SensitiveHeaderStartupValidator` 的按名字反射断言。这两个都是程序集内部的注册，不是已发布契约。
 
-## Namespace moves
+## namespace 迁移
 
-| Old namespace | New namespace |
+| 原 namespace | 新 namespace |
 | --- | --- |
 | `ServiceMantle.Http` | `ServiceMantle.AspNetCore.Http` |
-| `ServiceMantle.AspNetCore` (types under `Http/`) | `ServiceMantle.AspNetCore.Http` |
-| `ServiceMantle.AspNetCore` (types under `Logging/`) | `ServiceMantle.AspNetCore.Logging` |
-| `ServiceMantle.Logging` (types in `ServiceMantle.AspNetCore`) | `ServiceMantle.AspNetCore.Logging` |
-| `ServiceMantle.Management` (types in `ServiceMantle.AspNetCore`) | `ServiceMantle.AspNetCore.Management`, `ServiceMantle.AspNetCore.ManagementApi[.<Group>]` |
-| `ServiceMantle.AspNetCore` (types under `ManagementApi/`) | `ServiceMantle.AspNetCore.ManagementApi[.<Group>]` |
-| `ServiceMantle.AspNetCore` (types under `PhaseGate/`) | `ServiceMantle.AspNetCore.PhaseGate` |
-| `ServiceMantle.AspNetCore` (types under `RateLimiting/`) | `ServiceMantle.AspNetCore.RateLimiting` |
+| `ServiceMantle.AspNetCore`（`Http/` 下的类型） | `ServiceMantle.AspNetCore.Http` |
+| `ServiceMantle.AspNetCore`（`Logging/` 下的类型） | `ServiceMantle.AspNetCore.Logging` |
+| `ServiceMantle.Logging`（位于 `ServiceMantle.AspNetCore` 的类型） | `ServiceMantle.AspNetCore.Logging` |
+| `ServiceMantle.Management`（位于 `ServiceMantle.AspNetCore` 的类型） | `ServiceMantle.AspNetCore.Management`、`ServiceMantle.AspNetCore.ManagementApi[.<分组>]` |
+| `ServiceMantle.AspNetCore`（`ManagementApi/` 下的类型） | `ServiceMantle.AspNetCore.ManagementApi[.<分组>]` |
+| `ServiceMantle.AspNetCore`（`PhaseGate/` 下的类型） | `ServiceMantle.AspNetCore.PhaseGate` |
+| `ServiceMantle.AspNetCore`（`RateLimiting/` 下的类型） | `ServiceMantle.AspNetCore.RateLimiting` |
 
-`ServiceMantle.Logging` and `ServiceMantle.Management` still exist: they are the core package's own
-namespaces. Only the `ServiceMantle.AspNetCore` types that used to share them moved, so one namespace
-no longer spans two assemblies.
+`ServiceMantle.Logging` 与 `ServiceMantle.Management` 仍然存在：它们是核心包自己的 namespace。
+只有原先与它们共用同一 namespace 的 `ServiceMantle.AspNetCore` 类型移走了，因此不再有一个
+namespace 跨越两个程序集。
 
-The core, Consul, database provider, and EF Core persistence packages keep their namespaces
-unchanged.
+核心包、Consul、各数据库 provider 与 EF Core 持久化包的 namespace 不变。
 
-## Public API map
+## 公开 API 映射
 
 | `ServiceMantle.AspNetCore.Health.ServiceMantleHealthOptions` | `ServiceMantle.AspNetCore.Health.HealthOptions` |
 | `ServiceMantle.AspNetCore.ServiceMantleForwardedHeadersConfigurationException` | `ServiceMantle.AspNetCore.Http.ForwardedHeadersConfigurationException` |
@@ -131,10 +125,10 @@ unchanged.
 | `ServiceMantle.Serilog.GrafanaLoki.IServiceMantleLokiAuthorizationHeaderResolver` | `ServiceMantle.Serilog.GrafanaLoki.ILokiAuthorizationHeaderResolver` |
 | `ServiceMantle.Serilog.GrafanaLoki.WellKnownServiceMantleGrafanaLokiErrorCodes` | `ServiceMantle.Serilog.GrafanaLoki.WellKnownGrafanaLokiErrorCodes` |
 
-## Internal type map
+## 内部类型映射
 
-These are assembly-internal. They are listed because `InternalsVisibleTo` test assemblies and
-reflection-by-name diagnostics see them.
+以下都是程序集内部类型。之所以列出，是因为 `InternalsVisibleTo` 的测试程序集和按名字反射的诊断
+会看到它们。
 
 | `ServiceMantle.AspNetCore.ServiceMantleRegistration` | `ServiceMantle.AspNetCore.HostRegistration` |
 | `ServiceMantle.AspNetCore.Health.ServiceMantleHealthRegistration` | `ServiceMantle.AspNetCore.Health.HealthRegistration` |
@@ -263,7 +257,7 @@ reflection-by-name diagnostics see them.
 | `ServiceMantle.Serilog.GrafanaLoki.ServiceMantleLokiHttpMessageHandler` | `ServiceMantle.Serilog.GrafanaLoki.LokiHttpMessageHandler` |
 | `ServiceMantle.Serilog.GrafanaLoki.ServiceMantleLokiHttpMessageHandlerFactory` | `ServiceMantle.Serilog.GrafanaLoki.LokiHttpMessageHandlerFactory` |
 
-## Test class map
+## 测试类映射
 
 | `ServiceMantle.AspNetCore.Tests.ServiceMantleAuditQueryEndpointTests` | `ServiceMantle.AspNetCore.Tests.AuditQueryEndpointTests` |
 | `ServiceMantle.AspNetCore.Tests.ServiceMantleBootstrapManagementTests` | `ServiceMantle.AspNetCore.Tests.BootstrapManagementTests` |
