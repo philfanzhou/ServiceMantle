@@ -11,8 +11,8 @@ The core package defines the contract and orchestration logic without any databa
 **Key Types:**
 
 1. **`IDatabaseMigrationExecutor`** - Extension point for consuming services
-   - `InspectAsync()` - Observe current database state (Empty, CurrentVersionCompatible, PendingMigration, VersionTooNew, InspectionFailed)
-   - `ExecuteAsync()` - Execute the complete migration workflow exactly once
+   - `InspectAsync()` - Observe current database state (Empty, CurrentVersionCompatible, PendingMigration, VersionTooNew, InspectionFailed). It is read-only; the consuming service owns what it reads and what it refuses
+   - `ExecuteAsync()` - Run the consuming service's migration workflow. The orchestrator calls it **at most once per orchestration**, and only when the inspection under authority returned `Empty` or `PendingMigration`. A `CurrentVersionCompatible` target skips it entirely, so an orchestration that succeeds without calling the executor is the normal outcome for an already-current database
 
 2. **`IDatabaseMigrationLock`** - Acquired lock lease
    - Extends `IAsyncDisposable` for RAII semantics
@@ -110,16 +110,44 @@ The core package defines the contract and orchestration logic without any databa
    - If `CurrentVersionCompatible` → Skip execution, return success
    - If `VersionTooNew` → Fail closed, do not execute
    - If `InspectionFailed` → Fail closed, do not execute
-   - If `Empty` or `PendingMigration` → Call executor exactly once
+   - If `Empty` or `PendingMigration` → Call the executor once, and only in this branch
 5. **Authority re-inspection** - Check state after execution under the same monitored lease
    - Success only if final state is `CurrentVersionCompatible`
 6. **Lock release** - Always in finally block, errors suppressed
+
+`ExecuteAsync` is therefore called at most once per orchestration, and not at all when the target is
+already compatible or when the observation fails closed. It is not "exactly once" in any global
+sense: repeating an orchestration against a target that still needs migration calls it again.
 
 Every executor call receives a token linked to caller cancellation and `LeaseLost`. The orchestrator
 checks caller cancellation first before and after every stage, so a caller-cancellation/lease-loss
 race remains `OperationCanceledException`. Lease loss maps to `migration.lock_failed`, records whether
 execution had started, and prevents a not-yet-started next stage. Executors must observe the supplied
 token promptly; loss detection cannot roll back side effects already committed by an executor.
+
+### The two `OrchestrateMigrationAsync` overloads
+
+`DatabaseMigrationOrchestrator` exposes two overloads, and neither degrades into the other.
+
+- **`(serviceId, bootstrap, lockAcquireTimeout, cancellationToken)`** always requires a real
+  distributed lease. A missing lock provider is not a reason to continue: it fails closed with
+  `migration.lock_not_supported`. This overload never consults a deployment declaration.
+- **`(serviceId, bootstrap, deploymentMode, lockAcquireTimeout, cancellationToken)`** validates the
+  consumer-supplied `DatabaseDeploymentMode` against the declared capabilities first. `MultiInstance`
+  runs exactly the flow above, real lease included. `SingleInstance` instead resolves the provider's
+  canonical target identity and serializes calls for that provider/target **within this process**;
+  it constructs no `IDatabaseMigrationLock`. `Unspecified`, an undefined mode, a provider with no
+  declared capability, or `SingleInstance`-only capability asked for `MultiInstance` all fail closed
+  with `migration.lock_not_supported`. This overload requires the three-argument constructor that
+  takes a `DatabaseDeploymentCapabilityRegistry`; used with the two-argument constructor it fails
+  closed as well.
+
+An absent lock provider never causes an automatic fall back to `SingleInstance`. The mode is a
+consumer decision, not something inferred from the registered providers or from the connection
+string - see
+[Explicit database deployment mode](README.md#explicit-database-deployment-mode) in `README.md`.
+Process-local serialization is not a cross-process lock and is not proof of deployment topology: two
+processes both configured as `SingleInstance` are neither detected nor coordinated.
 
 ## Multi-Instance Behavior
 
@@ -239,8 +267,15 @@ discovered tests, container or connection failure, and use the ADR-pinned Oracle
 
 ### Current Scope (Implemented)
 
-- PostgreSQL advisory lock (session-level, ACID)
+- Migration lock providers for five database products, each documented with its own key derivation,
+  acquisition, lease-probing and release semantics in `README.md`:
+  [PostgreSQL advisory lock](README.md#postgresql-advisory-lock),
+  [Oracle `DBMS_LOCK`](README.md#oracle-dbms_lock),
+  [MySQL named lock](README.md#mysql-named-lock),
+  [MariaDB named lock](README.md#mariadb-named-lock), and
+  [SQL Server application lock](README.md#sql-server-application-lock)
 - Multi-instance safe orchestration
+- Explicit deployment-mode validation and process-local `SingleInstance` serialization
 - Deterministic lock key derivation
 - Timeout and cancellation support
 - Structured safe error handling
@@ -249,13 +284,20 @@ discovered tests, container or connection failure, and use the ADR-pinned Oracle
 
 ### Out of Scope (Not Implemented)
 
-- Other database lock providers (MySQL, MariaDB, SQL Server, SQLite)
+- A migration lock provider for SQLite. SQLite has **no cross-process migration lock** in this
+  repository. It participates only through the explicit `SingleInstance` deployment mode, which
+  serializes migrations inside one process and is not a claim of multi-instance support; asking for
+  `MultiInstance` on SQLite fails closed with `migration.lock_not_supported`
 - Database creation or target preparation (see the separate "Database target preparation" section in `README.md`, added independently of this migration orchestration work)
 - Configuration tables or audit tables
 - Setup code or management admin features
 - EF Core automatic migration execution
 - Break-glass/emergency unlock procedures
 - Fencing tokens or automatic rollback of executor side effects committed before lease loss
+
+Delivered lock support is per product and per documented boundary. It is not a claim that every
+provider offers equivalent topology support, nor that any of them is production-ready for a given
+deployment.
 
 The five-second PostgreSQL bound assumes a running process with normally scheduled timers and a
 working Npgsql command-timeout mechanism. Process suspension, severe scheduler starvation, and a
@@ -269,68 +311,49 @@ When additional providers are needed:
 3. Provider must support timeout and cancellation semantics
 4. Use deterministic lock key derivation aligned with PostgreSQL pattern
 
-For SQLite, an explicit single-instance mode should be documented rather than a silent no-op lock.
+SQLite keeps the explicit single-instance route rather than a silent no-op lock: the consumer states
+`SingleInstance` and owns that deployment assumption. A no-op `IDatabaseMigrationLockProvider` that
+pretends to hold a lease must not be added.
 
 ## Integration Example
 
+This is a **composition** example. It shows how a consuming service hands its own executor to the
+orchestrator; it deliberately does not show how to write that executor.
+
+Deciding whether an unknown database is safe to adopt is the consuming service's own problem, and it
+cannot be answered generically. In particular, "`GetPendingMigrations()` is empty" does not mean the
+target is compatible - a database holding a migration id this build has never heard of also reports
+no pending migrations - and "the business tables are empty" is not permission to take over a schema
+somebody else created. An executor must decide from evidence it can actually read, and refuse what
+it cannot classify.
+
+`IDatabaseMigrationExecutor` is documented in
+[Database migration orchestration](README.md#database-migration-orchestration) in `README.md`:
+`InspectAsync` is read-only and returns one of the five finite `MigrationObservationState` values,
+`ExecuteAsync` runs the consuming service's own workflow, and both receive a token linked to caller
+cancellation and `LeaseLost` that they must observe promptly. Cancellation cannot roll back side
+effects the executor has already committed.
+
+For a worked example of a finite, conservative observation over a schema a service really owns, see
+the reference sample's consumer-owned SQLite executor,
+`samples/ServiceMantle.ReferenceService/Database/Sqlite/ReferenceSqliteMigrationExecutor.cs`, and
+[its acceptance notes](docs/testing/reference-sqlite-deployment.md). Its rules are specific to that
+sample's schema; they are an illustration, not a library algorithm to copy blindly.
+
 ```csharp
-// 1. Implement the executor (consuming service responsibility)
-public sealed class MyServiceMigrationExecutor : IDatabaseMigrationExecutor
-{
-    private readonly MyDbContext dbContext;
+// 1. The consuming service supplies its own IDatabaseMigrationExecutor implementation.
+//    It owns its schema, its history, its finite observation rules, and its transactions.
+IDatabaseMigrationExecutor executor = myServiceMigrationExecutor;
 
-    public MyServiceMigrationExecutor(MyDbContext dbContext)
-    {
-        this.dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
-    }
-
-    public async ValueTask<MigrationObservationState> InspectAsync(CancellationToken cancellationToken = default)
-    {
-        // Check current schema version against application expectations
-        // Return Empty, CurrentVersionCompatible, PendingMigration, VersionTooNew, or InspectionFailed
-        var appliedMigrations = (await dbContext.Database.GetAppliedMigrationsAsync(cancellationToken))
-            .ToHashSet();
-
-        if (appliedMigrations.Count == 0 && !await HasBusinessDataAsync(cancellationToken))
-        {
-            return MigrationObservationState.Empty;
-        }
-
-        var pending = (await dbContext.Database.GetPendingMigrationsAsync(cancellationToken)).ToList();
-
-        if (pending.Count == 0)
-        {
-            return MigrationObservationState.CurrentVersionCompatible;
-        }
-
-        return MigrationObservationState.PendingMigration;
-    }
-
-    public async ValueTask ExecuteAsync(CancellationToken cancellationToken = default)
-    {
-        // Execute complete migration workflow
-        // This may include EF Core migrations, expand-contract, backfill, validation, etc.
-        await dbContext.Database.MigrateAsync(cancellationToken);
-        // ... additional business migration steps
-    }
-
-    private async ValueTask<bool> HasBusinessDataAsync(CancellationToken cancellationToken)
-    {
-        // Check if database contains meaningful business data
-        return await dbContext.Accounts.AnyAsync(cancellationToken)
-            || await dbContext.Orders.AnyAsync(cancellationToken);
-    }
-}
-
-// 2. Register lock provider and create orchestrator
+// 2. Register the lock provider for the database product in use and build the orchestrator.
 var lockProviders = new DatabaseMigrationLockProviderRegistry(
     [new PostgreSqlMigrationLockProvider()],
-    providerRegistry.ProviderIdResolver);
+    bootstrapProviders.ProviderIdResolver);
 
-var executor = new MyServiceMigrationExecutor(dbContext);
 var orchestrator = new DatabaseMigrationOrchestrator(executor, lockProviders);
 
-// 3. Orchestrate migration
+// 3. Orchestrate. This overload always requires a real distributed lease; a missing lock provider
+//    fails closed rather than continuing without one.
 var result = await orchestrator.OrchestrateMigrationAsync(
     serviceId,
     bootstrapConfiguration.Database,
@@ -346,10 +369,14 @@ if (!result.Succeeded)
     return;
 }
 
+// A successful orchestration against an already-compatible target reports ExecutorWasCalled = false.
 logger.LogInformation(
     "Database migration completed. Executor was called: {ExecutorWasCalled}",
     result.ExecutorWasCalled);
 ```
+
+To let a consumer state `SingleInstance` instead, use the deployment-aware constructor and overload
+described in [Explicit database deployment mode](README.md#explicit-database-deployment-mode).
 
 ## Files Changed
 
