@@ -52,6 +52,14 @@ jobs:
             exit 1
           fi
 
+      # Build output belongs to this step's log, never to the version output file. Even a quiet
+      # implicit build can print warnings that GitHub cannot parse as output records.
+      - name: Build version resolver
+        run: >-
+          dotnet build
+          eng/ServiceMantle.ReleaseTool/ServiceMantle.ReleaseTool.csproj
+          --configuration Release
+
       # The version rule lives in the release tool and is unit tested there, so this workflow never
       # carries a second copy of it that could drift.
       #
@@ -72,6 +80,8 @@ jobs:
           dotnet run \
             --project eng/ServiceMantle.ReleaseTool/ServiceMantle.ReleaseTool.csproj \
             --configuration Release \
+            --no-build \
+            --no-restore \
             -- resolve-version \
             --ref-name "$REF_NAME" \
             --tagged "$IS_TAG" \

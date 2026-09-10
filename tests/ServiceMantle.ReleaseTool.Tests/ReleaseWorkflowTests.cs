@@ -79,6 +79,30 @@ public sealed class ReleaseWorkflowTests
     }
 
     [Fact]
+    public void Build_diagnostics_cannot_enter_the_version_output_file()
+    {
+        var job = Job("version");
+        var build = job.IndexOf("- name: Build version resolver", StringComparison.Ordinal);
+        var choose = job.IndexOf("- name: Choose version", StringComparison.Ordinal);
+
+        Assert.True(build >= 0 && choose > build);
+        var buildStep = job[build..choose];
+        Assert.Contains("dotnet build", buildStep, StringComparison.Ordinal);
+        Assert.Contains("eng/ServiceMantle.ReleaseTool/ServiceMantle.ReleaseTool.csproj", buildStep, StringComparison.Ordinal);
+        Assert.Contains("--configuration Release", buildStep, StringComparison.Ordinal);
+        Assert.DoesNotContain("$GITHUB_OUTPUT", buildStep, StringComparison.Ordinal);
+        Assert.DoesNotContain("$RUNNER_TEMP/version.txt", buildStep, StringComparison.Ordinal);
+
+        var chooseStep = job[choose..];
+        Assert.Contains("dotnet run", chooseStep, StringComparison.Ordinal);
+        Assert.Contains("--configuration Release", chooseStep, StringComparison.Ordinal);
+        Assert.Contains("--no-build", chooseStep, StringComparison.Ordinal);
+        Assert.Contains("--no-restore", chooseStep, StringComparison.Ordinal);
+        Assert.Contains("-- resolve-version", chooseStep, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet build", chooseStep, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_version_rule_has_exactly_one_implementation()
     {
         // A second copy of the rule in shell is the failure this guards: it would drift from the

@@ -64,12 +64,15 @@ A multi-package push is not a transaction. If a run is interrupted partway, NuGe
 the set and not the rest. That is expected, and rerunning the same tag is the fix.
 
 On a rerun, each package that is already on the feed at that version is inspected: the published
-package's `repository/@commit` is compared against the commit being published.
+package's ID, version, and `repository/@commit` are compared against the release being published.
 
 - **Same commit** - an earlier run of this same release pushed it. It is skipped as
-  `already present` and the run continues with the rest.
+  `already present`; its symbols are still attempted to repair a previous symbol upload failure.
 - **Different commit, or no commit metadata** - that version belongs to something else. The package
   fails and nothing is overwritten.
+
+A push conflict (HTTP 409) also requires that origin check. If the feed has not indexed the package
+yet, the run fails explicitly; retry later after it becomes readable.
 
 The run's closing summary lists every package under `published`, `already present`, or `failed`,
 each with its ID and version, so a partial result is visible rather than reported as success. Any
