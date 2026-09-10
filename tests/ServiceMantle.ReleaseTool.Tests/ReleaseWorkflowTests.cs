@@ -124,6 +124,11 @@ public sealed class ReleaseWorkflowTests
             Regex.Matches(Release, @"id-token:\s*write", RegexOptions.None, TimeSpan.FromSeconds(5)));
         Assert.Single(
             Regex.Matches(Release, @"NuGet/login@", RegexOptions.None, TimeSpan.FromSeconds(5)));
+        // The two jobs added for publishing run no git command, so the checkout token has no reason
+        // to stay in the workspace beside the publishing credential.
+        Assert.All(
+            new[] { Job("publish-nuget"), Job("verify-published-packages") },
+            job => Assert.Contains("persist-credentials: false", job, StringComparison.Ordinal));
     }
 
     [Fact]

@@ -5,7 +5,8 @@
 # package: the artifacts come back from the feed, through a cache that has never held a ServiceMantle
 # package, so nothing on the runner can make a broken or missing package look installable.
 #
-# Usage: published-package-consumption.sh --version V --source URL --consumer DIR [--attempts N]
+# Usage: published-package-consumption.sh --version V --source URL --consumer DIR
+#          [--attempts N] [--delay-seconds N]
 set -euo pipefail
 
 version=""
@@ -32,6 +33,13 @@ fi
 
 if [[ ! "$attempts" =~ ^[0-9]+$ ]] || (( attempts < 1 )); then
   echo "The attempt budget must be a positive integer." >&2
+  exit 2
+fi
+
+# Checked here rather than left to sleep: an unusable value would otherwise surface as an obscure
+# error in the middle of the wait, after a push has already happened.
+if [[ ! "$delay_seconds" =~ ^[0-9]+$ ]]; then
+  echo "The retry delay must be a non-negative whole number of seconds." >&2
   exit 2
 fi
 
