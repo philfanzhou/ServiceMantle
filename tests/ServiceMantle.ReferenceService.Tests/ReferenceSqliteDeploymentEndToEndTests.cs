@@ -292,6 +292,10 @@ public sealed class ReferenceSqliteDeploymentEndToEndTests
             "ServiceMantle.Database.Sqlite.dll",
             "Microsoft.EntityFrameworkCore.Sqlite.dll",
             "Microsoft.Data.Sqlite.dll",
+            // The sample also declares the PostgreSQL EF provider for its separate PostgreSQL
+            // context. No host path here uses it, and it brings no ServiceMantle provider package.
+            "Npgsql.EntityFrameworkCore.PostgreSQL.dll",
+            "Npgsql.dll",
         })
         {
             Assert.Contains(expected, files, StringComparer.Ordinal);
@@ -305,7 +309,6 @@ public sealed class ReferenceSqliteDeploymentEndToEndTests
             "ServiceMantle.Database.MariaDb",
             "ServiceMantle.Database.Oracle",
             "ServiceMantle.Database.SqlServer",
-            "Npgsql",
             "MySqlConnector",
             "Pomelo",
             "Oracle.ManagedDataAccess",

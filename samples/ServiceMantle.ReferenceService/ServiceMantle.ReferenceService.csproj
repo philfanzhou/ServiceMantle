@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <ProjectReference Include="../../src/ServiceMantle/ServiceMantle.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" />
