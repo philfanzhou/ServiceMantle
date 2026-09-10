@@ -1,5 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
-using ServiceMantle.Http;
+using ServiceMantle.AspNetCore.Http;
 
 namespace Microsoft.AspNetCore.Http;
 

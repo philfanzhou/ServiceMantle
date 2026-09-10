@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.Logging;
+using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.RuntimeInfo;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -37,8 +38,8 @@ public static class ServiceMantleRuntimeInfoEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
 
         var services = endpoints.ServiceProvider;
-        var state = services.GetService<ServiceMantleManagementApiState>() ??
-            throw ServiceMantleRuntimeInfoMapping.Failure();
+        var state = services.GetService<ManagementApiState>() ??
+            throw RuntimeInfoMapping.Failure();
         string root;
         try
         {
@@ -48,17 +49,17 @@ public static class ServiceMantleRuntimeInfoEndpointRouteBuilderExtensions
         {
             // The baseline owns the root's own diagnostics; this entry point never repeats a
             // configured value of its own.
-            throw ServiceMantleRuntimeInfoMapping.Failure();
+            throw RuntimeInfoMapping.Failure();
         }
 
-        var logContext = services.GetService<ServiceLogContext>() ?? throw ServiceMantleRuntimeInfoMapping.Failure();
-        ServiceMantleRuntimeInfoMapping.RecordMap(services);
+        var logContext = services.GetService<ServiceLogContext>() ?? throw RuntimeInfoMapping.Failure();
+        RuntimeInfoMapping.RecordMap(services);
         // The four projected values are fixed for the life of the process, so the exact body is
         // built once and no request-scoped object ever reaches a serializer.
-        var result = ServiceMantleRuntimeInfoResult.Create(logContext);
-        var expectedPath = root + ServiceMantleRuntimeInfoMapping.RoutePath;
-        var endpoint = endpoints.MapGet(ServiceMantleRuntimeInfoMapping.RoutePath, () => result);
-        endpoint.Finally(builder => ServiceMantleRuntimeInfoMapping.Validate(builder, expectedPath));
+        var result = RuntimeInfoResult.Create(logContext);
+        var expectedPath = root + RuntimeInfoMapping.RoutePath;
+        var endpoint = endpoints.MapGet(RuntimeInfoMapping.RoutePath, () => result);
+        endpoint.Finally(builder => RuntimeInfoMapping.Validate(builder, expectedPath));
         return endpoint;
     }
 }

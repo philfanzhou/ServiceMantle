@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.PhaseGate;
 using ServiceMantle.Health;
 
 namespace Microsoft.AspNetCore.Builder;
@@ -34,8 +35,8 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        if (endpoints.ServiceProvider.GetService<ServiceMantleRegistration>() is null ||
-            endpoints.ServiceProvider.GetService<ServiceMantleHealthRegistration>() is null)
+        if (endpoints.ServiceProvider.GetService<HostRegistration>() is null ||
+            endpoints.ServiceProvider.GetService<HealthRegistration>() is null)
         {
             throw new InvalidOperationException(
                 "ServiceMantle health endpoints require AddServiceMantle and AddServiceMantleHealthEndpoints.");
@@ -44,15 +45,15 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         endpoints.MapGet(
             "/health/live",
             static () => Results.Json(new LiveHealthResponse("live")))
-            .WithMetadata(new ServiceMantlePhaseHealthMetadata("/health/live"));
+            .WithMetadata(new PhaseHealthMetadata("/health/live"));
         endpoints.MapGet(
             "/health/ready",
             (Func<HttpContext, Task<IResult>>)EvaluateReadinessAsync)
-            .WithMetadata(new ServiceMantlePhaseHealthMetadata("/health/ready"));
+            .WithMetadata(new PhaseHealthMetadata("/health/ready"));
         endpoints.MapGet(
             "/health",
             (Func<HttpContext, Task<IResult>>)EvaluateReadinessAsync)
-            .WithMetadata(new ServiceMantlePhaseHealthMetadata("/health"));
+            .WithMetadata(new PhaseHealthMetadata("/health"));
         return endpoints;
     }
 

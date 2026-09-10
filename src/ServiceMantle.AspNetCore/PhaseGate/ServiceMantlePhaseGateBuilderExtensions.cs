@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.PhaseGate;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -10,14 +11,14 @@ public static class ServiceMantlePhaseGateBuilderExtensions
     /// <summary>Adds the opt-in phase gate without requiring optional providers or persistence.</summary>
     /// <remarks>Call UseServiceMantlePhaseGate once after routing and before endpoint execution.</remarks>
     public static ServiceMantleBuilder AddServiceMantlePhaseGate(this ServiceMantleBuilder builder,
-        Action<ServiceMantlePhaseGateOptions>? configure = null)
+        Action<PhaseGateOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        var options = new ServiceMantlePhaseGateOptions();
+        var options = new PhaseGateOptions();
         configure?.Invoke(options);
-        builder.Services.AddSingleton(new ServiceMantlePhaseGateRegistration(options.ManagementPathPrefix, options.SnapshotTimeout));
-        builder.Services.TryAddSingleton<ServiceMantlePhaseGateState>();
-        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, ServiceMantlePhaseGateStartupValidator>());
+        builder.Services.AddSingleton(new PhaseGateRegistration(options.ManagementPathPrefix, options.SnapshotTimeout));
+        builder.Services.TryAddSingleton<PhaseGateState>();
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, PhaseGateStartupValidator>());
         return builder;
     }
 }

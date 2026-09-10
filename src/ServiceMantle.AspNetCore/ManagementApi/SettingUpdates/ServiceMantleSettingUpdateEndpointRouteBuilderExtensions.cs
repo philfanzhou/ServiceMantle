@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.Management;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.SettingUpdates;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -26,17 +26,17 @@ public static class ServiceMantleSettingUpdateEndpointRouteBuilderExtensions
     /// </exception>
     public static IEndpointRouteBuilder MapServiceMantleSettingUpdates(
         this IEndpointRouteBuilder endpoints,
-        ServiceMantleSettingUpdateExecutor? executor)
+        SettingUpdateExecutor? executor)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         if (executor is null)
         {
-            throw ServiceMantleSettingUpdateMapping.MissingExecutor();
+            throw SettingUpdateMapping.MissingExecutor();
         }
 
         var services = endpoints.ServiceProvider;
-        var state = services.GetService<ServiceMantleManagementApiState>() ??
-            throw ServiceMantleSettingUpdateMapping.Failure();
+        var state = services.GetService<ManagementApiState>() ??
+            throw SettingUpdateMapping.Failure();
         string root;
         try
         {
@@ -44,15 +44,15 @@ public static class ServiceMantleSettingUpdateEndpointRouteBuilderExtensions
         }
         catch (InvalidOperationException)
         {
-            throw ServiceMantleSettingUpdateMapping.Failure();
+            throw SettingUpdateMapping.Failure();
         }
 
-        ServiceMantleSettingUpdateMapping.RecordMap(services);
-        var expectedPath = root + ServiceMantleSettingUpdateMapping.Path;
+        SettingUpdateMapping.RecordMap(services);
+        var expectedPath = root + SettingUpdateMapping.Path;
         Func<HttpContext, Task<IResult>> handler = context =>
-            ServiceMantleSettingUpdateHandlers.UpdateAsync(context, executor);
-        endpoints.MapPost(ServiceMantleSettingUpdateMapping.Path, handler)
-            .Finally(builder => ServiceMantleSettingUpdateMapping.Validate(builder, expectedPath));
+            SettingUpdateHandlers.UpdateAsync(context, executor);
+        endpoints.MapPost(SettingUpdateMapping.Path, handler)
+            .Finally(builder => SettingUpdateMapping.Validate(builder, expectedPath));
         return endpoints;
     }
 }

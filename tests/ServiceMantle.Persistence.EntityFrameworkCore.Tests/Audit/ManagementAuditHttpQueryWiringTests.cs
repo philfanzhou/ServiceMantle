@@ -10,6 +10,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.Management;
 using ServiceMantle.Audit;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
@@ -124,7 +125,7 @@ public sealed class ManagementAuditHttpQueryWiringTests
                     "admin",
                     [ManagementPermission.Admin]);
                 await context.SignInAsync(
-                    ServiceMantleManagementSessionDefaults.AuthenticationScheme,
+                    ManagementSessionDefaults.AuthenticationScheme,
                     identity.ToClaimsPrincipal());
                 return Results.NoContent();
             }).AllowAnonymous();

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.AspNetCore.ManagementApi.Setup;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -54,21 +54,21 @@ public static class ServiceMantleSetupEndpointRouteBuilderExtensions
     /// </exception>
     public static IEndpointRouteBuilder MapServiceMantleSetup(
         this IEndpointRouteBuilder endpoints,
-        ServiceMantleSetupExecutor? executor)
+        SetupExecutor? executor)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         if (executor is null)
         {
-            throw ServiceMantleSetupMapping.MissingExecutor();
+            throw SetupMapping.MissingExecutor();
         }
 
-        ServiceMantleSetupMapping.RecordMap(endpoints.ServiceProvider);
+        SetupMapping.RecordMap(endpoints.ServiceProvider);
         endpoints.MapServiceMantleManagementEntry(
-            ServiceMantleManagementEntryKind.SetupStatus,
-            (HttpContext context) => ServiceMantleSetupHandlers.StatusAsync(context));
+            ManagementEntryKind.SetupStatus,
+            (HttpContext context) => SetupHandlers.StatusAsync(context));
         endpoints.MapServiceMantleManagementEntry(
-            ServiceMantleManagementEntryKind.SetupComplete,
-            (HttpContext context) => ServiceMantleSetupHandlers.CompleteAsync(context, executor));
+            ManagementEntryKind.SetupComplete,
+            (HttpContext context) => SetupHandlers.CompleteAsync(context, executor));
         return endpoints;
     }
 }

@@ -19,7 +19,7 @@ public static class ServiceMantlePrometheusEndpointRouteBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         var snapshotProvider = endpoints.ServiceProvider
-            .GetService<ServiceMantlePrometheusSnapshotProvider>() ??
+            .GetService<PrometheusSnapshotProvider>() ??
             throw new InvalidOperationException(
                 "The ServiceMantle Prometheus endpoint requires AddOpenTelemetryPrometheusEndpoint.");
 
@@ -28,10 +28,10 @@ public static class ServiceMantlePrometheusEndpointRouteBuilderExtensions
             return endpoints;
         }
 
-        var state = endpoints.ServiceProvider.GetRequiredService<ServiceMantlePrometheusEndpointState>();
+        var state = endpoints.ServiceProvider.GetRequiredService<PrometheusEndpointState>();
         state.RecordMapping(endpoints);
         var pipeline = endpoints.CreateApplicationBuilder();
-        pipeline.UseMiddleware<ServiceMantlePrometheusScrapeGate>();
+        pipeline.UseMiddleware<PrometheusScrapeGate>();
         pipeline.UseOpenTelemetryPrometheusScrapingEndpoint(
             meterProvider: null,
             predicate: static _ => true,
@@ -42,7 +42,7 @@ public static class ServiceMantlePrometheusEndpointRouteBuilderExtensions
                 snapshot!.EndpointPath,
                 [HttpMethods.Get, HttpMethods.Head],
                 pipeline.Build())
-            .WithMetadata(new ServiceMantlePrometheusEndpointMetadata())
+            .WithMetadata(new PrometheusEndpointMetadata())
             .RequireAuthorization(snapshot.AuthorizationPolicyName!);
 
         return endpoints;

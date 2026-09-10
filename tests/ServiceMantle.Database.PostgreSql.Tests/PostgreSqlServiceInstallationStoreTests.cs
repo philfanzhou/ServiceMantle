@@ -128,7 +128,7 @@ public sealed class PostgreSqlServiceInstallationStoreTests : IAsyncLifetime
     private sealed class PostgreSqlInstallationDbContext(
         DbContextOptions<PostgreSqlInstallationDbContext> options,
         Func<CancellationToken, Task>? beforeSaveChangesAsync = null)
-        : DbContext(options), IServiceMantleDbContext
+        : DbContext(options), IServiceDbContext
     {
         private Func<CancellationToken, Task>? beforeSaveChangesAsync = beforeSaveChangesAsync;
 

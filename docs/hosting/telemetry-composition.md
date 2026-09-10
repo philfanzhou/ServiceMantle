@@ -123,7 +123,7 @@ whitelist is not an arbitrary attribute sanitization or cardinality guarantee.
 
 ## Ownership and evidence
 
-`ServiceMantleTelemetryPipelineTests` exercises Build, pipeline composition, mapping, Start, actual
+`TelemetryPipelineTests` exercises Build, pipeline composition, mapping, Start, actual
 loopback HTTP, Stop and Dispose. For each selected tracing signal it observes ended request spans
 in memory; for R it attaches a manual reader and records a controlled `System.Runtime` counter.
 Collectors are configured only where the ServiceMantle registration already declares a provider;

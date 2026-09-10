@@ -11,6 +11,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ServiceMantle.AspNetCore.Management;
 using ServiceMantle.Audit;
 using ServiceMantle.Management;
 using ServiceMantle.Persistence.EntityFrameworkCore;
@@ -253,7 +254,7 @@ public sealed class SqlServerDataProtectionCookieTests(SqlServerDataProtectionCo
         var payload = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(payload);
         Assert.Equal(
-            ServiceMantleManagementSessionDefaults.ExpiredErrorCode,
+            ManagementSessionDefaults.ExpiredErrorCode,
             document.RootElement.GetProperty("errorCode").GetString());
         Assert.Equal(["errorCode"], document.RootElement.EnumerateObject().Select(item => item.Name));
         await AssertPublicProjectionExcludesAsync(
@@ -344,7 +345,7 @@ public sealed class SqlServerDataProtectionCookieTests(SqlServerDataProtectionCo
                     [ManagementPermission.Admin],
                     "sensitive-cookie-display-name");
                 await context.SignInAsync(
-                    ServiceMantleManagementSessionDefaults.AuthenticationScheme,
+                    ManagementSessionDefaults.AuthenticationScheme,
                     identity.ToClaimsPrincipal());
                 return Results.NoContent();
             }).AllowAnonymous();

@@ -19,12 +19,12 @@ public static class ServiceMantleOtlpBuilderExtensions
     /// </summary>
     public static ServiceMantleBuilder AddOpenTelemetryOtlpExporter(
         this ServiceMantleBuilder builder,
-        Action<ServiceMantleOtlpOptions>? configure = null)
+        Action<OtlpOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        var options = new ServiceMantleOtlpOptions();
+        var options = new OtlpOptions();
         configure?.Invoke(options);
-        var registration = ServiceMantleOtlpRegistration.Create(options);
+        var registration = OtlpRegistration.Create(options);
         builder.Services.AddSingleton(registration);
 
         if (!registration.Traces.Enabled && !registration.Metrics.Enabled)
@@ -33,32 +33,32 @@ public static class ServiceMantleOtlpBuilderExtensions
         }
 
         var firstEnabledRegistration = !builder.Services.Any(descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantleOtlpRuntime));
+            descriptor.ServiceType == typeof(OtlpRuntime));
         if (!firstEnabledRegistration)
         {
             return builder;
         }
 
-        builder.Services.TryAddSingleton<ServiceMantleOtlpRuntime>();
+        builder.Services.TryAddSingleton<OtlpRuntime>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IConfigureOptions<OtlpExporterOptions>,
-            ServiceMantleOtlpOptionsConfigurator>());
+            OtlpOptionsConfigurator>());
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleOtlpStartupValidator>());
+            OtlpStartupValidator>());
 
         var openTelemetry = builder.Services.AddOpenTelemetry();
         if (registration.Traces.Enabled)
         {
             openTelemetry.WithTracing(tracing => tracing.AddOtlpExporter(
-                ServiceMantleOtlpNames.Traces,
+                OtlpNames.Traces,
                 configure: null));
         }
 
         if (registration.Metrics.Enabled)
         {
             openTelemetry.WithMetrics(metrics => metrics.AddOtlpExporter(
-                ServiceMantleOtlpNames.Metrics,
+                OtlpNames.Metrics,
                 (_, reader) =>
                 {
                     reader.PeriodicExportingMetricReaderOptions = new PeriodicExportingMetricReaderOptions

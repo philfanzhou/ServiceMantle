@@ -11,7 +11,7 @@ The default route is `POST /management/v1/settings`. It inherits the completed/s
 phase gate, administrator authorization, management rate limit, security response headers, and
 correlation ID behavior. The endpoint is mapped exactly once as a direct child of the v1 group.
 
-The required `ServiceMantleSettingUpdateExecutor` is the consumer-owned commit boundary. It resolves
+The required `SettingUpdateExecutor` is the consumer-owned commit boundary. It resolves
 a fresh scoped unit of work, begins a transaction, calls `ServiceSettingUpdateService`, commits only
 an applied result, and returns Applied only after that commit completes. Failure and cancellation
 roll back and discard the scope without retrying. The endpoint never accesses a `DbContext`, commits

@@ -8,8 +8,11 @@ using Microsoft.Extensions.Hosting;
 using ServiceMantle;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.Http;
+using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.RateLimiting;
 using ServiceMantle.Bootstrap;
-using ServiceMantle.Http;
 using ServiceMantle.Health;
 using ServiceMantle.Logging;
 using ServiceMantle.Management;
@@ -51,8 +54,8 @@ public static class ServiceMantleServiceCollectionExtensions
         var resolvedBootstrapFilePath = BootstrapFileStore.ResolveFilePath(serviceId, bootstrapFilePath);
         var resolvedServiceVersion = ServiceLogContext.ResolveServiceVersion(serviceVersion);
         var existingRegistration = services
-            .Where(descriptor => descriptor.ServiceType == typeof(ServiceMantleRegistration))
-            .Select(descriptor => descriptor.ImplementationInstance as ServiceMantleRegistration)
+            .Where(descriptor => descriptor.ServiceType == typeof(HostRegistration))
+            .Select(descriptor => descriptor.ImplementationInstance as HostRegistration)
             .SingleOrDefault(registration => registration is not null);
 
         if (existingRegistration is not null)
@@ -85,7 +88,7 @@ public static class ServiceMantleServiceCollectionExtensions
                 "ServiceMantle host-owned identity and Bootstrap services must be registered through AddServiceMantle.");
         }
 
-        services.AddSingleton(new ServiceMantleRegistration(
+        services.AddSingleton(new HostRegistration(
             serviceId,
             instanceId,
             resolvedBootstrapFilePath,
@@ -111,10 +114,10 @@ public static class ServiceMantleServiceCollectionExtensions
                 serviceProvider.GetServices<IDatabaseMigrationLockProvider>(),
                 serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver));
         services.TryAddSingleton<IServiceStartupPhaseResolver, DefaultServiceStartupPhaseResolver>();
-        services.TryAddSingleton<ServiceMantleExceptionMappingRegistry>();
+        services.TryAddSingleton<ExceptionMappingRegistry>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleProblemDetailsStartupValidator>());
+            ProblemDetailsStartupValidator>());
 
         return new ServiceMantleBuilder(services);
     }
@@ -197,12 +200,12 @@ public static class ServiceMantleServiceCollectionExtensions
     /// </remarks>
     public static ServiceMantleBuilder AddServiceMantleHealthEndpoints(
         this ServiceMantleBuilder builder,
-        Action<ServiceMantleHealthOptions>? configure = null)
+        Action<HealthOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        var options = new ServiceMantleHealthOptions();
+        var options = new HealthOptions();
         configure?.Invoke(options);
-        builder.Services.AddSingleton(new ServiceMantleHealthRegistration(
+        builder.Services.AddSingleton(new HealthRegistration(
             options.ProbeTimeout,
             options.ContributorTimeout));
         // Constructed explicitly so the shared contributor budget keeps measuring on
@@ -214,10 +217,10 @@ public static class ServiceMantleServiceCollectionExtensions
                 serviceProvider.GetServices<IServiceReadinessContributor>()));
         builder.Services.TryAddScoped<
             IServiceReadinessDecisionSource,
-            ServiceMantleReadinessDecisionSource>();
+            ReadinessDecisionSource>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleHealthStartupValidator>());
+            HealthStartupValidator>());
         return builder;
     }
 
@@ -254,21 +257,21 @@ public static class ServiceMantleServiceCollectionExtensions
     /// </remarks>
     public static ServiceMantleBuilder AddManagementCookieAuthentication(
         this ServiceMantleBuilder builder,
-        Action<ServiceMantleManagementCookieOptions>? configure = null)
+        Action<ManagementCookieOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
         var hostRegistration = builder.Services
-            .Where(descriptor => descriptor.ServiceType == typeof(ServiceMantleRegistration))
-            .Select(descriptor => descriptor.ImplementationInstance as ServiceMantleRegistration)
+            .Where(descriptor => descriptor.ServiceType == typeof(HostRegistration))
+            .Select(descriptor => descriptor.ImplementationInstance as HostRegistration)
             .Single(registration => registration is not null)!;
-        var options = new ServiceMantleManagementCookieOptions();
+        var options = new ManagementCookieOptions();
         configure?.Invoke(options);
-        var registration = ServiceMantleManagementCookieRegistration.Create(
+        var registration = ManagementCookieRegistration.Create(
             options,
             hostRegistration.ServiceId);
         var firstRegistration = !builder.Services.Any(descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantleManagementCookieRegistration));
+            descriptor.ServiceType == typeof(ManagementCookieRegistration));
 
         builder.Services.AddSingleton(registration);
         if (!firstRegistration)
@@ -282,21 +285,21 @@ public static class ServiceMantleServiceCollectionExtensions
             .AddAuthentication(authenticationOptions =>
             {
                 authenticationOptions.DefaultAuthenticateScheme =
-                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                    ManagementSessionDefaults.AuthenticationScheme;
                 authenticationOptions.DefaultChallengeScheme =
-                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                    ManagementSessionDefaults.AuthenticationScheme;
                 authenticationOptions.DefaultForbidScheme =
-                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                    ManagementSessionDefaults.AuthenticationScheme;
                 authenticationOptions.DefaultSignInScheme =
-                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                    ManagementSessionDefaults.AuthenticationScheme;
                 authenticationOptions.DefaultSignOutScheme =
-                    ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+                    ManagementSessionDefaults.AuthenticationScheme;
             })
             .AddCookie(
-                ServiceMantleManagementSessionDefaults.AuthenticationScheme,
+                ManagementSessionDefaults.AuthenticationScheme,
                 cookieOptions =>
                 {
-                    cookieOptions.Cookie.Name = ServiceMantleManagementSessionDefaults.CookieName;
+                    cookieOptions.Cookie.Name = ManagementSessionDefaults.CookieName;
                     cookieOptions.Cookie.HttpOnly = registration.HttpOnly;
                     cookieOptions.Cookie.SecurePolicy = registration.SecurePolicy;
                     cookieOptions.Cookie.SameSite = registration.SameSite;
@@ -305,11 +308,11 @@ public static class ServiceMantleServiceCollectionExtensions
                     cookieOptions.Cookie.Domain = null;
                     cookieOptions.ExpireTimeSpan = registration.ExpireTimeSpan;
                     cookieOptions.SlidingExpiration = registration.SlidingExpiration;
-                    cookieOptions.Events = ServiceMantleManagementCookieEvents.Create();
+                    cookieOptions.Events = ManagementCookieEvents.Create();
                 });
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleManagementCookieStartupValidator>());
+            ManagementCookieStartupValidator>());
 
         return builder;
     }
@@ -343,8 +346,8 @@ public static class ServiceMantleServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        builder.Services.AddSingleton<IServiceMantleExceptionMappingRegistration>(
-            new ServiceMantleExceptionMappingRegistration<TException>(
+        builder.Services.AddSingleton<IExceptionMappingRegistration>(
+            new ExceptionMappingRegistration<TException>(
                 statusCode,
                 errorCode,
                 title,
@@ -362,18 +365,18 @@ public static class ServiceMantleServiceCollectionExtensions
     /// </remarks>
     public static ServiceMantleBuilder AddForwardedHeaders(
         this ServiceMantleBuilder builder,
-        Action<ServiceMantleForwardedHeadersOptions> configure)
+        Action<ForwardedHeadersTrustOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
-        var options = new ServiceMantleForwardedHeadersOptions();
+        var options = new ForwardedHeadersTrustOptions();
         configure(options);
-        builder.Services.AddSingleton(new ServiceMantleForwardedHeadersRegistration(options));
-        builder.Services.TryAddSingleton<ServiceMantleForwardedHeadersSnapshotProvider>();
+        builder.Services.AddSingleton(new ForwardedHeadersRegistration(options));
+        builder.Services.TryAddSingleton<ForwardedHeadersSnapshotProvider>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleForwardedHeadersStartupValidator>());
+            ForwardedHeadersStartupValidator>());
         return builder;
     }
 
@@ -382,7 +385,7 @@ public static class ServiceMantleServiceCollectionExtensions
     public static ServiceMantleBuilder AddSecurityResponseHeaders(this ServiceMantleBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.Services.TryAddSingleton<ServiceMantleSecurityResponseHeadersRegistration>();
+        builder.Services.TryAddSingleton<SecurityResponseHeadersRegistration>();
         return builder;
     }
 
@@ -399,15 +402,15 @@ public static class ServiceMantleServiceCollectionExtensions
     /// </remarks>
     public static ServiceMantleBuilder AddRateLimiting(
         this ServiceMantleBuilder builder,
-        Action<ServiceMantleRateLimitingOptions>? configure = null)
+        Action<RateLimitingOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new ServiceMantleRateLimitingOptions();
+        var options = new RateLimitingOptions();
         configure?.Invoke(options);
         var firstRegistration = !builder.Services.Any(descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantleRateLimitingRegistration));
-        builder.Services.AddSingleton(new ServiceMantleRateLimitingRegistration(options));
+            descriptor.ServiceType == typeof(RateLimitingRegistration));
+        builder.Services.AddSingleton(new RateLimitingRegistration(options));
         if (!firstRegistration)
         {
             return builder;
@@ -415,20 +418,20 @@ public static class ServiceMantleServiceCollectionExtensions
 
         builder.Services.TryAddSingleton<IManagementClaimsParser, ManagementClaimsParser>();
         builder.Services.TryAddSingleton<IManagementCurrentOperatorResolver, ManagementCurrentOperatorResolver>();
-        builder.Services.TryAddSingleton<ServiceMantleRateLimitingSnapshotProvider>();
+        builder.Services.TryAddSingleton<RateLimitingSnapshotProvider>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleRateLimitingStartupValidator>());
+            RateLimitingStartupValidator>());
         builder.Services.AddRateLimiter(rateLimiterOptions =>
         {
             rateLimiterOptions.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            rateLimiterOptions.OnRejected = ServiceMantleRateLimitingPolicy.OnRejectedAsync;
+            rateLimiterOptions.OnRejected = RateLimitingPolicy.OnRejectedAsync;
             rateLimiterOptions.AddPolicy<string>(
-                ServiceMantleRateLimitingDefaults.SetupPolicyName,
-                ServiceMantleRateLimitingPolicy.SetupPartition);
+                RateLimitingDefaults.SetupPolicyName,
+                RateLimitingPolicy.SetupPartition);
             rateLimiterOptions.AddPolicy<string>(
-                ServiceMantleRateLimitingDefaults.ManagementPolicyName,
-                ServiceMantleRateLimitingPolicy.ManagementPartition);
+                RateLimitingDefaults.ManagementPolicyName,
+                RateLimitingPolicy.ManagementPartition);
         });
         return builder;
     }
@@ -444,11 +447,11 @@ public static class ServiceMantleServiceCollectionExtensions
     /// </remarks>
     public static ServiceMantleBuilder AddSensitiveHeaders(
         this ServiceMantleBuilder builder,
-        Action<ServiceMantleSensitiveHeadersOptions>? configure = null)
+        Action<SensitiveHeadersOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new ServiceMantleSensitiveHeadersOptions();
+        var options = new SensitiveHeadersOptions();
         var configureFailed = false;
         try
         {
@@ -460,8 +463,8 @@ public static class ServiceMantleServiceCollectionExtensions
         }
 
         var firstRegistration = !builder.Services.Any(descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantleSensitiveHeaderRegistration));
-        builder.Services.AddSingleton(new ServiceMantleSensitiveHeaderRegistration(
+            descriptor.ServiceType == typeof(SensitiveHeaderRegistration));
+        builder.Services.AddSingleton(new SensitiveHeaderRegistration(
             options,
             configureFailed));
         if (!firstRegistration)
@@ -469,22 +472,22 @@ public static class ServiceMantleServiceCollectionExtensions
             return builder;
         }
 
-        builder.Services.TryAddSingleton<ServiceMantleSensitiveHeaderRegistry>(serviceProvider =>
-            new ServiceMantleSensitiveHeaderRegistry(
-                serviceProvider.GetServices<ServiceMantleSensitiveHeaderRegistration>()));
-        builder.Services.TryAddSingleton<ServiceMantleSensitiveHeaderSanitizer>(serviceProvider =>
-            new ServiceMantleSensitiveHeaderSanitizer(
-                serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderRegistry>()));
+        builder.Services.TryAddSingleton<SensitiveHeaderRegistry>(serviceProvider =>
+            new SensitiveHeaderRegistry(
+                serviceProvider.GetServices<SensitiveHeaderRegistration>()));
+        builder.Services.TryAddSingleton<SensitiveHeaderSanitizer>(serviceProvider =>
+            new SensitiveHeaderSanitizer(
+                serviceProvider.GetRequiredService<SensitiveHeaderRegistry>()));
         builder.Services.TryAddSingleton<IStructuredLogSanitizerProvider>(serviceProvider =>
-            serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderSanitizer>());
+            serviceProvider.GetRequiredService<SensitiveHeaderSanitizer>());
         builder.Services.TryAddSingleton<StructuredLogSanitizer>(serviceProvider =>
             serviceProvider.GetRequiredService<IStructuredLogSanitizerProvider>().Sanitizer);
-        builder.Services.TryAddSingleton<ServiceMantleRequestHeaderDiagnosticProjector>(serviceProvider =>
-            new ServiceMantleRequestHeaderDiagnosticProjector(
-                serviceProvider.GetRequiredService<ServiceMantleSensitiveHeaderSanitizer>()));
+        builder.Services.TryAddSingleton<RequestHeaderDiagnosticProjector>(serviceProvider =>
+            new RequestHeaderDiagnosticProjector(
+                serviceProvider.GetRequiredService<SensitiveHeaderSanitizer>()));
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleSensitiveHeaderStartupValidator>());
+            SensitiveHeaderStartupValidator>());
         return builder;
     }
 }

@@ -1,4 +1,4 @@
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.Http;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -12,9 +12,9 @@ public static class ServiceMantleSecurityResponseHeadersEndpointConventionBuilde
         ArgumentNullException.ThrowIfNull(builder);
         builder.Add(endpointBuilder =>
         {
-            if (!endpointBuilder.Metadata.OfType<ServiceMantleSecurityResponseHeadersMetadata>().Any())
+            if (!endpointBuilder.Metadata.OfType<SecurityResponseHeadersMetadata>().Any())
             {
-                endpointBuilder.Metadata.Add(new ServiceMantleSecurityResponseHeadersMetadata());
+                endpointBuilder.Metadata.Add(new SecurityResponseHeadersMetadata());
             }
         });
         return builder;

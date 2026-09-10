@@ -2,6 +2,10 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.Http;
+using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.AspNetCore.PhaseGate;
+using ServiceMantle.AspNetCore.RateLimiting;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -19,7 +23,7 @@ public static class ServiceMantlePipelineApplicationBuilderExtensions
     /// middleware. Endpoint security-header, rate-limit, and authorization metadata remain explicit.
     /// This does not register authentication, logging hosts, health endpoints, or telemetry, or
     /// rewrite the existing phase-gate and authentication response formats. Sensitive Header
-    /// diagnostics must use ServiceMantleRequestHeaderDiagnosticProjector explicitly.
+    /// diagnostics must use RequestHeaderDiagnosticProjector explicitly.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// A required capability is absent, the composition was already used, or constituent
@@ -29,17 +33,17 @@ public static class ServiceMantlePipelineApplicationBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
         var services = app.Services;
-        if (services.GetService<ServiceMantleRegistration>() is null ||
-            services.GetService<ServiceMantleSecurityResponseHeadersRegistration>() is null ||
-            services.GetService<ServiceMantleSensitiveHeaderRegistry>() is null ||
-            services.GetService<ServiceMantleRateLimitingSnapshotProvider>() is null ||
-            services.GetService<ServiceMantlePhaseGateState>() is null)
+        if (services.GetService<HostRegistration>() is null ||
+            services.GetService<SecurityResponseHeadersRegistration>() is null ||
+            services.GetService<SensitiveHeaderRegistry>() is null ||
+            services.GetService<RateLimitingSnapshotProvider>() is null ||
+            services.GetService<PhaseGateState>() is null)
         {
             throw new InvalidOperationException("The ServiceMantle pipeline requires all HTTP capabilities to be registered.");
         }
 
-        ServiceMantlePipelineComposition.Begin(app);
-        if (services.GetService<ServiceMantleForwardedHeadersSnapshotProvider>() is not null)
+        PipelineComposition.Begin(app);
+        if (services.GetService<ForwardedHeadersSnapshotProvider>() is not null)
             app.UseServiceMantleForwardedHeaders();
         app.UseServiceMantleCorrelationId();
         app.UseServiceMantleProblemDetails();
@@ -51,7 +55,7 @@ public static class ServiceMantlePipelineApplicationBuilderExtensions
         app.UseRateLimiter();
         if (services.GetService<IAuthorizationPolicyProvider>() is not null)
             app.UseAuthorization();
-        ServiceMantlePipelineComposition.Complete(app);
+        PipelineComposition.Complete(app);
         return app;
     }
 }

@@ -1,8 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -38,7 +37,7 @@ public static class ServiceMantleManagementEntryEndpointRouteBuilderExtensions
     /// </exception>
     public static RouteHandlerBuilder MapServiceMantleManagementEntry(
         this IEndpointRouteBuilder endpoints,
-        ServiceMantleManagementEntryKind kind,
+        ManagementEntryKind kind,
         Delegate handler)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -48,10 +47,10 @@ public static class ServiceMantleManagementEntryEndpointRouteBuilderExtensions
             throw new ArgumentOutOfRangeException(nameof(kind));
         }
 
-        var state = endpoints.ServiceProvider.GetService<ServiceMantleManagementEntryState>() ??
-            throw ServiceMantleManagementEntryState.MissingCapability();
+        var state = endpoints.ServiceProvider.GetService<ManagementEntryState>() ??
+            throw ManagementEntryState.MissingCapability();
         var root = state.GetRootPath();
-        var definition = ServiceMantleManagementEntryDefaults.Get(kind);
+        var definition = ManagementEntryDefaults.Get(kind);
         state.RecordMap(endpoints);
 
         var builder = endpoints.MapMethods(root + definition.PathSuffix, definition.Methods, handler);
@@ -59,7 +58,7 @@ public static class ServiceMantleManagementEntryEndpointRouteBuilderExtensions
             .WithServiceMantleManagementSurface(definition.Surface)
             .RequireRateLimiting(definition.RateLimitPolicyName)
             .RequireServiceMantleSecurityResponseHeaders()
-            .WithMetadata(new ServiceMantleManagementEntryMetadata(kind));
+            .WithMetadata(new ManagementEntryMetadata(kind));
         if (definition.IsAnonymous)
         {
             builder.AllowAnonymous();
@@ -74,8 +73,8 @@ public static class ServiceMantleManagementEntryEndpointRouteBuilderExtensions
 
         if (definition.RequiresUnsafeRequestHeader)
         {
-            builder.AddEndpointFilter(ServiceMantleUnsafeRequestFilter.Instance);
-            builder.WithMetadata(new ServiceMantleUnsafeRequestGuardMetadata());
+            builder.AddEndpointFilter(UnsafeRequestFilter.Instance);
+            builder.WithMetadata(new UnsafeRequestGuardMetadata());
         }
 
         return builder;

@@ -1,9 +1,10 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
 using ServiceMantle.Bootstrap;
-using ServiceMantle.Management;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -56,8 +57,8 @@ public static class ServiceMantleBootstrapEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
 
         var registration = endpoints.ServiceProvider
-            .GetService<ServiceMantleBootstrapManagementRegistration>()
-            ?? throw ServiceMantleBootstrapMapping.MissingCapability();
+            .GetService<BootstrapManagementRegistration>()
+            ?? throw BootstrapMapping.MissingCapability();
 
         // The store is looked up as a registration rather than resolved, so a consumer may register
         // it with any lifetime and nothing is constructed while the routes are being mapped.
@@ -65,19 +66,19 @@ public static class ServiceMantleBootstrapEndpointRouteBuilderExtensions
             is not { } isService ||
             !isService.IsService(typeof(IBootstrapCredentialStore)))
         {
-            throw ServiceMantleBootstrapMapping.MissingCredentialStore();
+            throw BootstrapMapping.MissingCredentialStore();
         }
 
-        ServiceMantleBootstrapMapping.RecordMap(endpoints.ServiceProvider);
+        BootstrapMapping.RecordMap(endpoints.ServiceProvider);
         registration.RecordMap();
 
         endpoints.MapServiceMantleManagementEntry(
-            ServiceMantleManagementEntryKind.BootstrapCreate,
-            (HttpContext context) => ServiceMantleBootstrapHandlers.CreateAsync(context));
+            ManagementEntryKind.BootstrapCreate,
+            (HttpContext context) => BootstrapHandlers.CreateAsync(context));
         endpoints
             .MapServiceMantleManagementEntry(
-                ServiceMantleManagementEntryKind.BootstrapUpdate,
-                (HttpContext context) => ServiceMantleBootstrapHandlers.UpdateAsync(context))
+                ManagementEntryKind.BootstrapUpdate,
+                (HttpContext context) => BootstrapHandlers.UpdateAsync(context))
             // The shared administrator policy is authentication-method agnostic by design. This
             // mapping adds the session policy, whose scheme list is the fixed management cookie, so
             // rewriting a running instance's Bootstrap file cannot be authorized by an external

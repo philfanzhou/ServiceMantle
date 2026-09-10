@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Otlp.Tests;
@@ -11,12 +10,12 @@ public sealed class PackageDependencyBoundaryTests
     {
         foreach (var type in new[]
                  {
-                     typeof(ServiceMantleOtlpOptions),
-                     typeof(ServiceMantleOtlpProtocol),
-                     typeof(ServiceMantleOtlpConfigurationException),
-                     typeof(WellKnownServiceMantleOtlpErrorCodes),
-                     typeof(IServiceMantleOtlpAuthenticationHeaderResolver),
-                     typeof(ServiceMantleOtlpAuthenticationHeader),
+                     typeof(OtlpOptions),
+                     typeof(OtlpProtocol),
+                     typeof(OtlpConfigurationException),
+                     typeof(WellKnownOtlpErrorCodes),
+                     typeof(IOtlpAuthenticationHeaderResolver),
+                     typeof(OtlpAuthenticationHeader),
                  })
         {
             Assert.Equal("ServiceMantle.OpenTelemetry", type.Assembly.GetName().Name);
@@ -42,9 +41,9 @@ public sealed class PackageDependencyBoundaryTests
             .AddOpenTelemetryInstrumentation();
 
         Assert.DoesNotContain(services, descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantleOtlpRuntime) ||
-            descriptor.ImplementationType == typeof(ServiceMantleOtlpRuntime) ||
-            descriptor.ImplementationType == typeof(ServiceMantleOtlpOptionsConfigurator) ||
-            descriptor.ImplementationType == typeof(ServiceMantleOtlpStartupValidator));
+            descriptor.ServiceType == typeof(OtlpRuntime) ||
+            descriptor.ImplementationType == typeof(OtlpRuntime) ||
+            descriptor.ImplementationType == typeof(OtlpOptionsConfigurator) ||
+            descriptor.ImplementationType == typeof(OtlpStartupValidator));
     }
 }

@@ -2,11 +2,10 @@
 // that used to require ServiceMantle.Serilog.GrafanaLoki as a separate package.
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.Serilog;
 using ServiceMantle.Serilog.GrafanaLoki;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddSingleton<IServiceMantleLokiAuthorizationHeaderResolver, ConsumerResolver>();
+builder.Services.AddSingleton<ILokiAuthorizationHeaderResolver, ConsumerResolver>();
 builder.AddServiceMantleSerilog(options => options.MinimumLevel = "Information");
 builder.AddServiceMantleGrafanaLoki(options =>
 {
@@ -19,13 +18,13 @@ using var host = builder.Build();
 await host.StartAsync();
 Console.WriteLine(
     "ServiceMantle.Serilog consumer started; console and Grafana Loki both resolved from " +
-    $"{typeof(ServiceMantleGrafanaLokiOptions).Assembly.Location}.");
+    $"{typeof(GrafanaLokiOptions).Assembly.Location}.");
 await host.StopAsync();
 
 // The sink refuses to start without a resolved authorization header, so the consumer has to supply
 // one to reach the enabled path at all. The value never leaves this process: nothing is pushed,
 // because the endpoint host does not resolve.
-internal sealed class ConsumerResolver : IServiceMantleLokiAuthorizationHeaderResolver
+internal sealed class ConsumerResolver : ILokiAuthorizationHeaderResolver
 {
     public string? ResolveAuthorizationHeader(string name) => "Bearer package-consumer-placeholder";
 }

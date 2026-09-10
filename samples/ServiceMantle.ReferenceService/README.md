@@ -120,7 +120,7 @@ one identifier enriches the whole downstream scope. Its single request line carr
 message template, a bounded result classification (`success`, `client_error`, `server_error`,
 `other`, `cancelled`, `faulted`), the status code, the request method collapsed to the framework's
 known token set (anything else becomes `(other)`), the matched route pattern, and the Header graph
-produced by the DI-owned `ServiceMantleRequestHeaderDiagnosticProjector`. No raw path, query, body,
+produced by the DI-owned `RequestHeaderDiagnosticProjector`. No raw path, query, body,
 connection setting, or exception detail is logged, and no second sanitizer is registered.
 
 Header values follow the library contract rather than an allow list: the built-in denied Headers and
@@ -162,7 +162,7 @@ service name, the service version, and the instance ID — so the sample contrib
 high-cardinality dimension, and reads no Header, body, query, or connection field.
 
 What this switch does **not** do: it wires no OTLP exporter, no Prometheus endpoint, no
-`ServiceMantleMetrics`, no health endpoint, and no service or installation phase metric, and it
+`ServiceMetrics`, no health endpoint, and no service or installation phase metric, and it
 fabricates no phase. `/metrics`, `/health`, and `/management` still return 404 with the switch on.
 Nothing here creates a remote export target, so with no exporter registered the collected signals
 have nowhere to go. Those capabilities stay with

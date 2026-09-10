@@ -1073,7 +1073,7 @@ public sealed class EfCoreServiceInstallationStoreTests
             beforeSaveChangesAsync);
     }
 
-    private sealed class TestDbContext : DbContext, IServiceMantleDbContext
+    private sealed class TestDbContext : DbContext, IServiceDbContext
     {
         private readonly bool invokeExtensionTwice;
         private readonly bool configurePrimaryKeyFirst;

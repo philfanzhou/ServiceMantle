@@ -1,0 +1,141 @@
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.Health;
+using ServiceMantle.Installation;
+
+namespace ServiceMantle.AspNetCore.PhaseGate;
+
+internal sealed class PhaseGateMiddleware(RequestDelegate next, PhaseGateState state)
+{
+    private readonly PhaseGateRegistration configuration = state.GetConfiguration();
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var cancellationToken = context.RequestAborted;
+        cancellationToken.ThrowIfCancellationRequested();
+        var endpoint = context.GetEndpoint();
+        if (endpoint is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+        var path = context.Request.Path.Value ?? "";
+        var health = endpoint.Metadata.GetMetadata<PhaseHealthMetadata>();
+        if (health is not null && string.Equals(path.TrimEnd('/'), health.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            await next(context).ConfigureAwait(false);
+            return;
+        }
+        var markers = endpoint.Metadata.GetOrderedMetadata<ManagementSurfaceMetadata>();
+        var surface = markers.Count == 1 ? markers[0].Surface : (ManagementSurface?)null;
+        if (markers.Count > 1 || surface is not null && !PhaseGateState.Matches(path, configuration.Prefix, surface.Value) ||
+            surface is null && PhaseGateState.Under(path, configuration.Prefix))
+        {
+            await RejectAsync(context).ConfigureAwait(false);
+            return;
+        }
+        // An opt-in management entry narrows admission by method within its surface. An endpoint
+        // without entry metadata keeps the existing surface-only classification.
+        var entries = endpoint.Metadata.GetOrderedMetadata<ManagementEntryMetadata>();
+        ManagementEntryDefinition? entry = null;
+        if (entries.Count == 1 && Enum.IsDefined(entries[0].Kind))
+        {
+            entry = ManagementEntryDefaults.Get(entries[0].Kind);
+        }
+        if (entries.Count > 1 || entries.Count == 1 && entry is null ||
+            entry is not null && (entry.Surface != surface || !entry.AllowsMethod(context.Request.Method)))
+        {
+            await RejectAsync(context).ConfigureAwait(false);
+            return;
+        }
+        if (surface == ManagementSurface.Status)
+        {
+            if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
+                await next(context).ConfigureAwait(false);
+            else await RejectAsync(context).ConfigureAwait(false);
+            return;
+        }
+
+        ServiceHealthSnapshot? snapshot;
+        using var timeout = new CancellationTokenSource(configuration.Timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
+        {
+            var source = context.RequestServices.GetService<IServiceHealthSnapshotSource>();
+            snapshot = source is null ? null : await source.GetSnapshotAsync(linked.Token).AsTask()
+                .WaitAsync(configuration.Timeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw CancelledByCaller(linked, cancellationToken);
+        }
+        catch
+        {
+            snapshot = null;
+        }
+        if (cancellationToken.IsCancellationRequested) throw CancelledByCaller(linked, cancellationToken);
+        if (snapshot is null || !Allows(entry, surface, snapshot))
+        {
+            await RejectAsync(context).ConfigureAwait(false);
+            return;
+        }
+        await next(context).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Owns the cancellation exit: the snapshot source is notified on the token it received before
+    /// the linked source is released, and the caller still observes its own cancellation.
+    /// </summary>
+    private static OperationCanceledException CancelledByCaller(CancellationTokenSource linked, CancellationToken cancellationToken)
+    {
+        try
+        {
+            linked.Cancel();
+        }
+        catch (AggregateException)
+        {
+            // Cancellation callbacks that throw are outside the cooperative cancellation contract
+            // and must not replace the caller's cancellation result.
+        }
+        return new OperationCanceledException("The phase observation was cancelled by the caller.", cancellationToken);
+    }
+
+    private static bool Allows(ManagementEntryDefinition? entry, ManagementSurface? surface,
+        ServiceHealthSnapshot snapshot)
+    {
+        if (snapshot.MigrationStatus is ServiceMigrationReadinessState.Running or ServiceMigrationReadinessState.Failed) return false;
+        if (entry is not null) return entry.Kind switch
+        {
+            // Bootstrap creation stays anonymous, so it must never be admitted once the service is
+            // configured; the migration states other than NotStarted and Succeeded are already gone.
+            ManagementEntryKind.BootstrapCreate => snapshot.Phase == ServiceStartupPhase.BootstrapConfiguration,
+            ManagementEntryKind.SetupStatus or ManagementEntryKind.SetupComplete =>
+                snapshot.Phase is ServiceStartupPhase.PendingSetup or ServiceStartupPhase.Completed &&
+                snapshot.MigrationStatus == ServiceMigrationReadinessState.Succeeded &&
+                snapshot.DatabaseStatus == ServiceDatabaseReadinessState.Reachable,
+            ManagementEntryKind.BootstrapUpdate or ManagementEntryKind.SessionLogin or
+                ManagementEntryKind.SessionLogout or ManagementEntryKind.CurrentSession =>
+                ServiceHealthEvaluator.Evaluate(snapshot).IsReady,
+            // Installation status never reaches this point: it is admitted without a snapshot.
+            _ => false
+        };
+        return surface switch
+        {
+            ManagementSurface.Bootstrap => snapshot.Phase == ServiceStartupPhase.BootstrapConfiguration,
+            ManagementSurface.Setup => snapshot.Phase == ServiceStartupPhase.PendingSetup &&
+                snapshot.MigrationStatus == ServiceMigrationReadinessState.Succeeded &&
+                snapshot.DatabaseStatus == ServiceDatabaseReadinessState.Reachable,
+            null or ManagementSurface.Management => ServiceHealthEvaluator.Evaluate(snapshot).IsReady,
+            _ => false
+        };
+    }
+
+    private static Task RejectAsync(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        context.Response.Headers.CacheControl = "no-store";
+        return context.Response.WriteAsJsonAsync(new { errorCode = "service.phase.unavailable" }, context.RequestAborted);
+    }
+}

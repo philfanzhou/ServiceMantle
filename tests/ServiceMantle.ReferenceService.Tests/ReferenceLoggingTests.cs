@@ -1,14 +1,14 @@
 using System.Globalization;
-using System.Text;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.Logging;
 using ServiceMantle.ReferenceService.Data;
 using ServiceMantle.ReferenceService.Logging;
@@ -52,7 +52,7 @@ public sealed class ReferenceLoggingTests
         }
 
         Assert.False(HasSerilogHost(host.App));
-        Assert.Null(host.App.Services.GetService<ServiceMantleRequestHeaderDiagnosticProjector>());
+        Assert.Null(host.App.Services.GetService<RequestHeaderDiagnosticProjector>());
         var text = await host.StopAndReadAsync();
         Assert.DoesNotContain(RequestLine, text, StringComparison.Ordinal);
     }
@@ -63,7 +63,7 @@ public sealed class ReferenceLoggingTests
         await using var host = await StartAsync(enabled: true);
 
         Assert.True(HasSerilogHost(host.App));
-        Assert.NotNull(host.App.Services.GetService<ServiceMantleRequestHeaderDiagnosticProjector>());
+        Assert.NotNull(host.App.Services.GetService<RequestHeaderDiagnosticProjector>());
         Assert.Single(host.App.Services.GetServices<StructuredLogSanitizer>());
         Assert.Single(host.App.Services.GetServices<ILoggerProvider>());
         using (var client = host.App.GetTestClient())
@@ -123,7 +123,7 @@ public sealed class ReferenceLoggingTests
     {
         const string correlation = "reference-header-probe";
         await using var host = await StartAsync(enabled: true, map: MapProbes);
-        var projector = host.App.Services.GetRequiredService<ServiceMantleRequestHeaderDiagnosticProjector>();
+        var projector = host.App.Services.GetRequiredService<RequestHeaderDiagnosticProjector>();
 
         using (var client = host.App.GetTestClient())
         {
@@ -156,7 +156,7 @@ public sealed class ReferenceLoggingTests
     {
         const string correlation = "reference-unlisted-header-probe";
         await using var host = await StartAsync(enabled: true, map: MapProbes);
-        var projector = host.App.Services.GetRequiredService<ServiceMantleRequestHeaderDiagnosticProjector>();
+        var projector = host.App.Services.GetRequiredService<RequestHeaderDiagnosticProjector>();
 
         using (var client = host.App.GetTestClient())
         {
@@ -339,7 +339,7 @@ public sealed class ReferenceLoggingTests
     /// <summary>Detects the ServiceMantle Serilog host without reaching into package internals.</summary>
     private static bool HasSerilogHost(WebApplication app) => app.Services
         .GetServices<ILoggerProvider>()
-        .Any(provider => provider.GetType().Assembly == typeof(ServiceMantleSerilogOptions).Assembly);
+        .Any(provider => provider.GetType().Assembly == typeof(SerilogOptions).Assembly);
 
     private static HttpRequestMessage CreateRequest(string path, string correlation)
     {

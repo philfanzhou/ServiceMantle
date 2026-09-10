@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.Management;
 using ServiceMantle.Audit;
 using ServiceMantle.Configuration;
 using ServiceMantle.Health;
@@ -167,7 +168,7 @@ public sealed class ManagementSettingUpdateHttpWiringTests
                     "admin",
                     [ManagementPermission.Admin]);
                 await context.SignInAsync(
-                    ServiceMantleManagementSessionDefaults.AuthenticationScheme,
+                    ManagementSessionDefaults.AuthenticationScheme,
                     identity.ToClaimsPrincipal());
                 return Results.NoContent();
             }).AllowAnonymous();

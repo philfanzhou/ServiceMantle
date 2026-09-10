@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using ServiceMantle.Logging;
+using ServiceMantle.AspNetCore.Logging;
 using Xunit;
 
 namespace ServiceMantle.AspNetCore.Tests;

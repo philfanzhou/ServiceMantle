@@ -18,7 +18,7 @@ public sealed class PackageDependencyBoundaryTests
     {
         Assert.Equal(
             "ServiceMantle.Database.Sqlite",
-            typeof(ServiceMantleSqlitePackage).Assembly.GetName().Name);
+            typeof(SqlitePackage).Assembly.GetName().Name);
     }
 
     [Fact]

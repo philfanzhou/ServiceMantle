@@ -1,8 +1,9 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.AspNetCore.ManagementApi.Status;
+using ServiceMantle.AspNetCore.PhaseGate;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -50,12 +51,12 @@ public static class ServiceMantleInstallationStatusEndpointRouteBuilderExtension
         ArgumentNullException.ThrowIfNull(endpoints);
 
         var services = endpoints.ServiceProvider;
-        var latch = services.GetService<ServiceMantleBootstrapRestartLatch>();
-        var bootstrap = services.GetService<IServiceMantleBootstrapStatusReader>();
-        var gate = services.GetService<ServiceMantlePhaseGateState>();
+        var latch = services.GetService<BootstrapRestartLatch>();
+        var bootstrap = services.GetService<IBootstrapStatusReader>();
+        var gate = services.GetService<PhaseGateState>();
         if (latch is null || bootstrap is null || gate is null)
         {
-            throw ServiceMantleInstallationStatusMapping.MissingCapability();
+            throw InstallationStatusMapping.MissingCapability();
         }
 
         TimeSpan budget;
@@ -70,13 +71,13 @@ public static class ServiceMantleInstallationStatusEndpointRouteBuilderExtension
         {
             // The gate owns the diagnostics of its own configured values; this entry point never
             // repeats a configured value.
-            throw ServiceMantleInstallationStatusMapping.MissingCapability();
+            throw InstallationStatusMapping.MissingCapability();
         }
 
-        ServiceMantleInstallationStatusMapping.RecordMap(services);
+        InstallationStatusMapping.RecordMap(services);
         return endpoints.MapServiceMantleManagementEntry(
-            ServiceMantleManagementEntryKind.InstallationStatus,
+            ManagementEntryKind.InstallationStatus,
             (HttpContext context) =>
-                ServiceMantleInstallationStatusHandler.HandleAsync(context, bootstrap, latch, budget));
+                InstallationStatusHandler.HandleAsync(context, bootstrap, latch, budget));
     }
 }

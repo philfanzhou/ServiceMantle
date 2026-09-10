@@ -11,6 +11,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
 using ServiceMantle.Audit;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Health;
@@ -75,7 +78,7 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
 
     internal string CredentialPath => Path.Combine(directory, "catalog.bootstrap-credential.json");
 
-    internal string EntryPath => Root + ServiceMantleManagementEntryDefaults.BootstrapPath;
+    internal string EntryPath => Root + ManagementEntryDefaults.BootstrapPath;
 
     internal WebApplication Application =>
         application ?? throw new InvalidOperationException("The host was disposed.");
@@ -96,7 +99,7 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         int setupPermitLimit = 60,
         int managementPermitLimit = 120)
     {
-        var resolvedRoot = root ?? ServiceMantleManagementApiDefaults.DefaultRootPath;
+        var resolvedRoot = root ?? ManagementApiDefaults.DefaultRootPath;
         var directory = Path.Combine(
             Path.GetTempPath(),
             $"sm-bootstrap-http-{Guid.NewGuid():N}");
@@ -235,12 +238,12 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
     {
         var request = new HttpRequestMessage(method, path ?? EntryPath);
         foreach (var value in unsafeHeader ??
-            [ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderValue])
+            [ManagementEntryDefaults.UnsafeRequestHeaderValue])
         {
             if (value is not null)
             {
                 request.Headers.TryAddWithoutValidation(
-                    ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderName,
+                    ManagementEntryDefaults.UnsafeRequestHeaderName,
                     value);
             }
         }
@@ -291,7 +294,7 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
 
     internal string Cookie(ManagementPermission permission, string operatorId = "operator-1")
     {
-        var scheme = ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+        var scheme = ManagementSessionDefaults.AuthenticationScheme;
         var options = Application.Services
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(scheme);
@@ -307,7 +310,7 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
                 ExpiresUtc = issued + TimeSpan.FromMinutes(5),
             },
             scheme);
-        return ServiceMantleManagementSessionDefaults.CookieName + "=" +
+        return ManagementSessionDefaults.CookieName + "=" +
             options.TicketDataFormat.Protect(ticket);
     }
 

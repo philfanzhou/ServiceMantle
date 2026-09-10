@@ -2,7 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.AspNetCore;
-using ServiceMantle.Management;
+using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -32,7 +33,7 @@ public static class ServiceMantleManagementEntryBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         if (builder.Services.Any(descriptor =>
-                descriptor.ServiceType == typeof(ServiceMantleManagementEntryState)))
+                descriptor.ServiceType == typeof(ManagementEntryState)))
         {
             return builder;
         }
@@ -44,14 +45,14 @@ public static class ServiceMantleManagementEntryBuilderExtensions
         builder.Services.AddAuthorization(options => options.AddPolicy(
             ManagementAuthorizationDefaults.SessionPolicyName,
             new AuthorizationPolicyBuilder()
-                .AddAuthenticationSchemes(ServiceMantleManagementSessionDefaults.AuthenticationScheme)
+                .AddAuthenticationSchemes(ManagementSessionDefaults.AuthenticationScheme)
                 .RequireAuthenticatedUser()
                 .AddRequirements(new ManagementSessionRequirement())
                 .Build()));
-        builder.Services.AddSingleton<ServiceMantleManagementEntryState>();
+        builder.Services.AddSingleton<ManagementEntryState>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleManagementEntryStartupValidator>());
+            ManagementEntryStartupValidator>());
         return builder;
     }
 }

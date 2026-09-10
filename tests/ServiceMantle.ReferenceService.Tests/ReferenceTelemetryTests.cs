@@ -10,7 +10,7 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using ServiceMantle.AspNetCore;
-using ServiceMantle.Logging;
+using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.ReferenceService.Logging;
 using ServiceMantle.ReferenceService.Telemetry;
 using Xunit;

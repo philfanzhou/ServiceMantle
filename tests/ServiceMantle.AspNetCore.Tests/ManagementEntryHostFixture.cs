@@ -14,6 +14,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
 using ServiceMantle.Audit;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
@@ -36,8 +39,8 @@ internal sealed class ManagementEntryHostFixture : IAsyncDisposable
         ServiceMigrationReadinessState.Succeeded,
         ServiceDatabaseReadinessState.Reachable);
 
-    internal static readonly ServiceMantleManagementEntryKind[] AllKinds =
-        Enum.GetValues<ServiceMantleManagementEntryKind>();
+    internal static readonly ManagementEntryKind[] AllKinds =
+        Enum.GetValues<ManagementEntryKind>();
 
     private readonly List<CancellationTokenSource> aborts = [];
     private WebApplication? application;
@@ -75,12 +78,12 @@ internal sealed class ManagementEntryHostFixture : IAsyncDisposable
         int setupPermitLimit = 60,
         int managementPermitLimit = 120,
         string composition = "pipeline",
-        ServiceMantleManagementEntryKind[]? map = null,
-        Action<ServiceMantleManagementEntryKind, RouteHandlerBuilder>? configureEntry = null,
+        ManagementEntryKind[]? map = null,
+        Action<ManagementEntryKind, RouteHandlerBuilder>? configureEntry = null,
         Action<WebApplication, string>? extra = null)
     {
         var recorder = new EntryRecorder();
-        var resolvedRoot = root ?? ServiceMantleManagementApiDefaults.DefaultRootPath;
+        var resolvedRoot = root ?? ManagementApiDefaults.DefaultRootPath;
         var builder = WebApplication.CreateSlimBuilder(
             new WebApplicationOptions { EnvironmentName = "Production" });
         builder.WebHost.UseTestServer();
@@ -139,7 +142,7 @@ internal sealed class ManagementEntryHostFixture : IAsyncDisposable
         string? root = null,
         int setupPermitLimit = 60,
         int managementPermitLimit = 120,
-        ServiceMantleManagementEntryKind[]? map = null,
+        ManagementEntryKind[]? map = null,
         Action<WebApplication, string>? extra = null)
     {
         var fixture = await CreateAsync(
@@ -166,35 +169,35 @@ internal sealed class ManagementEntryHostFixture : IAsyncDisposable
         return abort;
     }
 
-    internal static string Path(string root, ServiceMantleManagementEntryKind kind) => kind switch
+    internal static string Path(string root, ManagementEntryKind kind) => kind switch
     {
-        ServiceMantleManagementEntryKind.InstallationStatus =>
-            root + ServiceMantleManagementEntryDefaults.StatusPath,
-        ServiceMantleManagementEntryKind.BootstrapCreate or ServiceMantleManagementEntryKind.BootstrapUpdate =>
-            root + ServiceMantleManagementEntryDefaults.BootstrapPath,
-        ServiceMantleManagementEntryKind.SetupStatus or ServiceMantleManagementEntryKind.SetupComplete =>
-            root + ServiceMantleManagementEntryDefaults.SetupPath,
-        ServiceMantleManagementEntryKind.SessionLogin =>
-            root + ServiceMantleManagementEntryDefaults.SessionLoginPath,
-        ServiceMantleManagementEntryKind.SessionLogout =>
-            root + ServiceMantleManagementEntryDefaults.SessionLogoutPath,
-        _ => root + ServiceMantleManagementEntryDefaults.SessionPath,
+        ManagementEntryKind.InstallationStatus =>
+            root + ManagementEntryDefaults.StatusPath,
+        ManagementEntryKind.BootstrapCreate or ManagementEntryKind.BootstrapUpdate =>
+            root + ManagementEntryDefaults.BootstrapPath,
+        ManagementEntryKind.SetupStatus or ManagementEntryKind.SetupComplete =>
+            root + ManagementEntryDefaults.SetupPath,
+        ManagementEntryKind.SessionLogin =>
+            root + ManagementEntryDefaults.SessionLoginPath,
+        ManagementEntryKind.SessionLogout =>
+            root + ManagementEntryDefaults.SessionLogoutPath,
+        _ => root + ManagementEntryDefaults.SessionPath,
     };
 
-    internal string Path(ServiceMantleManagementEntryKind kind) => Path(Root, kind);
+    internal string Path(ManagementEntryKind kind) => Path(Root, kind);
 
-    internal static HttpMethod Method(ServiceMantleManagementEntryKind kind) => kind switch
+    internal static HttpMethod Method(ManagementEntryKind kind) => kind switch
     {
-        ServiceMantleManagementEntryKind.BootstrapUpdate => HttpMethod.Put,
-        ServiceMantleManagementEntryKind.BootstrapCreate or ServiceMantleManagementEntryKind.SetupComplete or
-            ServiceMantleManagementEntryKind.SessionLogin or ServiceMantleManagementEntryKind.SessionLogout =>
+        ManagementEntryKind.BootstrapUpdate => HttpMethod.Put,
+        ManagementEntryKind.BootstrapCreate or ManagementEntryKind.SetupComplete or
+            ManagementEntryKind.SessionLogin or ManagementEntryKind.SessionLogout =>
             HttpMethod.Post,
         _ => HttpMethod.Get,
     };
 
     /// <summary>Sends one conforming request for an entry kind.</summary>
     internal Task<HttpResponseMessage> SendAsync(
-        ServiceMantleManagementEntryKind kind,
+        ManagementEntryKind kind,
         string? cookie = null,
         HttpMethod? method = null,
         string? path = null,
@@ -203,13 +206,13 @@ internal sealed class ManagementEntryHostFixture : IAsyncDisposable
     {
         method ??= Method(kind);
         var request = new HttpRequestMessage(method, path ?? Path(kind));
-        var values = unsafeHeader ?? [ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderValue];
+        var values = unsafeHeader ?? [ManagementEntryDefaults.UnsafeRequestHeaderValue];
         foreach (var value in values)
         {
             if (value is not null)
             {
                 request.Headers.TryAddWithoutValidation(
-                    ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderName,
+                    ManagementEntryDefaults.UnsafeRequestHeaderName,
                     value);
             }
         }
@@ -261,7 +264,7 @@ internal sealed class ManagementEntryHostFixture : IAsyncDisposable
 
     private string Protect(ClaimsPrincipal principal, TimeSpan? age)
     {
-        var scheme = ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+        var scheme = ManagementSessionDefaults.AuthenticationScheme;
         var options = Application.Services
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(scheme);
@@ -274,7 +277,7 @@ internal sealed class ManagementEntryHostFixture : IAsyncDisposable
                 ExpiresUtc = issued + TimeSpan.FromMinutes(5),
             },
             scheme);
-        return ServiceMantleManagementSessionDefaults.CookieName + "=" +
+        return ManagementSessionDefaults.CookieName + "=" +
             options.TicketDataFormat.Protect(ticket);
     }
 
@@ -301,7 +304,7 @@ internal sealed class ManagementEntryHostFixture : IAsyncDisposable
     /// <summary>Counts entry handler calls without performing any side effect.</summary>
     internal sealed class EntryRecorder
     {
-        private readonly ConcurrentDictionary<ServiceMantleManagementEntryKind, int> calls = new();
+        private readonly ConcurrentDictionary<ManagementEntryKind, int> calls = new();
 
         internal TaskCompletionSource Entered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -311,14 +314,14 @@ internal sealed class ManagementEntryHostFixture : IAsyncDisposable
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>The single entry whose handler waits inside the request.</summary>
-        internal ServiceMantleManagementEntryKind? Hold { get; set; }
+        internal ManagementEntryKind? Hold { get; set; }
 
-        internal int Calls(ServiceMantleManagementEntryKind kind) =>
+        internal int Calls(ManagementEntryKind kind) =>
             calls.TryGetValue(kind, out var count) ? count : 0;
 
         internal int Total => calls.Values.Sum();
 
-        internal Delegate Handler(ServiceMantleManagementEntryKind kind) =>
+        internal Delegate Handler(ManagementEntryKind kind) =>
             async (HttpContext context) =>
             {
                 calls.AddOrUpdate(kind, 1, (_, current) => current + 1);

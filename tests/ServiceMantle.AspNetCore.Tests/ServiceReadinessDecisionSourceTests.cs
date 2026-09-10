@@ -119,7 +119,7 @@ public sealed class ServiceReadinessDecisionSourceTests
                 services.AddSingleton<IServiceReadinessContributor>(new BlockingContributor());
             },
             options => options.ContributorTimeout =
-                ServiceMantleHealthOptions.MinimumContributorTimeout);
+                HealthOptions.MinimumContributorTimeout);
         using var failingScope = failing.Services.CreateScope();
         using var blockedScope = blocked.Services.CreateScope();
 
@@ -167,7 +167,7 @@ public sealed class ServiceReadinessDecisionSourceTests
     {
         await using var application = await StartAsync(
             services => services.AddSingleton<IServiceHealthSnapshotSource>(new BlockingSource()),
-            options => options.ProbeTimeout = ServiceMantleHealthOptions.MinimumProbeTimeout);
+            options => options.ProbeTimeout = HealthOptions.MinimumProbeTimeout);
         using var scope = application.Services.CreateScope();
 
         var decision = await scope.ServiceProvider
@@ -346,7 +346,7 @@ public sealed class ServiceReadinessDecisionSourceTests
 
     private static async Task<WebApplication> StartAsync(
         Action<IServiceCollection>? configureServices = null,
-        Action<ServiceMantleHealthOptions>? configureHealth = null,
+        Action<HealthOptions>? configureHealth = null,
         Action<IServiceCollection>? configureBefore = null)
     {
         var builder = WebApplication.CreateBuilder();

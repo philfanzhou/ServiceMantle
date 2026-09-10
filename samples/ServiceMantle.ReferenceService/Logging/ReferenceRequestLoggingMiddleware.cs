@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Routing;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.Logging;
 
 namespace ServiceMantle.ReferenceService.Logging;
 
@@ -7,7 +7,7 @@ namespace ServiceMantle.ReferenceService.Logging;
 /// Writes one fixed, sanitized log line per request. It never records the raw path, query, body,
 /// connection settings, or exception detail, it collapses the request method to the framework's
 /// known token set, and it never swallows cancellation. Header values are only what the DI-owned
-/// <see cref="ServiceMantleRequestHeaderDiagnosticProjector"/> emits: denied Header values become the
+/// <see cref="RequestHeaderDiagnosticProjector"/> emits: denied Header values become the
 /// redaction marker, while the values of Headers outside the denied list are projected under the
 /// free-text contract and therefore do reach the log line.
 /// </summary>
@@ -20,12 +20,12 @@ internal sealed class ReferenceRequestLoggingMiddleware
     private const string Unknown = "(unknown)";
 
     private readonly RequestDelegate next;
-    private readonly ServiceMantleRequestHeaderDiagnosticProjector projector;
+    private readonly RequestHeaderDiagnosticProjector projector;
     private readonly ILogger logger;
 
     public ReferenceRequestLoggingMiddleware(
         RequestDelegate next,
-        ServiceMantleRequestHeaderDiagnosticProjector projector,
+        RequestHeaderDiagnosticProjector projector,
         ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(next);

@@ -4,7 +4,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using ServiceMantle.AspNetCore;
-using ServiceMantle.Logging;
+using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.OpenTelemetry;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -29,19 +29,19 @@ public static class ServiceMantleOpenTelemetryBuilderExtensions
     /// </remarks>
     public static ServiceMantleBuilder AddOpenTelemetryInstrumentation(
         this ServiceMantleBuilder builder,
-        Action<ServiceMantleOpenTelemetryOptions>? configure = null)
+        Action<OpenTelemetryOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new ServiceMantleOpenTelemetryOptions();
+        var options = new OpenTelemetryOptions();
         configure?.Invoke(options);
-        var registration = new ServiceMantleOpenTelemetryRegistration(
+        var registration = new OpenTelemetryRegistration(
             options.Enabled,
             options.EnableAspNetCoreTracing,
             options.EnableHttpClientTracing,
             options.EnableRuntimeMetrics);
         var firstRegistration = !builder.Services.Any(descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantleOpenTelemetryRegistration));
+            descriptor.ServiceType == typeof(OpenTelemetryRegistration));
 
         builder.Services.AddSingleton(registration);
         if (!firstRegistration)
@@ -50,7 +50,7 @@ public static class ServiceMantleOpenTelemetryBuilderExtensions
         }
 
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService,
-            ServiceMantleOpenTelemetryRegistrationValidator>());
+            OpenTelemetryRegistrationValidator>());
 
         if (!registration.Enabled)
         {
@@ -68,8 +68,8 @@ public static class ServiceMantleOpenTelemetryBuilderExtensions
             // Framework DI/Options can create this provider before hosted StartingAsync runs.
             // Validate the final registrations before any of our instrumentation callbacks.
             builder.Services.ConfigureOpenTelemetryMeterProvider(static (services, _) =>
-                ServiceMantleOpenTelemetryRegistrationValidator.Validate(
-                    services.GetServices<ServiceMantleOpenTelemetryRegistration>()));
+                OpenTelemetryRegistrationValidator.Validate(
+                    services.GetServices<OpenTelemetryRegistration>()));
             openTelemetry.WithMetrics(metrics => metrics
                 .SetResourceBuilder(CreateResource(logContext))
                 .AddRuntimeInstrumentation());
@@ -78,8 +78,8 @@ public static class ServiceMantleOpenTelemetryBuilderExtensions
         if (registration.EnableAspNetCoreTracing || registration.EnableHttpClientTracing)
         {
             builder.Services.ConfigureOpenTelemetryTracerProvider(static (services, _) =>
-                ServiceMantleOpenTelemetryRegistrationValidator.Validate(
-                    services.GetServices<ServiceMantleOpenTelemetryRegistration>()));
+                OpenTelemetryRegistrationValidator.Validate(
+                    services.GetServices<OpenTelemetryRegistration>()));
             openTelemetry.WithTracing(tracing =>
             {
                 tracing.SetResourceBuilder(CreateResource(logContext));

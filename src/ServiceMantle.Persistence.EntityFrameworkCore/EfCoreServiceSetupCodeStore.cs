@@ -13,7 +13,7 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 /// ownership, clean-context, and post-rollback DbContext rules.
 /// </remarks>
 public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeStore
-    where TDbContext : DbContext, IServiceMantleDbContext
+    where TDbContext : DbContext, IServiceDbContext
 {
     private readonly TDbContext dbContext;
     private readonly TimeProvider timeProvider;
@@ -22,7 +22,7 @@ public sealed class EfCoreServiceSetupCodeStore<TDbContext> : IServiceSetupCodeS
     /// <summary>
     /// Initializes a new Setup Code store.
     /// </summary>
-    /// <param name="dbContext">The business DbContext implementing <see cref="IServiceMantleDbContext"/>.</param>
+    /// <param name="dbContext">The business DbContext implementing <see cref="IServiceDbContext"/>.</param>
     /// <param name="timeProvider">Optional time provider for deterministic operations.</param>
     /// <param name="lifetime">Optional Setup Code lifetime; defaults to 30 minutes.</param>
     public EfCoreServiceSetupCodeStore(

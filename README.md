@@ -105,7 +105,7 @@ identity and the ServiceMantle Correlation ID.
 ## Fixed service and installation metrics
 
 Opt in with `serviceMantle.AddServiceMantleMetrics()`. This creates a metrics provider and one
-host-owned `ServiceMantleMetrics` publisher; it is independent of
+host-owned `ServiceMetrics` publisher; it is independent of
 `AddOpenTelemetryInstrumentation()` and adds no exporter, database polling or background work.
 Repeating the call is idempotent. Omitting it leaves these instruments unregistered.
 
@@ -121,7 +121,7 @@ immutable resource fields `service.name`, `service.version`, and `service.instan
 publishes a phase after observing its authoritative state, and clears it when that state is unknown:
 
 ```csharp
-var metrics = serviceProvider.GetRequiredService<ServiceMantleMetrics>();
+var metrics = serviceProvider.GetRequiredService<ServiceMetrics>();
 metrics.SetPhase(ServiceStartupPhase.PendingSetup);
 // After the consumer confirms committed setup completion:
 metrics.SetPhase(ServiceStartupPhase.Completed);
@@ -154,7 +154,7 @@ background export activity.
 serviceMantle.AddOpenTelemetryOtlpExporter(options =>
 {
     options.Traces.Enabled = true;
-    options.Traces.Protocol = ServiceMantleOtlpProtocol.Grpc;
+    options.Traces.Protocol = OtlpProtocol.Grpc;
     options.Traces.Endpoint = new Uri("https://collector.example.com:4317/");
     options.Traces.AuthenticationHeaderName = "primary-otlp";
     options.Traces.ExportTimeout = TimeSpan.FromSeconds(10);
@@ -163,14 +163,14 @@ serviceMantle.AddOpenTelemetryOtlpExporter(options =>
     options.Traces.MaxExportBatchSize = 512;
 
     options.Metrics.Enabled = true;
-    options.Metrics.Protocol = ServiceMantleOtlpProtocol.HttpProtobuf;
+    options.Metrics.Protocol = OtlpProtocol.HttpProtobuf;
     options.Metrics.Endpoint = new Uri("https://collector.example.com:4318/v1/metrics");
     options.Metrics.AuthenticationHeaderName = "primary-otlp";
 });
 ```
 
 When authentication is configured, register an
-`IServiceMantleOtlpAuthenticationHeaderResolver`. Its non-secret lookup name is stored in options;
+`IOtlpAuthenticationHeaderResolver`. Its non-secret lookup name is stored in options;
 the header value is resolved only for an enabled exporter and passed through the official
 `OtlpExporterOptions.Headers` entry. ServiceMantle exceptions and option diagnostics do not include
 the header value or URI user-info/query components.
@@ -272,7 +272,7 @@ app.UseServiceMantleForwardedHeaders();
 ```
 
 ServiceMantle creates a private immutable startup snapshot and a dedicated framework
-`ForwardedHeadersOptions` instance. It always enables `X-Forwarded-For` and `X-Forwarded-Proto`,
+`ForwardedHeadersTrustOptions` instance. It always enables `X-Forwarded-For` and `X-Forwarded-Proto`,
 requires header-count symmetry, and enables `X-Forwarded-Host` only when `AllowedHosts` is non-empty.
 The framework's implicit loopback trust is removed. Top-level allow-all hosts, ports, invalid or
 duplicate normalized values, enumeration failures, and conflicting repeated registrations fail at
@@ -300,13 +300,13 @@ app.UseRouting();
 app.UseServiceMantlePhaseGate();
 var management = app.MapServiceMantleManagementGroup();
 management.MapGet("/status", GetSafeStatus)
-    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Status);
+    .WithServiceMantleManagementSurface(ManagementSurface.Status);
 management.MapPost("/bootstrap", ConfigureBootstrap)
-    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Bootstrap);
+    .WithServiceMantleManagementSurface(ManagementSurface.Bootstrap);
 management.MapPost("/setup", CompleteSetup)
-    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Setup);
+    .WithServiceMantleManagementSurface(ManagementSurface.Setup);
 management.MapGet("/settings", ReadSettings)
-    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Management)
+    .WithServiceMantleManagementSurface(ManagementSurface.Management)
     .RequireServiceMantleManagementAdmin();
 ```
 
@@ -358,7 +358,7 @@ policy, the security response headers, and, for unsafe methods, the fixed
 
 ```csharp
 app.MapServiceMantleManagementEntry(
-    ServiceMantleManagementEntryKind.InstallationStatus,
+    ManagementEntryKind.InstallationStatus,
     ReadInstallationStatus);
 ```
 
@@ -492,9 +492,9 @@ app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapPost("/setup/complete", CompleteSetup)
-    .RequireRateLimiting(ServiceMantleRateLimitingDefaults.SetupPolicyName);
+    .RequireRateLimiting(RateLimitingDefaults.SetupPolicyName);
 app.MapGet("/management/status", GetManagementStatus)
-    .RequireRateLimiting(ServiceMantleRateLimitingDefaults.ManagementPolicyName);
+    .RequireRateLimiting(RateLimitingDefaults.ManagementPolicyName);
 ```
 
 `servicemantle.setup` allows 5 requests per minute by default. It partitions by the normalized
@@ -563,7 +563,7 @@ app.MapGet("/orders", (HttpContext context) =>
     Results.Ok(context.GetServiceMantleCorrelationId()));
 ```
 
-The request and response header name is `ServiceMantleHeaderNames.CorrelationId` (`x-correlation-id`)
+The request and response header name is `ServiceHeaderNames.CorrelationId` (`x-correlation-id`)
 and the structured field name is `ServiceLogFieldNames.CorrelationId` (`CorrelationId`). The middleware
 requires `AddServiceMantle` and throws `InvalidOperationException` at pipeline composition time
 otherwise.
@@ -621,7 +621,7 @@ builder.Services.AddServiceMantle(serviceId, instanceId)
 var app = builder.Build();
 app.UseServiceMantlePipeline();
 app.MapGet("/management/status", () => Results.Ok())
-    .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Status)
+    .WithServiceMantleManagementSurface(ManagementSurface.Status)
     .RequireServiceMantleSecurityResponseHeaders();
 ```
 
@@ -642,7 +642,7 @@ cookie 401/403 retain their existing safe JSON formats. Arbitrary consumer 4xx r
 converted into Problem Details.
 
 Sensitive Header diagnostics still require explicit use of
-`ServiceMantleRequestHeaderDiagnosticProjector`; the same immutable registry applies before and
+`RequestHeaderDiagnosticProjector`; the same immutable registry applies before and
 after the gate. No request Header is automatically logged or rewritten. The integration tests lock
 the response matrix and demonstrate observable failures for critical inverted orders. The helper
 does not inspect arbitrary consumer/framework middleware, prevent an earlier handler from short
@@ -981,7 +981,7 @@ Bootstrap changes affect only the current instance's local Bootstrap file and re
 `ServiceMantle.Persistence.EntityFrameworkCore` is an optional package that defines:
 
 - `ServiceInstallationEntity` mapping for `service_installations`.
-- `IServiceMantleDbContext` contract that business DbContexts implement.
+- `IServiceDbContext` contract that business DbContexts implement.
 - `ModelBuilder` extension `AddServiceMantleInstallation()` for model registration.
 - `EfCoreServiceInstallationStore<TDbContext>` implementing `IServiceInstallationStore`.
 - `EfCoreServiceSetupCodeStore<TDbContext>` implementing `IServiceSetupCodeStore`.
@@ -1123,7 +1123,7 @@ for changes, coordinate publication across processes, or accept unknown future e
 Management consumers should implement a minimal integration model, for example:
 
 ```csharp
-public sealed class MyDbContext : DbContext, IServiceMantleDbContext
+public sealed class MyDbContext : DbContext, IServiceDbContext
 {
     public DbSet<ServiceInstallationEntity> ServiceInstallations { get; set; } = null!;
 
@@ -1329,7 +1329,7 @@ This sanitization is a defense-in-depth contract for the formats listed above, n
 `TotalCount` is the count observed while each query executes and may change when rows are inserted or deleted concurrently. Continuations have ordinary keyset semantics: they avoid offset drift and repeated rows already passed in the ordering, but they do not represent a database snapshot. A concurrently inserted backfilled record whose ordering key lies after the cursor can therefore appear on a later page.
 
 ```csharp
-public sealed class MyDbContext : DbContext, IServiceMantleDbContext
+public sealed class MyDbContext : DbContext, IServiceDbContext
 {
     public DbSet<ServiceInstallationEntity> ServiceInstallations { get; set; } = null!;
 
@@ -2060,7 +2060,7 @@ serviceMantle.AddSensitiveHeaders(options =>
     options.DeniedHeaderNames = ["X-Deployment-Secret"];
 });
 
-var projector = app.Services.GetRequiredService<ServiceMantleRequestHeaderDiagnosticProjector>();
+var projector = app.Services.GetRequiredService<RequestHeaderDiagnosticProjector>();
 IReadOnlyDictionary<string, object?> safeHeaders = projector.Project(httpContext.Request.Headers);
 ```
 
@@ -2111,7 +2111,7 @@ options snapshot:
 
 ```csharp
 builder.AddServiceMantleSerilog();
-builder.Services.AddSingleton<IServiceMantleLokiAuthorizationHeaderResolver, LokiAuthorizationResolver>();
+builder.Services.AddSingleton<ILokiAuthorizationHeaderResolver, LokiAuthorizationResolver>();
 builder.AddServiceMantleGrafanaLoki(options =>
 {
     options.Enabled = true;
@@ -2132,7 +2132,7 @@ without including submitted values in the exception.
 
 The fixed upstream driver owns the bounded in-memory queue and retry schedule. Capacity drops,
 permanent delivery failures, drain timeouts, and caller-cancelled drains are exposed only through
-content-free counters and stable error codes on `ServiceMantleGrafanaLokiDiagnostics`. The package
+content-free counters and stable error codes on `GrafanaLokiDiagnostics`. The package
 does not add disk buffering, unbounded retries, dynamic reload, query APIs, or exactly-once delivery.
 
 ### Migrating from the separate Grafana Loki package

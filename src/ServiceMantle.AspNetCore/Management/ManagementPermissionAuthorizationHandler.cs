@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
+using ServiceMantle.Management;
 
-namespace ServiceMantle.Management;
+namespace ServiceMantle.AspNetCore.Management;
 
 /// <summary>
 /// Grants a <see cref="ManagementPermissionRequirement"/> only for an authenticated principal whose
