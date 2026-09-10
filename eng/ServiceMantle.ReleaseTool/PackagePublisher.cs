@@ -127,50 +127,33 @@ internal static class PackagePublisher
         CancellationToken cancellationToken)
     {
         var existing = await feed.TryGetPackageAsync(package.Id, version, cancellationToken);
-        switch (existing.Lookup)
+        var alreadyPresent = existing.Lookup == FeedLookup.Found;
+        if (existing.Lookup != FeedLookup.Missing)
         {
-            case FeedLookup.Unauthorized:
-                return Failed(package, version, "the feed rejected the credential", existing.Diagnostic);
-            case FeedLookup.Failed:
-                return Failed(package, version, "the feed could not be read", existing.Diagnostic);
-            case FeedLookup.Found:
-                var origin = ReadOrigin(existing.Content!);
-                if (origin is null)
-                {
-                    return Failed(
-                        package,
-                        version,
-                        "the already-published package does not declare a repository commit",
-                        null);
-                }
-
-                if (!string.Equals(origin, commit, StringComparison.Ordinal))
-                {
-                    return Failed(
-                        package,
-                        version,
-                        $"the already-published version was built from commit {origin}, not {commit}",
-                        null);
-                }
-
-                output.WriteLine($"  already present: {package.Id} {version}");
-                return new PublishResult(package.Id, version, PublishOutcome.AlreadyPresent, null);
+            var failure = ValidateExisting(package, version, commit, existing);
+            if (failure is not null)
+            {
+                return failure;
+            }
         }
 
         if (dryRun)
         {
-            output.WriteLine($"  would publish: {package.Id} {version}");
-            return new PublishResult(package.Id, version, PublishOutcome.Published, null);
+            var outcome = alreadyPresent ? PublishOutcome.AlreadyPresent : PublishOutcome.Published;
+            return new PublishResult(package.Id, version, outcome, null);
         }
 
-        // The symbol package follows its own artifact, so a failure there is reported against the
-        // same package id rather than silently leaving symbols behind.
-        foreach (var (path, symbols) in new[]
-                 {
-                     (Path.Combine(inputPath, $"{package.Id}.{version}.nupkg"), false),
-                     (Path.Combine(inputPath, $"{package.Id}.{version}.snupkg"), true),
-                 })
+        // An existing nupkg does not prove the symbols were uploaded. Always attempt the symbol
+        // artifact after validating the package's origin, including on a partial-release rerun.
+        foreach (var symbols in new[] { false, true })
         {
+            if (!symbols && alreadyPresent)
+            {
+                continue;
+            }
+
+            var extension = symbols ? "snupkg" : "nupkg";
+            var path = Path.Combine(inputPath, $"{package.Id}.{version}.{extension}");
             var response = await pusher.PushAsync(path, symbols, cancellationToken);
             var artifact = symbols ? "symbol package" : "package";
             switch (response.Status)
@@ -179,11 +162,65 @@ internal static class PackagePublisher
                     return Failed(package, version, $"the feed rejected the credential for the {artifact}", response.Diagnostic);
                 case PushStatus.Failed:
                     return Failed(package, version, $"the {artifact} push failed", response.Diagnostic);
+                case PushStatus.AlreadyPresent:
+                    // The read endpoint may lag behind the push endpoint. A conflict alone never
+                    // proves ownership. If read-back cannot establish it, fail and allow a rerun.
+                    var confirmed = await feed.TryGetPackageAsync(package.Id, version, cancellationToken);
+                    var failure = ValidateExisting(package, version, commit, confirmed);
+                    if (failure is not null)
+                    {
+                        return failure;
+                    }
+
+                    if (!symbols)
+                    {
+                        alreadyPresent = true;
+                    }
+
+                    break;
             }
         }
 
-        output.WriteLine($"  published: {package.Id} {version}");
-        return new PublishResult(package.Id, version, PublishOutcome.Published, null);
+        var label = alreadyPresent ? "already present" : "published";
+        output.WriteLine($"  {label}: {package.Id} {version}");
+        return new PublishResult(
+            package.Id, version,
+            alreadyPresent ? PublishOutcome.AlreadyPresent : PublishOutcome.Published, null);
+    }
+
+    private static PublishResult? ValidateExisting(
+        RegisteredPackage package,
+        string version,
+        string commit,
+        FeedResponse existing)
+    {
+        switch (existing.Lookup)
+        {
+            case FeedLookup.Unauthorized:
+                return Failed(package, version, "the feed rejected the credential", existing.Diagnostic);
+            case FeedLookup.Failed:
+                return Failed(package, version, "the feed could not be read", existing.Diagnostic);
+            case FeedLookup.Missing:
+                return Failed(package, version, "the conflicting package is not yet readable; retry later", null);
+        }
+
+        var origin = existing.Content is null ? null : ReadOrigin(existing.Content);
+        if (origin is null || string.IsNullOrWhiteSpace(origin.Commit))
+        {
+            return Failed(package, version,
+                "the already-published package does not declare unambiguous identity and repository commit metadata", null);
+        }
+
+        if (!string.Equals(origin.Id, package.Id, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(origin.Version, version, StringComparison.OrdinalIgnoreCase))
+        {
+            return Failed(package, version, "the already-published package has a different ID or version", null);
+        }
+
+        return string.Equals(origin.Commit, commit, StringComparison.Ordinal)
+            ? null
+            : Failed(package, version,
+                $"the already-published version was built from commit {origin.Commit}, not {commit}", null);
     }
 
     private static PublishResult Failed(
@@ -198,7 +235,7 @@ internal static class PackagePublisher
             diagnostic is { Length: > 0 } ? $"{reason} ({diagnostic})" : reason);
 
     /// <summary>Reads the repository commit a published package was built from.</summary>
-    internal static string? ReadOrigin(byte[] package)
+    private static PackageOrigin? ReadOrigin(byte[] package)
     {
         try
         {
@@ -215,13 +252,17 @@ internal static class PackagePublisher
             var document = XDocument.Load(nuspecStream);
             var repository = document.Descendants().SingleOrDefault(element =>
                 element.Name.LocalName == "repository");
-            return (string?)repository?.Attribute("commit");
+            var id = document.Descendants().SingleOrDefault(element => element.Name.LocalName == "id")?.Value;
+            var version = document.Descendants().SingleOrDefault(element => element.Name.LocalName == "version")?.Value;
+            return new PackageOrigin(id, version, (string?)repository?.Attribute("commit"));
         }
-        catch (Exception exception) when (exception is InvalidDataException or System.Xml.XmlException)
+        catch (Exception exception) when (exception is InvalidDataException or IOException or System.Xml.XmlException or InvalidOperationException)
         {
             return null;
         }
     }
+
+    private sealed record PackageOrigin(string? Id, string? Version, string? Commit);
 
     private static void Report(IReadOnlyList<PublishResult> results, bool dryRun, TextWriter output)
     {

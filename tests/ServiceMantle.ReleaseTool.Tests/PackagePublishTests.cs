@@ -69,6 +69,7 @@ public sealed class PackagePublishTests : IDisposable
             results.Single(result => result.Id == "ServiceMantle.AspNetCore").Outcome);
         Assert.Equal(
             [
+                "ServiceMantle.0.1.0-rc.1.snupkg",
                 "ServiceMantle.AspNetCore.0.1.0-rc.1.nupkg",
                 "ServiceMantle.AspNetCore.0.1.0-rc.1.snupkg",
             ],
@@ -181,6 +182,182 @@ public sealed class PackagePublishTests : IDisposable
             PublishAsync(new StubFeed(), pusher, output));
 
         Assert.Contains("symbol package push failed", output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_conflict_requires_read_back_and_reports_the_package_outcome(bool symbols)
+    {
+        var feed = new StubFeed();
+        var pusher = new StubPusher
+        {
+            OnPush = (name, isSymbols) =>
+            {
+                if (name.StartsWith("ServiceMantle.0", StringComparison.Ordinal) && isSymbols == symbols)
+                {
+                    feed.Publish("ServiceMantle", Version, ReadPackage("ServiceMantle"));
+                    return new PushResponse(PushStatus.AlreadyPresent, "HTTP 409");
+                }
+
+                return PushResponse.Succeeded;
+            },
+        };
+        var output = new StringWriter();
+
+        var results = await PublishAsync(feed, pusher, output);
+
+        Assert.Equal(symbols ? PublishOutcome.Published : PublishOutcome.AlreadyPresent, results[0].Outcome);
+        Assert.Equal(3, feed.LookupCount);
+        Assert.Contains($"ServiceMantle.{Version}.snupkg", pusher.Pushed);
+        Assert.Contains(symbols ? "published: 2" : "already present: 1", output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false, "other")]
+    [InlineData(true, "other")]
+    [InlineData(false, "missing")]
+    [InlineData(true, "missing")]
+    [InlineData(false, "unauthorized")]
+    [InlineData(true, "failed")]
+    [InlineData(false, "no-commit")]
+    [InlineData(true, "wrong-id")]
+    [InlineData(false, "wrong-version")]
+    public async Task An_unverified_conflict_fails_without_losing_other_package_results(bool symbols, string response)
+    {
+        var feed = new StubFeed();
+        var pusher = new StubPusher
+        {
+            OnPush = (name, isSymbols) =>
+            {
+                if (!name.StartsWith("ServiceMantle.0", StringComparison.Ordinal) || isSymbols != symbols)
+                {
+                    return PushResponse.Succeeded;
+                }
+
+                feed.OnRead = id => id != "ServiceMantle" ? FeedResponse.Missing : response switch
+                {
+                    "missing" => FeedResponse.Missing,
+                    "unauthorized" => new FeedResponse(FeedLookup.Unauthorized, null, "HTTP 401"),
+                    "failed" => new FeedResponse(FeedLookup.Failed, null, "request timed out"),
+                    _ => new FeedResponse(FeedLookup.Found,
+                        BuildPackage(response == "wrong-id" ? "SomeoneElse" : "ServiceMantle",
+                            response == "no-commit" ? null : response == "other" ? OtherCommit : Commit,
+                            response == "wrong-version" ? "9.0.0" : Version), null),
+                };
+                return new PushResponse(PushStatus.AlreadyPresent, "HTTP 409");
+            },
+        };
+        var output = new StringWriter();
+
+        var failure = await Assert.ThrowsAsync<ReleaseToolException>(() => PublishAsync(feed, pusher, output));
+
+        Assert.Equal(1, Program.ReportFailure(failure, TextWriter.Null));
+        Assert.Contains("failed: 1", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains("published: 1", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains($"ServiceMantle {Version}", output.ToString(), StringComparison.Ordinal);
+        if (!symbols)
+        {
+            Assert.DoesNotContain($"ServiceMantle.{Version}.snupkg", pusher.Pushed);
+        }
+    }
+
+    [Fact]
+    public async Task A_rerun_retries_symbols_after_the_package_was_published()
+    {
+        var feed = new StubFeed();
+        var pusher = new StubPusher
+        {
+            OnPush = (name, symbols) =>
+            {
+                if (name.StartsWith("ServiceMantle.0", StringComparison.Ordinal))
+                {
+                    if (symbols)
+                    {
+                        return new PushResponse(PushStatus.Failed, "HTTP 503");
+                    }
+
+                    feed.Publish("ServiceMantle", Version, ReadPackage("ServiceMantle"));
+                }
+
+                return PushResponse.Succeeded;
+            },
+        };
+        await Assert.ThrowsAsync<ReleaseToolException>(() => PublishAsync(feed, pusher, new StringWriter()));
+        var retry = new StubPusher();
+
+        var results = await PublishAsync(feed, retry, new StringWriter());
+
+        Assert.Equal(PublishOutcome.AlreadyPresent, results[0].Outcome);
+        Assert.Contains($"ServiceMantle.{Version}.snupkg", retry.Pushed);
+        Assert.DoesNotContain($"ServiceMantle.{Version}.nupkg", retry.Pushed);
+    }
+
+    [Theory]
+    [InlineData("duplicate-nuspec")]
+    [InlineData("duplicate-repository")]
+    [InlineData("wrong-id")]
+    [InlineData("wrong-version")]
+    [InlineData("invalid-zip")]
+    public async Task Invalid_remote_metadata_is_a_package_failure(string shape)
+    {
+        var bytes = BuildPackage(shape == "wrong-id" ? "SomeoneElse" : "ServiceMantle", Commit,
+            shape == "wrong-version" ? "9.0.0" : Version);
+        if (shape.StartsWith("duplicate-", StringComparison.Ordinal))
+        {
+            using var buffer = new MemoryStream();
+            buffer.Write(bytes);
+            using (var archive = new ZipArchive(buffer, ZipArchiveMode.Update, leaveOpen: true))
+            {
+                var entry = archive.Entries.Single();
+                string xml;
+                using (var reader = new StreamReader(entry.Open()))
+                {
+                    xml = reader.ReadToEnd();
+                }
+
+                if (shape == "duplicate-repository")
+                {
+                    entry.Delete();
+                    xml = xml.Replace("</metadata>", "<repository commit=\"ambiguous\" /></metadata>", StringComparison.Ordinal);
+                }
+
+                using var writer = new StreamWriter(archive.CreateEntry("extra.nuspec").Open());
+                writer.Write(xml);
+            }
+
+            bytes = buffer.ToArray();
+        }
+
+        var feed = new StubFeed();
+        feed.Publish("ServiceMantle", Version, shape == "invalid-zip" ? [1, 2, 3] : bytes);
+        var output = new StringWriter();
+        var pusher = new StubPusher();
+
+        await Assert.ThrowsAsync<ReleaseToolException>(() => PublishAsync(feed, pusher, output));
+
+        Assert.Contains("failed: 1", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains("published: 1", output.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain($"ServiceMantle.{Version}.snupkg", pusher.Pushed);
+    }
+
+    [Fact]
+    public async Task Cancellation_during_conflict_read_back_stays_a_cancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var feed = new StubFeed();
+        var pusher = new StubPusher
+        {
+            OnPush = (_, _) =>
+            {
+                feed.OnLookup = cancellation.Cancel;
+                return new PushResponse(PushStatus.AlreadyPresent, "HTTP 409");
+            },
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => PackagePublisher.PublishAsync(
+            root, Registry(), Version, Commit, "packages", feed, pusher, false, new StringWriter(), cancellation.Token));
+        Assert.Single(pusher.Pushed);
     }
 
     [Fact]
@@ -317,7 +494,7 @@ public sealed class PackagePublishTests : IDisposable
             BuildPackage(id, commit));
     }
 
-    private static byte[] BuildPackage(string id, string? commit)
+    private static byte[] BuildPackage(string id, string? commit, string version = Version)
     {
         var repository = commit is null
             ? "<repository type=\"git\" url=\"https://github.com/philfanzhou/ServiceMantle\" />"
@@ -325,7 +502,7 @@ public sealed class PackagePublishTests : IDisposable
         var nuspec =
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
             "<package><metadata>" +
-            $"<id>{id}</id><version>{Version}</version>" +
+            $"<id>{id}</id><version>{version}</version>" +
             "<license type=\"expression\">MIT</license>" +
             repository +
             "</metadata></package>";
@@ -347,6 +524,8 @@ public sealed class PackagePublishTests : IDisposable
 
         internal FeedResponse? Fixed { get; set; }
 
+        internal Func<string, FeedResponse>? OnRead { get; set; }
+
         internal Action? OnLookup { get; set; }
 
         internal int LookupCount { get; private set; }
@@ -362,6 +541,11 @@ public sealed class PackagePublishTests : IDisposable
             LookupCount++;
             OnLookup?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
+            if (OnRead is not null)
+            {
+                return Task.FromResult(OnRead(id));
+            }
+
             if (Fixed is not null)
             {
                 return Task.FromResult(Fixed);
@@ -378,6 +562,8 @@ public sealed class PackagePublishTests : IDisposable
         internal List<string> Pushed { get; } = [];
 
         internal PushResponse? Fixed { get; set; }
+
+        internal Func<string, bool, PushResponse>? OnPush { get; set; }
 
         internal string? FailFor { get; set; }
 
@@ -400,7 +586,7 @@ public sealed class PackagePublishTests : IDisposable
             }
 
             Pushed.Add(name);
-            return Task.FromResult(PushResponse.Succeeded);
+            return Task.FromResult(OnPush?.Invoke(name, symbols) ?? PushResponse.Succeeded);
         }
     }
 }
