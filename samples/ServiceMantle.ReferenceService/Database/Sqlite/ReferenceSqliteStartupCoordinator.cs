@@ -43,6 +43,14 @@ public sealed class ReferenceSqliteStartupCoordinator
     }
 
     /// <summary>Runs the gate once and reports a finite outcome.</summary>
+    /// <remarks>
+    /// A finite result is published and recorded only after this call's own migration scope has
+    /// been released and the caller's token has been read one last time. A caller cancellation
+    /// observed at that checkpoint outranks the outcome that was already computed and is reported
+    /// with the caller's own token, and a release that fails leaves no Ready result and no success
+    /// record behind. The window after that checkpoint is not covered, a hung release is not
+    /// forcibly terminated, and nothing here undoes a published file or a committed migration.
+    /// </remarks>
     /// <param name="cancellationToken">The caller's token. It propagates unchanged.</param>
     /// <exception cref="OperationCanceledException">The caller cancelled the startup.</exception>
     public async ValueTask<ReferenceSqliteStartupResult> RunAsync(
@@ -143,25 +151,70 @@ public sealed class ReferenceSqliteStartupCoordinator
         CancellationToken cancellationToken)
     {
         // One scope for this call, with the consumer's own context and executor inside it.
-        await using var scope = services.CreateAsyncScope();
-        var orchestrator = new DatabaseMigrationOrchestrator(
-            scope.ServiceProvider.GetRequiredService<IDatabaseMigrationExecutor>(),
-            services.GetRequiredService<DatabaseMigrationLockProviderRegistry>(),
-            services.GetRequiredService<DatabaseDeploymentCapabilityRegistry>());
+        var scope = services.CreateAsyncScope();
+        ReferenceSqliteStartupOutcome outcome;
+        bool executorWasCalled;
+        try
+        {
+            var orchestrator = new DatabaseMigrationOrchestrator(
+                scope.ServiceProvider.GetRequiredService<IDatabaseMigrationExecutor>(),
+                services.GetRequiredService<DatabaseMigrationLockProviderRegistry>(),
+                services.GetRequiredService<DatabaseDeploymentCapabilityRegistry>());
 
-        var result = await orchestrator.OrchestrateMigrationAsync(
-            services.GetRequiredService<ServiceId>(),
-            target,
-            options.DeploymentMode,
-            ReferenceSqliteStartupOptions.Budget,
-            cancellationToken).ConfigureAwait(false);
+            var result = await orchestrator.OrchestrateMigrationAsync(
+                services.GetRequiredService<ServiceId>(),
+                target,
+                options.DeploymentMode,
+                ReferenceSqliteStartupOptions.Budget,
+                cancellationToken).ConfigureAwait(false);
 
-        // The orchestrator's own message is never projected; only the finite outcome is.
-        return Report(
-            result.Succeeded
+            // The orchestrator's own message is never projected; only the finite outcome is.
+            outcome = result.Succeeded
                 ? ReferenceSqliteStartupOutcome.Ready
-                : ReferenceSqliteStartupOutcome.MigrationFailed,
-            result.ExecutorWasCalled);
+                : ReferenceSqliteStartupOutcome.MigrationFailed;
+            executorWasCalled = result.ExecutorWasCalled;
+        }
+        catch (Exception)
+        {
+            // The work itself failed. This call's scope is still released before that failure
+            // leaves the coordinator, and nothing is published or logged for this call.
+            await ReleaseAfterFailureAsync(scope).ConfigureAwait(false);
+            throw;
+        }
+
+        try
+        {
+            await scope.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller's cancellation outranks the release failure. The checkpoint below reports
+            // it with the caller's own token.
+        }
+        catch (Exception)
+        {
+            // A release this call owns did not finish, so this call has nothing it may publish as
+            // Ready. The exception's own text and inner exception are never projected.
+            outcome = ReferenceSqliteStartupOutcome.MigrationFailed;
+        }
+
+        // The single finalisation checkpoint: the work is over, this call's scope is released, and
+        // only then may a finite result be published and recorded.
+        cancellationToken.ThrowIfCancellationRequested();
+        return Report(outcome, executorWasCalled);
+    }
+
+    private static async ValueTask ReleaseAfterFailureAsync(AsyncServiceScope scope)
+    {
+        try
+        {
+            await scope.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // The failure already on its way to the caller is the one this call reports; a release
+            // that fails on top of it adds no finite outcome of its own.
+        }
     }
 
     private ReferenceSqliteStartupResult Report(
@@ -196,6 +249,11 @@ public sealed class ReferenceSqliteStartupHostedService : IHostedLifecycleServic
     public ReferenceSqliteStartupResult? Result { get; private set; }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The gate's result is stored only once the coordinator has published one, so a startup that
+    /// was cancelled at the coordinator's finalisation checkpoint leaves no result behind and stops
+    /// this host from starting.
+    /// </remarks>
     public async Task StartingAsync(CancellationToken cancellationToken)
     {
         var result = await coordinator.RunAsync(cancellationToken).ConfigureAwait(false);
