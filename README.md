@@ -143,11 +143,12 @@ proof of persistent installation status. The consumer controls its correctness a
 
 ## Optional OTLP exporter
 
-Install `ServiceMantle.OpenTelemetry.Otlp` to add the official
-`OpenTelemetry.Exporter.OpenTelemetryProtocol` 1.18.0 exporter without adding that driver to the
-core, ASP.NET Core, or base OpenTelemetry packages. Traces and metrics are disabled independently by
-default; an all-disabled registration creates no telemetry provider, exporter, authentication
-lookup, network connection, or background export activity.
+`ServiceMantle.OpenTelemetry` ships the official
+`OpenTelemetry.Exporter.OpenTelemetryProtocol` 1.18.0 exporter; no extra package reference is
+needed. Traces and metrics are disabled independently by default, and referencing the package
+without calling `AddOpenTelemetryOtlpExporter` registers nothing OTLP-owned. An all-disabled
+registration creates no telemetry provider, exporter, authentication lookup, network connection, or
+background export activity.
 
 ```csharp
 serviceMantle.AddOpenTelemetryOtlpExporter(options =>
@@ -189,9 +190,10 @@ application's complete telemetry pipeline.
 
 ## Authorized Prometheus endpoint
 
-Install the optional `ServiceMantle.OpenTelemetry.Prometheus` package to expose metrics from meters
-already selected by the consuming host. The capability is disabled by default and requires an
-existing authorization policy when enabled:
+`ServiceMantle.OpenTelemetry` also exposes metrics from meters already selected by the consuming
+host. The capability is disabled by default, registers nothing until
+`AddOpenTelemetryPrometheusEndpoint` is called, and requires an existing authorization policy when
+enabled:
 
 ```csharp
 builder.Services.AddAuthorization(options =>
@@ -229,6 +231,24 @@ or request values as labels. This boundary does not sanitize or constrain meters
 labels registered by the consuming service. The package does not create an authentication scheme or
 authorization policy, configure a push gateway, provide storage, alerts, or dashboards, or guarantee
 binary compatibility with later prerelease exporter versions.
+
+## Migrating from the separate OTLP and Prometheus packages
+
+`ServiceMantle.OpenTelemetry.Otlp` and `ServiceMantle.OpenTelemetry.Prometheus` are no longer
+published. Their implementation now ships inside `ServiceMantle.OpenTelemetry`:
+
+- Replace both package references with a single `ServiceMantle.OpenTelemetry` reference. Already
+  published versions of the retired package ids are untouched; they simply receive no new versions.
+- Public type names, namespaces (`ServiceMantle.OpenTelemetry.Otlp`,
+  `ServiceMantle.OpenTelemetry.Prometheus`), registration entry points, defaults, error codes, and
+  configuration validation are unchanged, so no source edit is required.
+- Recompile. The types moved to a different assembly, so binaries compiled against the retired
+  assemblies do not bind to the merged one.
+- Installing `ServiceMantle.OpenTelemetry` now brings the OTLP and Prometheus exporter drivers in
+  transitively. Dependency isolation between the two exporters and the base instrumentation is
+  intentionally no longer offered. What is still guaranteed is that neither exporter activates
+  until its own registration call is made, and that `ServiceMantle` and `ServiceMantle.AspNetCore`
+  remain free of every exporter dependency.
 
 ## Explicit forwarded-header trust
 
