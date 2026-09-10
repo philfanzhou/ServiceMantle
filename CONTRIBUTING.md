@@ -45,3 +45,52 @@ follow-up issue，PR 合并。推迟它们是排期决策，不是质量让步�
 
 在 PR 描述里写明这次推迟了什么，并链接对应的 follow-up issue。
 
+## 命名规范
+
+目录与 namespace 表达类型属于哪个模块，类型名表达它做什么。两者不重复同一段信息。
+
+### 1. namespace 由项目根 namespace 加功能子目录决定
+
+C# 不会从文件夹推导 namespace，因此移动文件时必须同时改声明和 using。一个 namespace 不得跨越两个
+程序集：`ServiceMantle.AspNetCore` 的类型放在 `ServiceMantle.AspNetCore.<子目录>` 下，不放进核心包的
+`ServiceMantle.Logging`、`ServiceMantle.Management`。
+
+### 2. 普通类型不重复产品名与所在模块名
+
+namespace 已经写明产品和模块，类型名就只写职责：`ServiceMantle.AspNetCore.Http.CorrelationIdMiddleware`，
+不是 `ServiceMantle.Http.ServiceMantleCorrelationIdMiddleware`。
+
+去前缀不是把名字压到最短。当模块词是调用方同时引用多个同类类型时的唯一区分（`SerilogOptions`、
+`GrafanaLokiOptions`、`OtlpOptions`），保留它；不要把所有配置类都缩成 `Options`，那会把负担转嫁成
+每个调用方都要写全限定名。
+
+### 3. 框架扩展入口保留产品前缀
+
+`Microsoft.Extensions.DependencyInjection`、`Microsoft.Extensions.Hosting`、`Microsoft.AspNetCore.*`
+下的扩展类和扩展方法保留 `AddServiceMantle*`、`UseServiceMantle*`、`MapServiceMantle*`、
+`WithServiceMantle*` 及对应的 `ServiceMantle*Extensions` 类名。这些 namespace 不含产品信息，名字是
+它与框架自带 API 的唯一区分，也是避免与其他库冲突的手段。
+
+### 4. 与框架或上游库同名时按职责改名，而不是靠别名硬撑
+
+去掉前缀后若与调用方默认可见的类型冲突，改成能说明职责的名字，并在迁移说明里记下理由。已知例子：
+`ForwardedHeadersTrustOptions`（避开 `Microsoft.AspNetCore.Builder.ForwardedHeadersOptions`）、
+`ServiceHeaderNames`（避开 `Microsoft.Net.Http.Headers.HeaderNames`）、`ServiceMetrics`（避开
+`System.Diagnostics.Metrics`）、`RuntimeLoggerProvider`（避开 `Serilog.Extensions.Logging.SerilogLoggerProvider`）。
+类型别名和全限定名只用于确实无法避免的单点消歧，例如包装同名上游类型的那一行。
+
+### 5. 文件名与主要类型名一致
+
+同一契约族的公开类型可以同文件，文件按该族的主类型命名（既有风格见 `ServiceSettingPersistence.cs`、
+`BootstrapManagementModels.cs`）。彼此独立的公开类型拆成同名文件。程序集属性文件名用
+`AssemblyInfo.cs`，不用重复完整程序集名的 `<程序集名>.Internals.cs`；`src` 下的可打包项目放在
+`Properties/AssemblyInfo.cs`。
+
+### 6. 改名不得移动外部契约
+
+日志分类、诊断码、配置键、HTTP 路由与 Header、JSON 字段、数据库表列、Data Protection purpose、
+认证方案名、指标名、程序集属性字符串都是外部契约，不随类型改名变化。改名时逐条核对字符串字面量，
+不做无差别文本替换。确因类型全名改变而变化的反射或诊断输出，单独列明并更新针对性验证。
+
+公开类型改名同时是源码和二进制破坏性变更：完整映射写入 `NAMING_MIGRATION.md`，在后续新版本交付，
+不覆盖历史版本。
