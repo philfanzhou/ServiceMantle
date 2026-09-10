@@ -219,6 +219,16 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/serilog
 
+      # Three modules in one project, next to the ASP.NET Core implicit usings. Ordinary types carry
+      # no product prefix now, so this is where an ambiguity between a ServiceMantle type and a
+      # framework type of the same name would surface as a compile error.
+      - name: Verify composed package consumption
+        run: >-
+          eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/composed
+
       - name: Upload packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
