@@ -85,8 +85,23 @@ internal static class PackagePublisher
 
         // Local artifacts are proven complete and correctly stamped before a single byte is pushed:
         // a partial or mislabelled set must fail while nothing is public yet.
-        ArtifactVerifier.Verify(root, registry, version, commit, input);
         var inputPath = Program.ResolvePath(root, input, "package input");
+        var missing = registry.Packages
+            .SelectMany(package => new[] { "nupkg", "snupkg" }
+                .Where(extension => !File.Exists(Path.Combine(inputPath, $"{package.Id}.{version}.{extension}")))
+                .Select(extension => $"{package.Id} {version}: missing .{extension} artifact"))
+            .ToArray();
+        if (missing.Length > 0)
+        {
+            foreach (var diagnostic in missing)
+            {
+                output.WriteLine(diagnostic);
+            }
+
+            throw new ReleaseToolException("The registered package set is incomplete; no packages were pushed.");
+        }
+
+        ArtifactVerifier.Verify(root, registry, version, commit, input);
 
         var results = new List<PublishResult>(registry.Packages.Count);
         foreach (var package in registry.Packages)
