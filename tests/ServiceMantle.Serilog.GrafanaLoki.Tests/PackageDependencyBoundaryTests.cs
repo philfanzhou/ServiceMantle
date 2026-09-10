@@ -1,61 +1,91 @@
 using System.Text.Json;
 using System.Xml.Linq;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using ServiceMantle.Serilog;
 using Xunit;
 
 namespace ServiceMantle.Serilog.GrafanaLoki.Tests;
 
 public sealed class PackageDependencyBoundaryTests
 {
-    [Theory]
-    [InlineData("ServiceMantle", "ServiceMantle.csproj")]
-    [InlineData("ServiceMantle.AspNetCore", "ServiceMantle.AspNetCore.csproj")]
-    [InlineData("ServiceMantle.Serilog", "ServiceMantle.Serilog.csproj")]
-    public void Existing_packages_have_no_Grafana_Loki_driver_dependency(
-        string directory,
-        string projectFile)
+    [Fact]
+    public void Loki_public_surface_ships_in_the_merged_assembly_with_its_namespace_unchanged()
     {
-        var repositoryRoot = FindRepositoryRoot();
-        var project = XDocument.Load(Path.Combine(repositoryRoot, "src", directory, projectFile));
-        Assert.DoesNotContain(project.Descendants("PackageReference"), reference =>
-            IsRemoteDriver((string?)reference.Attribute("Include")));
-        Assert.DoesNotContain(project.Descendants("ProjectReference"), reference =>
-            IsRemoteDriver((string?)reference.Attribute("Include")));
+        foreach (var type in new[]
+                 {
+                     typeof(ServiceMantleGrafanaLokiOptions),
+                     typeof(ServiceMantleGrafanaLokiDefaults),
+                     typeof(ServiceMantleGrafanaLokiDiagnostics),
+                     typeof(WellKnownServiceMantleGrafanaLokiErrorCodes),
+                     typeof(IServiceMantleLokiAuthorizationHeaderResolver),
+                 })
+        {
+            Assert.Equal("ServiceMantle.Serilog", type.Assembly.GetName().Name);
+            Assert.Equal("ServiceMantle.Serilog.GrafanaLoki", type.Namespace);
+        }
 
-        var assetsPath = Path.Combine(repositoryRoot, "artifacts", "obj", directory, "project.assets.json");
-        Assert.True(File.Exists(assetsPath), $"Missing restored dependency graph: {assetsPath}");
-        using var assets = JsonDocument.Parse(File.ReadAllText(assetsPath));
-        Assert.DoesNotContain(
-            assets.RootElement.GetProperty("libraries").EnumerateObject(),
-            library => IsRemoteDriver(library.Name.Split('/')[0]));
+        Assert.Equal(
+            "ServiceMantle.Serilog",
+            typeof(global::Microsoft.Extensions.Hosting.ServiceMantleGrafanaLokiHostApplicationBuilderExtensions)
+                .Assembly.GetName().Name);
     }
 
+    // The provider-agnostic core is the boundary that survives the merge: it must reach neither the
+    // Serilog integration nor the Loki driver, in the project file or in the restored graph.
     [Fact]
-    public void New_package_has_only_the_base_integration_and_one_remote_driver()
+    public void Core_package_reaches_neither_serilog_nor_the_loki_driver()
     {
         var repositoryRoot = FindRepositoryRoot();
         var project = XDocument.Load(Path.Combine(
             repositoryRoot,
             "src",
-            "ServiceMantle.Serilog.GrafanaLoki",
-            "ServiceMantle.Serilog.GrafanaLoki.csproj"));
-        var dependencies = project.Descendants("PackageReference")
-            .Select(reference => (string)reference.Attribute("Include")!)
-            .Concat(project.Descendants("ProjectReference").Select(reference =>
-                Path.GetFileNameWithoutExtension(
-                    ((string)reference.Attribute("Include")!).Replace('\\', Path.DirectorySeparatorChar))))
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            "ServiceMantle",
+            "ServiceMantle.csproj"));
+        Assert.DoesNotContain(project.Descendants("PackageReference"), reference =>
+            IsSerilogOrRemoteDriver((string?)reference.Attribute("Include")));
+        Assert.DoesNotContain(project.Descendants("ProjectReference"), reference =>
+            IsSerilogOrRemoteDriver((string?)reference.Attribute("Include")));
 
-        Assert.Equal(
-            new[] { "Serilog.Sinks.Grafana.Loki", "ServiceMantle.Serilog" },
-            dependencies,
-            StringComparer.OrdinalIgnoreCase);
-        Assert.Empty(project.Descendants("FrameworkReference"));
+        var assetsPath = Path.Combine(
+            repositoryRoot,
+            "artifacts",
+            "obj",
+            "ServiceMantle",
+            "project.assets.json");
+        Assert.True(File.Exists(assetsPath), $"Missing restored dependency graph: {assetsPath}");
+        using var assets = JsonDocument.Parse(File.ReadAllText(assetsPath));
+        Assert.DoesNotContain(
+            assets.RootElement.GetProperty("libraries").EnumerateObject(),
+            library => IsSerilogOrRemoteDriver(library.Name.Split('/')[0]));
     }
 
-    private static bool IsRemoteDriver(string? value) =>
-        value?.Contains("GrafanaLoki", StringComparison.OrdinalIgnoreCase) == true ||
-        value?.Contains("Grafana.Loki", StringComparison.OrdinalIgnoreCase) == true;
+    // Merging the sink into ServiceMantle.Serilog removes the dependency isolation that used to keep
+    // the Loki driver out of a host that never asked for it. Referencing the package, and even
+    // enabling the console pipeline, must therefore still register nothing Loki-owned and leave the
+    // sink factory on the local console implementation.
+    [Fact]
+    public void Enabling_only_the_console_pipeline_registers_no_loki_service()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog();
+
+        Assert.DoesNotContain(builder.Services, descriptor =>
+            descriptor.ServiceType == typeof(ServiceMantleGrafanaLokiRegistration) ||
+            IsLokiOwned(descriptor.ImplementationType));
+
+        var sinkFactory = builder.Services.Single(descriptor =>
+            descriptor.ServiceType == typeof(IServiceMantleSerilogSinkFactory));
+        Assert.Equal(typeof(ServiceMantleConsoleSinkFactory), sinkFactory.ImplementationType);
+    }
+
+    private static bool IsLokiOwned(Type? type) =>
+        type?.Namespace?.StartsWith("ServiceMantle.Serilog.GrafanaLoki", StringComparison.Ordinal) == true;
+
+    private static bool IsSerilogOrRemoteDriver(string? value) =>
+        value?.Contains("Serilog", StringComparison.OrdinalIgnoreCase) == true ||
+        value?.Contains("Grafana", StringComparison.OrdinalIgnoreCase) == true ||
+        value?.Contains("Loki", StringComparison.OrdinalIgnoreCase) == true;
 
     private static string FindRepositoryRoot()
     {

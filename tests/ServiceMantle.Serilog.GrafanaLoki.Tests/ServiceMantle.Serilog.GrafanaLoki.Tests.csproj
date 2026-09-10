@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\ServiceMantle.Serilog.GrafanaLoki\ServiceMantle.Serilog.GrafanaLoki.csproj" />
+    <ProjectReference Include="..\..\src\ServiceMantle.Serilog\ServiceMantle.Serilog.csproj" />
   </ItemGroup>
 
 </Project>
