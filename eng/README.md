@@ -104,7 +104,8 @@ dotnet run --project eng/ServiceMantle.ReleaseTool -- publish \
 ```
 
 It runs the same `verify` checks first, so an incomplete or mislabelled artifact set fails while
-nothing is public yet. Then, per package: if the feed already has that ID and version, the published
+nothing is public yet. Missing local artifacts are listed by package ID, version, and extension
+before any feed access, including in a dry run. Then, per package: if the feed already has that ID and version, the published
 package's ID, version, and `repository/@commit` must match this release. A matching ordinary package
 is skipped as `already present`, but its symbol artifact is still attempted so a rerun can repair
 a previous symbol upload failure. Mismatched or ambiguous metadata fails that package. A push

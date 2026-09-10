@@ -360,15 +360,44 @@ public sealed class PackagePublishTests : IDisposable
         Assert.Single(pusher.Pushed);
     }
 
-    [Fact]
-    public async Task A_missing_local_artifact_fails_before_anything_is_pushed()
+    [Theory]
+    [InlineData("nupkg", false)]
+    [InlineData("snupkg", false)]
+    [InlineData("nupkg", true)]
+    [InlineData("snupkg", true)]
+    [InlineData("all", false)]
+    [InlineData("directory", true)]
+    public async Task Missing_local_artifacts_are_identified_before_any_feed_access(string missing, bool dryRun)
     {
-        File.Delete(Path.Combine(root, "packages", $"ServiceMantle.AspNetCore.{Version}.snupkg"));
+        var expected = new List<string>();
+        foreach (var id in Identifiers)
+        {
+            foreach (var extension in new[] { "nupkg", "snupkg" })
+            {
+                if (missing is "all" or "directory" ||
+                    (id == "ServiceMantle.AspNetCore" && extension == missing))
+                {
+                    File.Delete(Path.Combine(root, "packages", $"{id}.{Version}.{extension}"));
+                    expected.Add($"{id} {Version}: missing .{extension} artifact");
+                }
+            }
+        }
+
+        if (missing == "directory")
+        {
+            Directory.Delete(Path.Combine(root, "packages"));
+        }
+
+        var feed = new StubFeed();
         var pusher = new StubPusher();
+        var output = new StringWriter();
+        var failure = await Assert.ThrowsAsync<ReleaseToolException>(() => PackagePublisher.PublishAsync(
+            root, Registry(), Version, Commit, "packages", feed, pusher, dryRun, output,
+            TestContext.Current.CancellationToken));
 
-        await Assert.ThrowsAsync<ReleaseToolException>(() =>
-            PublishAsync(new StubFeed(), pusher, new StringWriter()));
-
+        Assert.Equal(1, Program.ReportFailure(failure, output));
+        Assert.All(expected, diagnostic => Assert.Contains(diagnostic, output.ToString(), StringComparison.Ordinal));
+        Assert.Equal(0, feed.LookupCount);
         Assert.Empty(pusher.Pushed);
     }
 
