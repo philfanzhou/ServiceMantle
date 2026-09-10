@@ -125,7 +125,11 @@ public sealed class PackagePublishTests : IDisposable
         await Assert.ThrowsAsync<ReleaseToolException>(() => PublishAsync(feed, pusher, output));
 
         Assert.Empty(pusher.Pushed);
-        Assert.Contains(expected, output.ToString(), StringComparison.Ordinal);
+        var report = output.ToString();
+        Assert.Contains(expected, report, StringComparison.Ordinal);
+        // A feed that cannot answer - including one that ran out of time - is a per-package failure,
+        // so the run still reaches its summary instead of ending as an unreported cancellation.
+        Assert.Contains("failed: 2", report, StringComparison.Ordinal);
     }
 
     [Theory]

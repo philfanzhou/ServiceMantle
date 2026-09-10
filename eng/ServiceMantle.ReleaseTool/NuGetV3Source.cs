@@ -66,9 +66,9 @@ internal sealed class NuGetV3Source(
                 _ => new FeedResponse(FeedLookup.Failed, null, Describe(response)),
             };
         }
-        catch (HttpRequestException exception)
+        catch (Exception exception) when (IsTransportFailure(exception, cancellationToken))
         {
-            return new FeedResponse(FeedLookup.Failed, null, exception.Message);
+            return new FeedResponse(FeedLookup.Failed, null, Describe(exception));
         }
     }
 
@@ -119,13 +119,9 @@ internal sealed class NuGetV3Source(
                 _ => new PushResponse(PushStatus.Failed, Describe(response)),
             };
         }
-        catch (HttpRequestException exception)
+        catch (Exception exception) when (IsTransportFailure(exception, cancellationToken))
         {
-            return new PushResponse(PushStatus.Failed, exception.Message);
-        }
-        catch (IOException exception)
-        {
-            return new PushResponse(PushStatus.Failed, exception.Message);
+            return new PushResponse(PushStatus.Failed, Describe(exception));
         }
     }
 
@@ -177,13 +173,39 @@ internal sealed class NuGetV3Source(
 
             return found;
         }
-        catch (Exception exception) when (exception is HttpRequestException or JsonException or KeyNotFoundException)
+        catch (Exception exception) when (
+            IsTransportFailure(exception, cancellationToken) || exception is JsonException or KeyNotFoundException)
         {
-            throw new ReleaseToolException("The release source index could not be read.");
+            throw new ReleaseToolException(
+                $"The release source index could not be read ({Describe(exception)}).");
         }
     }
 
     public void Dispose() => indexGate.Dispose();
+
+    /// <summary>
+    /// Decides whether a thrown exception is the feed failing rather than the caller stopping.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="HttpClient"/> reports its own timeout as a cancellation, so the exception type
+    /// alone cannot separate "the maintainer interrupted the release" from "the feed took longer
+    /// than the timeout allows". The caller's token is what distinguishes them, and the distinction
+    /// is load-bearing: a real cancellation has to stay a cancellation and reach the caller as one,
+    /// while a timeout is a network failure that has to be reported against the package it belongs
+    /// to and counted among the failures in the summary.
+    /// </remarks>
+    private static bool IsTransportFailure(Exception exception, CancellationToken cancellationToken) =>
+        exception switch
+        {
+            OperationCanceledException => !cancellationToken.IsCancellationRequested,
+            HttpRequestException or IOException => true,
+            _ => false,
+        };
+
+    private string Describe(Exception exception) =>
+        exception is OperationCanceledException
+            ? $"the request did not complete within {client.Timeout}"
+            : exception.Message;
 
     private static string Describe(HttpResponseMessage response) =>
         $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}".TrimEnd();

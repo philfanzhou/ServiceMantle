@@ -114,7 +114,13 @@ even after one fails, so the closing summary reports the complete state of the f
 already present, and failed, each with the package IDs and versions - rather than stopping at the
 first problem. Any failure, including a rejected credential, exits non-zero.
 
+A feed that stops answering is one of those failures, not an interruption. Each request has a
+five-minute limit, and a request that outlives it is recorded against its own package and counted as
+failed, so the summary still prints and the command exits 1. Exit code 130 stays reserved for the
+caller actually cancelling the run.
+
 The credential is read from the environment variable named by `--api-key-environment` and travels to
 the feed in an `X-NuGet-ApiKey` header, so it never reaches a child process's argument list. Every
 line the command prints passes through a redactor keyed on that value, which covers diagnostics
-assembled from feed responses this tool does not author.
+assembled from feed responses this tool does not author. The redactor scans each write as a whole,
+so a diagnostic printed in one call is covered; it does not buffer across separate writes.
