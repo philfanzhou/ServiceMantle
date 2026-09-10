@@ -11,8 +11,13 @@ namespace ServiceMantle.AspNetCore.Health;
 /// The snapshot source is resolved from the provider this instance was created for, so a scoped
 /// source keeps working when the decision is requested inside a request scope. A missing source, a
 /// resolution failure, a null snapshot, an internal timeout, or a source failure all fail closed
-/// without a snapshot. Caller cancellation is notified on the token the source received before the
-/// linked source is released, and the caller still observes its own token.
+/// without a snapshot. A caller cancellation that has been requested when this read reaches its
+/// output outranks all of those: the read ends with an <see cref="OperationCanceledException"/>
+/// carrying the caller's own token rather than with a finite failure code, and that holds for an
+/// ordinary source failure and a <see cref="TimeoutException"/> just as it does for a completed
+/// snapshot. Caller cancellation is notified on the token the source received before the linked
+/// source is released. An internal timeout without a caller cancellation stays a timeout; the
+/// cancellation the caller may observe after this checkpoint is not covered.
 /// </remarks>
 internal sealed class ServiceMantleReadinessDecisionSource(
     IServiceProvider serviceProvider,
@@ -62,15 +67,15 @@ internal sealed class ServiceMantleReadinessDecisionSource(
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
-            return ServiceReadinessDecision.Unavailable(ProbeTimeout);
+            return SnapshotFailure(linked, cancellationToken, ProbeTimeout);
         }
         catch (TimeoutException)
         {
-            return ServiceReadinessDecision.Unavailable(ProbeTimeout);
+            return SnapshotFailure(linked, cancellationToken, ProbeTimeout);
         }
         catch
         {
-            return ServiceReadinessDecision.Unavailable(ProbeFailed);
+            return SnapshotFailure(linked, cancellationToken, ProbeFailed);
         }
 
         if (cancellationToken.IsCancellationRequested)
@@ -128,6 +133,24 @@ internal sealed class ServiceMantleReadinessDecisionSource(
                 snapshot,
                 contribution.ErrorCode ??
                     WellKnownServiceReadinessContributorErrorCodes.ContributorFailed);
+    }
+
+    /// <summary>
+    /// The one exit every snapshot failure passes through: a caller cancellation that was requested
+    /// by this point outranks the finite failure classification this read would otherwise report.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">The caller cancelled the read.</exception>
+    private static ServiceReadinessDecision SnapshotFailure(
+        CancellationTokenSource linked,
+        CancellationToken cancellationToken,
+        string errorCode)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            throw CancelledByCaller(linked, cancellationToken);
+        }
+
+        return ServiceReadinessDecision.Unavailable(errorCode);
     }
 
     /// <summary>
