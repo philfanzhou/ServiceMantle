@@ -31,8 +31,7 @@ public sealed class ReferenceSqliteMigrationExecutor : IDatabaseMigrationExecuto
     private static readonly string[] RequiredWorkspaceColumns = ["Id", "DisplayName"];
 
     private readonly ReferenceDbContext context;
-    private readonly ReferenceSqliteStartupOptions options;
-    private readonly IReadOnlyList<string> knownMigrations;
+    private readonly Func<CancellationToken, ValueTask<MigrationObservationState>> observation;
 
     /// <summary>Creates an executor over this build's own migration set.</summary>
     public ReferenceSqliteMigrationExecutor(
@@ -57,62 +56,52 @@ public sealed class ReferenceSqliteMigrationExecutor : IDatabaseMigrationExecuto
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(options);
-        this.context = context;
-        this.options = options;
-        this.knownMigrations = (knownMigrations ?? [.. context.Database.GetMigrations()])
+        var migrations = (knownMigrations ?? [.. context.Database.GetMigrations()])
             .Order(StringComparer.Ordinal)
             .ToArray();
+        var inspectionConnectionString = options.InspectionConnectionString;
+        this.context = context;
+        observation = token =>
+            ObserveDatabaseAsync(inspectionConnectionString, migrations, token);
+    }
+
+    /// <summary>Creates an executor whose read-only observation is the supplied operation.</summary>
+    /// <param name="context">The consumer's own context. It owns every save and transaction.</param>
+    /// <param name="observation">
+    /// The read-only observation <see cref="InspectAsync"/> performs instead of opening its own
+    /// read-only connection. This overload exists so the finalisation boundary - the caller
+    /// cancellation that is observed once this call's own work and its release are over - can be
+    /// covered over a controlled operation instead of a wall-clock race against a file. It changes
+    /// neither what the database-backed observation reads nor what <see cref="ExecuteAsync"/> runs,
+    /// and the options-based constructors remain the production entry point.
+    /// </param>
+    public ReferenceSqliteMigrationExecutor(
+        ReferenceDbContext context,
+        Func<CancellationToken, ValueTask<MigrationObservationState>> observation)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(observation);
+        this.context = context;
+        this.observation = observation;
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The finite observation is made, the read-only connection this call owns is released, and only
+    /// then is the caller's token read one last time. A cancellation that was requested by that
+    /// checkpoint outranks the observation this call had already computed and is reported as an
+    /// <see cref="OperationCanceledException"/> carrying the caller's own token. A cancellation that
+    /// arrives after the checkpoint, while the result travels back to the caller, is not covered,
+    /// and uncooperative synchronous SQLite I/O is not forcibly interrupted.
+    /// </remarks>
     public async ValueTask<MigrationObservationState> InspectAsync(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        MigrationObservationState state;
         try
         {
-            await using var connection = new SqliteConnection(options.InspectionConnectionString);
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-
-            var tables = await ReadTableNamesAsync(connection, cancellationToken).ConfigureAwait(false);
-            var applicationTables = tables.Count(name =>
-                !string.Equals(name, HistoryTable, StringComparison.Ordinal));
-            if (!tables.Contains(HistoryTable, StringComparer.Ordinal))
-            {
-                // No history at all: an untouched database is adoptable, a database that already
-                // holds tables from an unknown source is not.
-                return applicationTables == 0
-                    ? MigrationObservationState.Empty
-                    : MigrationObservationState.InspectionFailed;
-            }
-
-            var applied = await ReadAppliedMigrationsAsync(connection, cancellationToken)
-                .ConfigureAwait(false);
-            if (applied.Any(id => !knownMigrations.Contains(id, StringComparer.Ordinal)))
-            {
-                // An unknown record is treated as a newer schema rather than guessed at.
-                return MigrationObservationState.VersionTooNew;
-            }
-
-            if (applied.Count == 0)
-            {
-                return applicationTables == 0
-                    ? MigrationObservationState.Empty
-                    : MigrationObservationState.InspectionFailed;
-            }
-
-            if (applied.Count < knownMigrations.Count)
-            {
-                return applied.SequenceEqual(
-                    knownMigrations.Take(applied.Count),
-                    StringComparer.Ordinal)
-                    ? MigrationObservationState.PendingMigration
-                    : MigrationObservationState.InspectionFailed;
-            }
-
-            return await HasWorkspaceSchemaAsync(connection, cancellationToken).ConfigureAwait(false)
-                ? MigrationObservationState.CurrentVersionCompatible
-                : MigrationObservationState.InspectionFailed;
+            state = await observation(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -120,16 +109,79 @@ public sealed class ReferenceSqliteMigrationExecutor : IDatabaseMigrationExecuto
         }
         catch (Exception)
         {
-            // A history that cannot be read leaves the state unestablished; nothing is repaired.
-            return MigrationObservationState.InspectionFailed;
+            // A history that cannot be read leaves the state unestablished; nothing is repaired. An
+            // OperationCanceledException the caller did not ask for is an unreadable observation
+            // like any other, not the caller's cancellation.
+            state = MigrationObservationState.InspectionFailed;
         }
+
+        // The single finalisation checkpoint. Every finite result - including the ones decided
+        // before the connection was released - passes through it.
+        cancellationToken.ThrowIfCancellationRequested();
+        return state;
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The caller's token is read once more after <c>MigrateAsync</c> returns, so a cancellation
+    /// requested by that checkpoint is reported with the caller's own token instead of being
+    /// reported as a completed execution. A migration that fails keeps its own exception unchanged,
+    /// and a cancelled execution is not a rolled-back one: nothing here undoes committed DDL.
+    /// </remarks>
     public async ValueTask ExecuteAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         await context.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private static async ValueTask<MigrationObservationState> ObserveDatabaseAsync(
+        string inspectionConnectionString,
+        IReadOnlyList<string> knownMigrations,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqliteConnection(inspectionConnectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        var tables = await ReadTableNamesAsync(connection, cancellationToken).ConfigureAwait(false);
+        var applicationTables = tables.Count(name =>
+            !string.Equals(name, HistoryTable, StringComparison.Ordinal));
+        if (!tables.Contains(HistoryTable, StringComparer.Ordinal))
+        {
+            // No history at all: an untouched database is adoptable, a database that already
+            // holds tables from an unknown source is not.
+            return applicationTables == 0
+                ? MigrationObservationState.Empty
+                : MigrationObservationState.InspectionFailed;
+        }
+
+        var applied = await ReadAppliedMigrationsAsync(connection, cancellationToken)
+            .ConfigureAwait(false);
+        if (applied.Any(id => !knownMigrations.Contains(id, StringComparer.Ordinal)))
+        {
+            // An unknown record is treated as a newer schema rather than guessed at.
+            return MigrationObservationState.VersionTooNew;
+        }
+
+        if (applied.Count == 0)
+        {
+            return applicationTables == 0
+                ? MigrationObservationState.Empty
+                : MigrationObservationState.InspectionFailed;
+        }
+
+        if (applied.Count < knownMigrations.Count)
+        {
+            return applied.SequenceEqual(
+                knownMigrations.Take(applied.Count),
+                StringComparer.Ordinal)
+                ? MigrationObservationState.PendingMigration
+                : MigrationObservationState.InspectionFailed;
+        }
+
+        return await HasWorkspaceSchemaAsync(connection, cancellationToken).ConfigureAwait(false)
+            ? MigrationObservationState.CurrentVersionCompatible
+            : MigrationObservationState.InspectionFailed;
     }
 
     private static async Task<List<string>> ReadTableNamesAsync(
