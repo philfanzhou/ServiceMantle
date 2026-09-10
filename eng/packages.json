@@ -37,7 +37,10 @@
         },
         {
           "project": "tests/ServiceMantle.ReferenceService.Tests/ServiceMantle.ReferenceService.Tests.csproj",
-          "environment": {}
+          "realDatabase": true,
+          "environment": {
+            "RUN_SERVICEMANTLE_POSTGRES_TESTS": "true"
+          }
         }
       ]
     },
