@@ -5,14 +5,15 @@
     <RootNamespace>ServiceMantle.Serilog</RootNamespace>
     <AssemblyName>ServiceMantle.Serilog</AssemblyName>
     <PackageId>ServiceMantle.Serilog</PackageId>
-    <PackageDescription>Serilog hosting and console integration for ServiceMantle.</PackageDescription>
-    <PackageTags>service-management;serilog;hosting;logging;console</PackageTags>
+    <PackageDescription>Serilog hosting, sanitizing console output, and an opt-in Grafana Loki sink for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;serilog;hosting;logging;console;grafana;loki</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Serilog" />
     <PackageReference Include="Serilog.Extensions.Hosting" />
     <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.Grafana.Loki" />
     <ProjectReference Include="..\ServiceMantle\ServiceMantle.csproj" />
   </ItemGroup>
 

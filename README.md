@@ -2103,9 +2103,11 @@ provider cannot receive unsanitized properties. Add any intentional non-Console 
 extension. This package does not sanitize caller-interpolated free text in message templates and
 cannot flush after forced termination such as `SIGKILL`, a host crash, or stack overflow.
 
-The separate `ServiceMantle.Serilog.GrafanaLoki` package adds an opt-in remote sink after the same
-mandatory sanitizer. Authentication is resolved at startup from a non-secret name and is never part
-of the options snapshot:
+`ServiceMantle.Serilog` also ships an opt-in Grafana Loki sink behind the same mandatory sanitizer;
+no extra package reference is needed. It is disabled by default, and referencing the package without
+calling `AddServiceMantleGrafanaLoki` leaves the console sink factory in place and registers nothing
+Loki-owned. Authentication is resolved at startup from a non-secret name and is never part of the
+options snapshot:
 
 ```csharp
 builder.AddServiceMantleSerilog();
@@ -2132,6 +2134,23 @@ The fixed upstream driver owns the bounded in-memory queue and retry schedule. C
 permanent delivery failures, drain timeouts, and caller-cancelled drains are exposed only through
 content-free counters and stable error codes on `ServiceMantleGrafanaLokiDiagnostics`. The package
 does not add disk buffering, unbounded retries, dynamic reload, query APIs, or exactly-once delivery.
+
+### Migrating from the separate Grafana Loki package
+
+`ServiceMantle.Serilog.GrafanaLoki` is no longer published. Its implementation now ships inside
+`ServiceMantle.Serilog`:
+
+- Replace the package reference with `ServiceMantle.Serilog`. Already published versions of the
+  retired package id are untouched; they simply receive no new versions.
+- Public type names, the `ServiceMantle.Serilog.GrafanaLoki` namespace, `AddServiceMantleGrafanaLoki`,
+  defaults, error codes, and configuration validation are unchanged, so no source edit is required.
+- Recompile. The types moved to a different assembly, so binaries compiled against the retired
+  assembly do not bind to the merged one.
+- Installing `ServiceMantle.Serilog` now brings `Serilog.Sinks.Grafana.Loki` in transitively.
+  Dependency isolation between the console pipeline and the remote driver is intentionally no longer
+  offered. What is still guaranteed is that the sink stays disabled until
+  `AddServiceMantleGrafanaLoki` enables it, and that the provider-agnostic `ServiceMantle` core
+  reaches neither Serilog nor the Loki driver.
 
 ## Optional Consul client boundary
 
@@ -2286,7 +2305,6 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 - `src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj`
 - `src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj`
 - `src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj`
-- `src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj`
 - `tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj`
 - `tests/ServiceMantle.Consul.Tests/ServiceMantle.Consul.Tests.csproj`
 - `tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj`
@@ -2318,7 +2336,6 @@ dotnet test --solution ServiceMantle.slnx -c Release
 dotnet pack src/ServiceMantle/ServiceMantle.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj -c Release --no-build
-dotnet pack src/ServiceMantle.Serilog.GrafanaLoki/ServiceMantle.Serilog.GrafanaLoki.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj -c Release --no-build

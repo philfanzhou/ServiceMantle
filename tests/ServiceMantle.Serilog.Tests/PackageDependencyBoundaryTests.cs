@@ -12,6 +12,7 @@ public sealed class PackageDependencyBoundaryTests
         "Serilog",
         "Serilog.Extensions.Hosting",
         "Serilog.Sinks.Console",
+        "Serilog.Sinks.Grafana.Loki",
         "ServiceMantle",
     ];
 
@@ -22,7 +23,7 @@ public sealed class PackageDependencyBoundaryTests
     }
 
     [Fact]
-    public void Package_references_only_core_and_serilog_host_console_dependencies()
+    public void Package_references_only_core_and_the_serilog_host_console_and_loki_dependencies()
     {
         var repositoryRoot = FindRepositoryRoot();
         var projectPath = Path.Combine(
@@ -69,23 +70,26 @@ public sealed class PackageDependencyBoundaryTests
     }
 
     [Fact]
-    public void Registry_marks_package_optional_and_assigns_its_test_without_environment_variables()
+    public void Registry_marks_package_optional_and_owns_both_tests_without_environment_variables()
     {
         var repositoryRoot = FindRepositoryRoot();
         using var registry = JsonDocument.Parse(File.ReadAllText(Path.Combine(
             repositoryRoot,
             "eng",
             "packages.json")));
-        var package = registry.RootElement
-            .GetProperty("packages")
-            .EnumerateArray()
-            .Single(element => element.GetProperty("id").GetString() == "ServiceMantle.Serilog");
+        var packages = registry.RootElement.GetProperty("packages").EnumerateArray().ToArray();
+        Assert.DoesNotContain(
+            "ServiceMantle.Serilog.GrafanaLoki",
+            packages.Select(element => element.GetProperty("id").GetString()!));
+
+        var package = packages.Single(element =>
+            element.GetProperty("id").GetString() == "ServiceMantle.Serilog");
         var dependencies = package
             .GetProperty("dependencies")
             .EnumerateArray()
             .Select(element => element.GetString()!)
             .ToArray();
-        var test = package.GetProperty("tests").EnumerateArray().Single();
+        var tests = package.GetProperty("tests").EnumerateArray().ToArray();
 
         Assert.True(package.GetProperty("optional").GetBoolean());
         Assert.Equal(
@@ -93,9 +97,13 @@ public sealed class PackageDependencyBoundaryTests
             dependencies.Order(StringComparer.OrdinalIgnoreCase),
             StringComparer.OrdinalIgnoreCase);
         Assert.Equal(
-            "tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj",
-            test.GetProperty("project").GetString());
-        Assert.Empty(test.GetProperty("environment").EnumerateObject());
+            new[]
+            {
+                "tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj",
+                "tests/ServiceMantle.Serilog.GrafanaLoki.Tests/ServiceMantle.Serilog.GrafanaLoki.Tests.csproj",
+            },
+            tests.Select(test => test.GetProperty("project").GetString()!));
+        Assert.All(tests, test => Assert.Empty(test.GetProperty("environment").EnumerateObject()));
     }
 
     [Fact]
