@@ -23,7 +23,12 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
     /// fails with an <see cref="OperationCanceledException"/> carrying the request's own token.
     /// Sources that ignore the token, block, or throw from a cancellation callback are not
     /// terminated, and the handler does not wait for a source to finish its own cleanup. A missing,
-    /// unresolvable, failing, or null-returning decision source fails closed.
+    /// unresolvable, failing, or null-returning decision source fails closed - unless the caller has
+    /// cancelled by the time the decision would be projected, in which case the request ends with an
+    /// <see cref="OperationCanceledException"/> carrying the request's own token instead of a
+    /// response. That holds for every registered decision source, not only the default one, and it
+    /// says nothing about a cancellation arriving after that checkpoint or about the delay between a
+    /// transport-level abort and the request token.
     /// </remarks>
     public static IEndpointRouteBuilder MapServiceMantleHealthEndpoints(
         this IEndpointRouteBuilder endpoints)
@@ -83,9 +88,14 @@ public static class ServiceMantleHealthEndpointRouteBuilderExtensions
         }
         catch
         {
+            requestAborted.ThrowIfCancellationRequested();
             return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
         }
 
+        // The one checkpoint every readiness completion passes through: a caller cancellation that
+        // has been requested by now outranks the decision this request had already obtained,
+        // whichever decision source produced it.
+        requestAborted.ThrowIfCancellationRequested();
         if (decision is null)
         {
             return NotReady(WellKnownServiceHealthErrorCodes.ProbeFailed);
