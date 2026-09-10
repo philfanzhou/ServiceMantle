@@ -65,3 +65,56 @@ dotnet run --project eng/ServiceMantle.ReleaseTool -- verify --version 0.0.0-loc
 ```
 
 `verify` requires exactly one `.nupkg` and one `.snupkg` per registration. It validates IDs, versions, MIT license, repository URL/commit, framework references, the complete dependency set, and same-version references between ServiceMantle packages before artifacts are uploaded.
+
+## Release versions
+
+`resolve-version` is the only place a release version is decided, so a workflow never repeats the
+rule:
+
+```bash
+dotnet run --project eng/ServiceMantle.ReleaseTool -- resolve-version \
+  --ref-name "$GITHUB_REF_NAME" \
+  --tagged true \
+  --untagged-version "0.0.0-edge.$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT"
+```
+
+It prints `number=` and `publish=` on separate lines, ready to append to `$GITHUB_OUTPUT`. A tag
+publishes the version it names with the leading `v` removed; any other ref produces the untagged
+version and `publish=false`.
+
+Both paths are held to the same rule: the version has to parse as a NuGet version, carry no build
+metadata, and already be in NuGet's normalized form. `v1.2`, `v01.0.0`, and `v1.0.0.0` are rejected
+rather than quietly published as `1.2.0` or `1.0.0`, because a version NuGet rewrites is a version
+that no longer matches the tag a consumer was told to pin. Build metadata is rejected because NuGet
+drops it, which would let `v1.0.0+a` and `v1.0.0+b` collide on one package slot.
+
+## Publishing
+
+`publish` pushes the registered set to a NuGet v3 feed:
+
+```bash
+dotnet run --project eng/ServiceMantle.ReleaseTool -- publish \
+  --version 0.1.0-rc.1 --commit "$GITHUB_SHA" \
+  --input artifacts/packages \
+  --source https://api.nuget.org/v3/index.json \
+  --api-key-environment SERVICEMANTLE_NUGET_API_KEY
+```
+
+It runs the same `verify` checks first, so an incomplete or mislabelled artifact set fails while
+nothing is public yet. Then, per package: if the feed already has that ID and version, the published
+package's `repository/@commit` is compared against `--commit`. Equal means an earlier run of this
+same release already pushed it, and it is skipped as `already present`; different means someone else
+owns that version, and the package fails. Nothing is ever overwritten. Add `--dry-run` to run every
+check and every feed comparison without pushing.
+
+A multi-package push is not a transaction, and this command does not pretend otherwise. An
+interruption can leave the feed holding part of the set; rerunning the same version finishes the
+rest, because the packages already there take the `already present` path. Every package is attempted
+even after one fails, so the closing summary reports the complete state of the feed - published,
+already present, and failed, each with the package IDs and versions - rather than stopping at the
+first problem. Any failure, including a rejected credential, exits non-zero.
+
+The credential is read from the environment variable named by `--api-key-environment` and travels to
+the feed in an `X-NuGet-ApiKey` header, so it never reaches a child process's argument list. Every
+line the command prints passes through a redactor keyed on that value, which covers diagnostics
+assembled from feed responses this tool does not author.
