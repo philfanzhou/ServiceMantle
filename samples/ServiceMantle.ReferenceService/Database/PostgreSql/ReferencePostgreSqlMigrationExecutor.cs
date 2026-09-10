@@ -44,8 +44,7 @@ public sealed class ReferencePostgreSqlMigrationExecutor : IDatabaseMigrationExe
     private static readonly string[] RequiredWorkspaceColumns = ["Id", "DisplayName"];
 
     private readonly ReferencePostgreSqlDbContext context;
-    private readonly string inspectionConnectionString;
-    private readonly IReadOnlyList<string> knownMigrations;
+    private readonly Func<CancellationToken, ValueTask<MigrationObservationState>> observation;
 
     /// <summary>Creates an executor over this build's own migration set.</summary>
     /// <param name="context">The consumer's own context. It owns every save and transaction.</param>
@@ -76,96 +75,50 @@ public sealed class ReferencePostgreSqlMigrationExecutor : IDatabaseMigrationExe
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrWhiteSpace(inspectionConnectionString);
-        this.context = context;
-        this.inspectionConnectionString = inspectionConnectionString;
-        this.knownMigrations = (knownMigrations ?? [.. context.Database.GetMigrations()])
+        var migrations = (knownMigrations ?? [.. context.Database.GetMigrations()])
             .Order(StringComparer.Ordinal)
             .ToArray();
+        this.context = context;
+        observation = token =>
+            ObserveDatabaseAsync(inspectionConnectionString, migrations, token);
+    }
+
+    /// <summary>Creates an executor whose read-only observation is the supplied operation.</summary>
+    /// <param name="context">The consumer's own context. It owns every save and transaction.</param>
+    /// <param name="observation">
+    /// The read-only observation <see cref="InspectAsync"/> performs instead of opening its own
+    /// connection. This overload exists so the finalisation boundary - the caller cancellation that
+    /// is observed once the owned work and its release are over - can be covered over a controlled
+    /// operation instead of a wall-clock race against a live server. It changes neither what the
+    /// database-backed observation reads nor what <see cref="ExecuteAsync"/> runs, and the
+    /// connection-string constructors remain the production entry point.
+    /// </param>
+    public ReferencePostgreSqlMigrationExecutor(
+        ReferencePostgreSqlDbContext context,
+        Func<CancellationToken, ValueTask<MigrationObservationState>> observation)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(observation);
+        this.context = context;
+        this.observation = observation;
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The finite observation is made, the connection this call owns is released, and only then is
+    /// the caller's token read one last time. A cancellation that was requested by that checkpoint
+    /// outranks the observation this call had already computed, and it is reported as an
+    /// <see cref="OperationCanceledException"/> carrying the caller's own token. A cancellation that
+    /// arrives after the checkpoint, while the result travels back to the caller, is not covered.
+    /// </remarks>
     public async ValueTask<MigrationObservationState> InspectAsync(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        MigrationObservationState state;
         try
         {
-            await using var connection = new NpgsqlConnection(inspectionConnectionString);
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-
-            if (!await OwnedSchemaExistsAsync(connection, cancellationToken).ConfigureAwait(false))
-            {
-                // The schema this service owns is the only place it reads; without it there is no
-                // observation to make and nothing is created to produce one.
-                return MigrationObservationState.InspectionFailed;
-            }
-
-            var relations = await ReadRelationsAsync(connection, cancellationToken)
-                .ConfigureAwait(false);
-            if (relations.Any(relation =>
-                    !string.Equals(relation.Schema, OwnedSchema, StringComparison.Ordinal)))
-            {
-                // Application state outside the schema this service owns is never adopted.
-                return MigrationObservationState.InspectionFailed;
-            }
-
-            var history = relations.FirstOrDefault(relation =>
-                string.Equals(relation.Name, HistoryTable, StringComparison.Ordinal));
-            var applicationRelations = relations
-                .Where(relation =>
-                    !string.Equals(relation.Name, HistoryTable, StringComparison.Ordinal))
-                .ToArray();
-            if (applicationRelations.Any(relation =>
-                    !string.Equals(relation.Kind, OrdinaryTable, StringComparison.Ordinal)))
-            {
-                // A view, a materialized view, or a foreign table is outside the finite matrix.
-                return MigrationObservationState.InspectionFailed;
-            }
-
-            if (history is null)
-            {
-                // No history at all: an untouched schema is adoptable, a schema that already holds
-                // relations from an unknown source is not.
-                return applicationRelations.Length == 0
-                    ? MigrationObservationState.Empty
-                    : MigrationObservationState.InspectionFailed;
-            }
-
-            if (!string.Equals(history.Kind, OrdinaryTable, StringComparison.Ordinal))
-            {
-                return MigrationObservationState.InspectionFailed;
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            var applied = await ReadAppliedMigrationsAsync(connection, cancellationToken)
-                .ConfigureAwait(false);
-            if (applied.Any(id => !knownMigrations.Contains(id, StringComparer.Ordinal)))
-            {
-                // An unknown record is treated as a newer schema rather than guessed at. This is
-                // decided on the record itself, never on an empty pending-migration list.
-                return MigrationObservationState.VersionTooNew;
-            }
-
-            if (applied.Count == 0)
-            {
-                return applicationRelations.Length == 0
-                    ? MigrationObservationState.Empty
-                    : MigrationObservationState.InspectionFailed;
-            }
-
-            if (applied.Count < knownMigrations.Count)
-            {
-                return applied.SequenceEqual(
-                    knownMigrations.Take(applied.Count),
-                    StringComparer.Ordinal)
-                    ? MigrationObservationState.PendingMigration
-                    : MigrationObservationState.InspectionFailed;
-            }
-
-            return await HasWorkspaceSchemaAsync(connection, applicationRelations, cancellationToken)
-                .ConfigureAwait(false)
-                ? MigrationObservationState.CurrentVersionCompatible
-                : MigrationObservationState.InspectionFailed;
+            state = await observation(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -174,15 +127,28 @@ public sealed class ReferencePostgreSqlMigrationExecutor : IDatabaseMigrationExe
         catch (Exception)
         {
             // A catalog or a history that cannot be read leaves the state unestablished. The
-            // provider's own text is deliberately not carried into the finite result.
-            return MigrationObservationState.InspectionFailed;
+            // provider's own text is deliberately not carried into the finite result. An
+            // OperationCanceledException the caller did not ask for is an unreadable observation
+            // like any other, not the caller's cancellation.
+            state = MigrationObservationState.InspectionFailed;
         }
+
+        // The single finalisation checkpoint. Every finite result - including the ones computed
+        // before the connection was released - passes through it.
+        cancellationToken.ThrowIfCancellationRequested();
+        return state;
     }
 
     /// <inheritdoc />
     /// <exception cref="ReferencePostgreSqlMigrationFailedException">
     /// The migration did not complete. The failure carries a fixed message and no provider text.
     /// </exception>
+    /// <remarks>
+    /// The caller's token is read once more after <c>MigrateAsync</c> returns, so a cancellation
+    /// requested by that checkpoint is reported with the caller's own token instead of being
+    /// reported as a completed execution. It says nothing about how much DDL was already committed:
+    /// a cancelled execution is not a rolled-back one.
+    /// </remarks>
     public async ValueTask ExecuteAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -198,6 +164,91 @@ public sealed class ReferencePostgreSqlMigrationExecutor : IDatabaseMigrationExe
         {
             throw new ReferencePostgreSqlMigrationFailedException();
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private static async ValueTask<MigrationObservationState> ObserveDatabaseAsync(
+        string inspectionConnectionString,
+        IReadOnlyList<string> knownMigrations,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(inspectionConnectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        if (!await OwnedSchemaExistsAsync(connection, cancellationToken).ConfigureAwait(false))
+        {
+            // The schema this service owns is the only place it reads; without it there is no
+            // observation to make and nothing is created to produce one.
+            return MigrationObservationState.InspectionFailed;
+        }
+
+        var relations = await ReadRelationsAsync(connection, cancellationToken)
+            .ConfigureAwait(false);
+        if (relations.Any(relation =>
+                !string.Equals(relation.Schema, OwnedSchema, StringComparison.Ordinal)))
+        {
+            // Application state outside the schema this service owns is never adopted.
+            return MigrationObservationState.InspectionFailed;
+        }
+
+        var history = relations.FirstOrDefault(relation =>
+            string.Equals(relation.Name, HistoryTable, StringComparison.Ordinal));
+        var applicationRelations = relations
+            .Where(relation =>
+                !string.Equals(relation.Name, HistoryTable, StringComparison.Ordinal))
+            .ToArray();
+        if (applicationRelations.Any(relation =>
+                !string.Equals(relation.Kind, OrdinaryTable, StringComparison.Ordinal)))
+        {
+            // A view, a materialized view, or a foreign table is outside the finite matrix.
+            return MigrationObservationState.InspectionFailed;
+        }
+
+        if (history is null)
+        {
+            // No history at all: an untouched schema is adoptable, a schema that already holds
+            // relations from an unknown source is not.
+            return applicationRelations.Length == 0
+                ? MigrationObservationState.Empty
+                : MigrationObservationState.InspectionFailed;
+        }
+
+        if (!string.Equals(history.Kind, OrdinaryTable, StringComparison.Ordinal))
+        {
+            return MigrationObservationState.InspectionFailed;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var applied = await ReadAppliedMigrationsAsync(connection, cancellationToken)
+            .ConfigureAwait(false);
+        if (applied.Any(id => !knownMigrations.Contains(id, StringComparer.Ordinal)))
+        {
+            // An unknown record is treated as a newer schema rather than guessed at. This is
+            // decided on the record itself, never on an empty pending-migration list.
+            return MigrationObservationState.VersionTooNew;
+        }
+
+        if (applied.Count == 0)
+        {
+            return applicationRelations.Length == 0
+                ? MigrationObservationState.Empty
+                : MigrationObservationState.InspectionFailed;
+        }
+
+        if (applied.Count < knownMigrations.Count)
+        {
+            return applied.SequenceEqual(
+                knownMigrations.Take(applied.Count),
+                StringComparer.Ordinal)
+                ? MigrationObservationState.PendingMigration
+                : MigrationObservationState.InspectionFailed;
+        }
+
+        return await HasWorkspaceSchemaAsync(connection, applicationRelations, cancellationToken)
+            .ConfigureAwait(false)
+            ? MigrationObservationState.CurrentVersionCompatible
+            : MigrationObservationState.InspectionFailed;
     }
 
     private static async Task<bool> OwnedSchemaExistsAsync(
