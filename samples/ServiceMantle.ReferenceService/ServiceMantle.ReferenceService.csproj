@@ -8,5 +8,6 @@
     <ProjectReference Include="../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj" />
+    <ProjectReference Include="../../src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj" />
   </ItemGroup>
 </Project>

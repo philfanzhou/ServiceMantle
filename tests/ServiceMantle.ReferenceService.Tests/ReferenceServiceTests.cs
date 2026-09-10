@@ -135,7 +135,8 @@ public sealed class ReferenceServiceTests
         var project = XDocument.Load(Path.Combine(root.FullName, "samples/ServiceMantle.ReferenceService/ServiceMantle.ReferenceService.csproj"));
         Assert.Equal(new[] { "../../src/ServiceMantle/ServiceMantle.csproj", "../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj",
             "../../src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
-            "../../src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj" },
+            "../../src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj",
+            "../../src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj" },
             project.Descendants("ProjectReference").Select(reference => (string)reference.Attribute("Include")!));
         Assert.DoesNotContain(project.Descendants("Compile"), item => item.Attribute("Include") is not null);
         var assembly = typeof(ReferenceApplication).Assembly;
