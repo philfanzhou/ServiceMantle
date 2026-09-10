@@ -72,6 +72,12 @@ internal static class Program
                         RequiredOption(args, "--commit"),
                         RequiredOption(args, "--input"));
                     return 0;
+                case "resolve-version":
+                    ResolveVersion(args, Console.Out);
+                    return 0;
+                case "publish":
+                    await PublishAsync(root, registry, args, cancellation.Token);
+                    return 0;
                 default:
                     throw new ReleaseToolException("The requested release-tool command is unknown.");
             }
@@ -84,6 +90,59 @@ internal static class Program
         {
             return ReportFailure(exception, Console.Error);
         }
+    }
+
+    private static void ResolveVersion(string[] args, TextWriter output)
+    {
+        var tagged = RequiredOption(args, "--tagged") switch
+        {
+            "true" => true,
+            "false" => false,
+            _ => throw new ReleaseToolException("The --tagged option must be true or false."),
+        };
+        var resolved = ReleaseVersion.Resolve(
+            RequiredOption(args, "--ref-name"),
+            tagged,
+            RequiredOption(args, "--untagged-version"));
+
+        // Two key=value lines so a workflow can append them straight to $GITHUB_OUTPUT.
+        output.WriteLine($"number={resolved.Number}");
+        output.WriteLine($"publish={(resolved.Publish ? "true" : "false")}");
+    }
+
+    private static async Task PublishAsync(
+        string root,
+        PackageRegistry registry,
+        string[] args,
+        CancellationToken cancellationToken)
+    {
+        var dryRun = Array.IndexOf(args, "--dry-run") >= 0;
+        var credentialVariable = RequiredOption(args, "--api-key-environment");
+        var apiKey = Environment.GetEnvironmentVariable(credentialVariable);
+        if (!dryRun && string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new ReleaseToolException(
+                $"The publish credential environment variable {credentialVariable} is not set.");
+        }
+
+        using var handler = new HttpClientHandler();
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(5) };
+        using var source = new NuGetV3Source(client, RequiredOption(args, "--source"), apiKey);
+        // Everything this command prints passes through the redactor, so no diagnostic assembled
+        // from a feed response or an exception can carry the credential into a public build log.
+        var output = new RedactingTextWriter(Console.Out, apiKey);
+        await PackagePublisher.PublishAsync(
+            root,
+            registry,
+            RequiredOption(args, "--version"),
+            RequiredOption(args, "--commit"),
+            RequiredOption(args, "--input"),
+            source,
+            source,
+            dryRun,
+            output,
+            cancellationToken);
+        output.Flush();
     }
 
     private static async Task RestoreAsync(
@@ -259,7 +318,10 @@ internal static class Program
     private static void PrintUsage() => Console.WriteLine(
         "Commands: validate | restore | build --version V --commit SHA | test | " +
         "pack --version V --commit SHA --output PATH | " +
-        "verify --version V --commit SHA --input PATH");
+        "verify --version V --commit SHA --input PATH | " +
+        "resolve-version --ref-name REF --tagged BOOL --untagged-version V | " +
+        "publish --version V --commit SHA --input PATH --source URL " +
+        "--api-key-environment NAME [--dry-run]");
 
     internal static bool SetEquals(IEnumerable<string> left, IEnumerable<string> right) =>
         new HashSet<string>(left, IdComparer).SetEquals(right);

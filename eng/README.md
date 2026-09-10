@@ -84,3 +84,67 @@ use the `__SERVICEMANTLE_VERSION__` placeholder, plus the program that exercises
 that package is expected to reach.
 
 `verify` requires exactly one `.nupkg` and one `.snupkg` per registration. It validates IDs, versions, MIT license, repository URL/commit, framework references, the complete dependency set, and same-version references between ServiceMantle packages before artifacts are uploaded.
+
+## Release versions
+
+`resolve-version` is the only place a release version is decided, so a workflow never repeats the
+rule:
+
+```bash
+dotnet run --project eng/ServiceMantle.ReleaseTool -- resolve-version \
+  --ref-name "$GITHUB_REF_NAME" \
+  --tagged true \
+  --untagged-version "0.0.0-edge.$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT"
+```
+
+It prints `number=` and `publish=` on separate lines, ready to append to `$GITHUB_OUTPUT`. A tag
+publishes the version it names with the leading `v` removed; any other ref produces the untagged
+version and `publish=false`.
+
+Both paths are held to the same rule: the version has to parse as a NuGet version, carry no build
+metadata, and already be in NuGet's normalized form. `v1.2`, `v01.0.0`, and `v1.0.0.0` are rejected
+rather than quietly published as `1.2.0` or `1.0.0`, because a version NuGet rewrites is a version
+that no longer matches the tag a consumer was told to pin. Build metadata is rejected because NuGet
+drops it, which would let `v1.0.0+a` and `v1.0.0+b` collide on one package slot.
+
+## Publishing
+
+`publish` pushes the registered set to a NuGet v3 feed:
+
+```bash
+dotnet run --project eng/ServiceMantle.ReleaseTool -- publish \
+  --version 0.1.0-rc.1 --commit "$GITHUB_SHA" \
+  --input artifacts/packages \
+  --source https://api.nuget.org/v3/index.json \
+  --api-key-environment SERVICEMANTLE_NUGET_API_KEY
+```
+
+It runs the same `verify` checks first, so an incomplete or mislabelled artifact set fails while
+nothing is public yet. Missing local artifacts are listed by package ID, version, and extension
+before any feed access, including in a dry run. Then, per package: if the feed already has that ID and version, the published
+package's ID, version, and `repository/@commit` must match this release. A matching ordinary package
+is skipped as `already present`, but its symbol artifact is still attempted so a rerun can repair
+a previous symbol upload failure. Mismatched or ambiguous metadata fails that package. A push
+conflict (HTTP 409), including a symbol conflict, requires the same ordinary-package read-back
+validation. If the read endpoint has not indexed it yet, the command fails and asks for a later
+retry. Summary categories describe the ordinary package: a newly accepted nupkg is `published`;
+a matching existing nupkg is `already present`; a symbol failure makes either case `failed`. Nothing
+is ever overwritten. Add `--dry-run` to run every check and every feed comparison without pushing.
+
+A multi-package push is not a transaction, and this command does not pretend otherwise. An
+interruption can leave the feed holding part of the set; rerunning the same version finishes the
+rest, because the packages already there take the `already present` path. Every package is attempted
+even after one fails, so the closing summary reports the complete state of the feed - published,
+already present, and failed, each with the package IDs and versions - rather than stopping at the
+first problem. Any failure, including a rejected credential, exits non-zero.
+
+A feed that stops answering is one of those failures, not an interruption. Each request has a
+five-minute limit, and a request that outlives it is recorded against its own package and counted as
+failed, so the summary still prints and the command exits 1. Exit code 130 stays reserved for the
+caller actually cancelling the run.
+
+The credential is read from the environment variable named by `--api-key-environment` and travels to
+the feed in an `X-NuGet-ApiKey` header, so it never reaches a child process's argument list. Every
+line the command prints passes through a redactor keyed on that value, which covers diagnostics
+assembled from feed responses this tool does not author. The redactor scans each write as a whole,
+so a diagnostic printed in one call is covered; it does not buffer across separate writes.

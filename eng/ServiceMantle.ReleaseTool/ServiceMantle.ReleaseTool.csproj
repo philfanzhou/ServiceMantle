@@ -6,4 +6,8 @@
     <RootNamespace>ServiceMantle.ReleaseTool</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="NuGet.Versioning" />
+  </ItemGroup>
+
 </Project>
