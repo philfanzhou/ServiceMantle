@@ -13,8 +13,6 @@
     <Project Path="src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj" />
     <Project Path="src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj" />
     <Project Path="src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj" />
-    <Project Path="src/ServiceMantle.OpenTelemetry.Otlp/ServiceMantle.OpenTelemetry.Otlp.csproj" />
-    <Project Path="src/ServiceMantle.OpenTelemetry.Prometheus/ServiceMantle.OpenTelemetry.Prometheus.csproj" />
     <Project Path="src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
     <Project Path="src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj" />
   </Folder>

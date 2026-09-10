@@ -205,7 +205,14 @@ jobs:
           --commit ${{ github.sha }}
           --input artifacts/packages
 
-      - name: Verify package consumption
+      - name: Verify OpenTelemetry package consumption
+        run: >-
+          eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/opentelemetry
+
+      - name: Verify Serilog package consumption
         run: >-
           eng/tests/package-consumption.sh
           --version $PACKAGE_VERSION

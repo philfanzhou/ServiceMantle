@@ -76,7 +76,7 @@ retired package id would show up if something still depended on it.
 eng/tests/package-consumption.sh \
   --version 0.0.0-local.1 \
   --packages artifacts/packages \
-  --consumer eng/tests/consumers/serilog
+  --consumer eng/tests/consumers/opentelemetry
 ```
 
 Each directory under `eng/tests/consumers/` is one consumer: a `.csproj` whose package references

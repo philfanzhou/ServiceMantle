@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\ServiceMantle.OpenTelemetry.Prometheus\ServiceMantle.OpenTelemetry.Prometheus.csproj" />
+    <ProjectReference Include="..\..\src\ServiceMantle.OpenTelemetry\ServiceMantle.OpenTelemetry.csproj" />
   </ItemGroup>
 
 </Project>
