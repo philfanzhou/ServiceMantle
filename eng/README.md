@@ -102,10 +102,14 @@ dotnet run --project eng/ServiceMantle.ReleaseTool -- publish \
 
 It runs the same `verify` checks first, so an incomplete or mislabelled artifact set fails while
 nothing is public yet. Then, per package: if the feed already has that ID and version, the published
-package's `repository/@commit` is compared against `--commit`. Equal means an earlier run of this
-same release already pushed it, and it is skipped as `already present`; different means someone else
-owns that version, and the package fails. Nothing is ever overwritten. Add `--dry-run` to run every
-check and every feed comparison without pushing.
+package's ID, version, and `repository/@commit` must match this release. A matching ordinary package
+is skipped as `already present`, but its symbol artifact is still attempted so a rerun can repair
+a previous symbol upload failure. Mismatched or ambiguous metadata fails that package. A push
+conflict (HTTP 409), including a symbol conflict, requires the same ordinary-package read-back
+validation. If the read endpoint has not indexed it yet, the command fails and asks for a later
+retry. Summary categories describe the ordinary package: a newly accepted nupkg is `published`;
+a matching existing nupkg is `already present`; a symbol failure makes either case `failed`. Nothing
+is ever overwritten. Add `--dry-run` to run every check and every feed comparison without pushing.
 
 A multi-package push is not a transaction, and this command does not pretend otherwise. An
 interruption can leave the feed holding part of the set; rerunning the same version finishes the
