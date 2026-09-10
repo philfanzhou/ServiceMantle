@@ -178,6 +178,18 @@ public sealed class ReleaseWorkflowTests
         Assert.Contains("--version \"$PACKAGE_VERSION\"", job, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void Workflow_jobs_are_found_with_either_checkout_line_ending(string newline)
+    {
+        const string workflow = "jobs:\n  version:\n    name: Decide version\n  publish:\n    name: Publish\n";
+        var checkout = workflow.Replace("\n", newline, StringComparison.Ordinal);
+
+        Assert.Equal("  version:\n    name: Decide version\n", Job("version", checkout));
+        Assert.Equal("  publish:\n    name: Publish\n", Job("publish", checkout));
+    }
+
     private static string[] NeedsOf(string job)
     {
         var match = Regex.Match(job, @"needs:\s*\[(?<list>[^\]]*)\]", RegexOptions.None, TimeSpan.FromSeconds(5));
@@ -185,10 +197,13 @@ public sealed class ReleaseWorkflowTests
         return [.. match.Groups["list"].Value.Split(',').Select(entry => entry.Trim())];
     }
 
-    private static string Job(string name)
+    private static string Job(string name, string? workflow = null)
     {
+        // Windows checkouts may use CRLF. Normalize before matching and slicing so '$' sees the
+        // same job headers and match offsets on every runner.
+        var release = (workflow ?? Release).ReplaceLineEndings("\n");
         var jobs = Regex.Matches(
-            Release,
+            release,
             @"^  (?<name>[A-Za-z][A-Za-z0-9-]*):$",
             RegexOptions.Multiline,
             TimeSpan.FromSeconds(5));
@@ -200,8 +215,8 @@ public sealed class ReleaseWorkflowTests
             }
 
             var start = jobs[index].Index;
-            var end = index + 1 < jobs.Count ? jobs[index + 1].Index : Release.Length;
-            return Release[start..end];
+            var end = index + 1 < jobs.Count ? jobs[index + 1].Index : release.Length;
+            return release[start..end];
         }
 
         throw new InvalidOperationException($"The release workflow declares no {name} job.");
