@@ -16,10 +16,18 @@ namespace ServiceMantle.ReferenceService.Database.Sqlite;
 /// so, and a target that is present but unusable is never repaired.
 /// </para>
 /// <para>
+/// Concurrent calls for the same canonical target take one process-local turn that spans the
+/// observation and the migration, so a call never observes the target while a sibling call's
+/// migration is writing to it; without that turn the sibling's transient journal or busy target
+/// would be misreported as an unusable target. The wait for the turn shares the fixed budget with
+/// the preparation call, and a wait that exhausts the budget is reported as a migration failure.
+/// </para>
+/// <para>
 /// This is a consumer example. It provides no cross-process or cross-host exclusion - two processes
 /// that both declare SingleInstance are a deployment error this contract cannot detect - and no
 /// transaction spans the file publication and the migration: a committed migration or a published
-/// empty file is not undone by a later cancellation.
+/// empty file is not undone by a later cancellation. A writer that is not a sibling call on this
+/// turn can still make a concurrent observation report the target as unusable.
 /// </para>
 /// </remarks>
 public sealed class ReferenceSqliteStartupCoordinator
@@ -79,14 +87,132 @@ public sealed class ReferenceSqliteStartupCoordinator
             return Report(ReferenceSqliteStartupOutcome.TargetUnavailable);
         }
 
-        var observed = await ObserveAsync(provider, target, cancellationToken).ConfigureAwait(false);
-        if (observed is not null)
+        // The observation must not overlap a sibling call's migration on the same target: the
+        // sibling's transient journal or busy target would be misreported as an unusable target.
+        // One process-local turn, keyed by the provider's canonical target identity - the same key
+        // the single-instance migration orchestration uses - spans the observation and the
+        // migration, and the identity itself is resolved from the path alone, with no SQLite I/O.
+        var identity = await ResolveTargetIdentityAsync(provider, target, cancellationToken)
+            .ConfigureAwait(false);
+        if (identity is null)
         {
-            return observed;
+            // Without an identity this call cannot take part in the turn, so it fails closed
+            // instead of observing unserialized.
+            return Report(ReferenceSqliteStartupOutcome.TargetUnavailable);
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
-        return await MigrateAsync(target, cancellationToken).ConfigureAwait(false);
+        TurnEntry? entry = null;
+        var acquired = false;
+        try
+        {
+            entry = EnterTurn(identity);
+            using var timeout = new CancellationTokenSource(ReferenceSqliteStartupOptions.Budget);
+            using var acquisition = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                timeout.Token);
+            try
+            {
+                await entry.Gate.WaitAsync(acquisition.Token).ConfigureAwait(false);
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                // The caller's cancellation outranks the turn wait and keeps the caller's token.
+                throw new OperationCanceledException(cancellationToken);
+            }
+            catch (Exception) when (timeout.IsCancellationRequested)
+            {
+                // Exhausting the shared budget while waiting for the turn is a finite failure,
+                // matching how the orchestration reports its own turn timeout.
+                return Report(ReferenceSqliteStartupOutcome.MigrationFailed);
+            }
+
+            acquired = true;
+
+            var observed = await ObserveAsync(provider, target, cancellationToken)
+                .ConfigureAwait(false);
+            if (observed is not null)
+            {
+                return observed;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return await MigrateAsync(target, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (entry is not null)
+            {
+                LeaveTurn(entry, identity, acquired);
+            }
+        }
+    }
+
+    private static async ValueTask<string?> ResolveTargetIdentityAsync(
+        IDatabaseTargetPreparationProvider provider,
+        BootstrapDatabaseConfiguration target,
+        CancellationToken cancellationToken)
+    {
+        if (provider is not IDatabaseDeploymentCapabilityProvider capability)
+        {
+            return null;
+        }
+
+        try
+        {
+            var identity = await capability
+                .GetCanonicalTargetIdentityAsync(target, cancellationToken)
+                .ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(identity) ? null : identity;
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static readonly object TurnSync = new();
+    private static readonly Dictionary<string, TurnEntry> Turns = new(StringComparer.Ordinal);
+
+    private static TurnEntry EnterTurn(string identity)
+    {
+        lock (TurnSync)
+        {
+            if (!Turns.TryGetValue(identity, out var entry))
+            {
+                entry = new TurnEntry();
+                Turns.Add(identity, entry);
+            }
+
+            entry.References++;
+            return entry;
+        }
+    }
+
+    private static void LeaveTurn(TurnEntry entry, string identity, bool acquired)
+    {
+        lock (TurnSync)
+        {
+            if (acquired)
+            {
+                entry.Gate.Release();
+            }
+
+            if (--entry.References == 0)
+            {
+                Turns.Remove(identity);
+                entry.Gate.Dispose();
+            }
+        }
+    }
+
+    private sealed class TurnEntry
+    {
+        internal SemaphoreSlim Gate { get; } = new(1, 1);
+        internal int References;
     }
 
     private async ValueTask<ReferenceSqliteStartupResult?> ObserveAsync(
