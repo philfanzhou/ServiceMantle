@@ -14,15 +14,18 @@ ASP.NET Core、数据库 provider 与 EF Core 持久化能力通过独立包提�
 
 ## 文档语言
 
-- **仓库内的流程与约束文档用中文**：本文件、`.github/ISSUE_TEMPLATE/` 下的 issue 模板、
-  `.github/pull_request_template.md`。
+- **仓库内的 Markdown 文档一律用中文**，只有一个例外：仓库根目录的 `README.md`。它通过
+  `PackageReadmeFile` 随 NuGet 包分发，是使用者在 nuget.org 上看到的包说明，必须保持英文。
+  子目录下的 `README.md` 不随包分发，同样用中文。
+- **随包分发的代码内文字保持英文**：公开 API 的 XML 文档注释、异常消息、`[Obsolete]` 等特性中的
+  文字。这些是调用方在 IntelliSense 和异常里直接读到的内容，属于公开包契约，不属于仓库文档。
 - **提交到 GitHub 的 issue 和 PR，正文一律用中文。** Issue 标题用中文；PR 标题使用英文
   conventional commit 格式（`feat:` / `fix:` / `docs:` / `test:` / `refactor:` / `chore:` 等）。
 - **Review 全程用中文**：行内意见、review summary、回复，以及向维护者汇报的 review 结论均用中文。
   代码、标识符、诊断码和命令行保持原样。
-- **面向使用者的发布文档用英文**：`README.md`、公开 API 的 XML 文档注释、异常消息、
-  `[Obsolete]` 等特性中的文字。这些内容属于公开包契约。
 - 代码标识符和 commit message 保持英文。
+- 新增文档直接用中文写。存量英文文档按目录分批翻译，各自由独立 issue 跟踪；轮到之前保持原样，
+  不要因为路过就顺手翻译。
 
 ## 项目边界
 
