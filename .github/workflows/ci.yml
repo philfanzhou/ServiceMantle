@@ -219,9 +219,10 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/serilog
 
-      # Three modules in one project, next to the ASP.NET Core implicit usings. Ordinary types carry
-      # no product prefix now, so this is where an ambiguity between a ServiceMantle type and a
-      # framework type of the same name would surface as a compile error.
+      # Four modules in one project, next to the ASP.NET Core implicit usings and the framework
+      # namespaces those modules' entry points require. Ordinary types carry no product prefix now,
+      # so this is where an ambiguity between a ServiceMantle type and a framework type of the same
+      # name would surface as a compile error.
       - name: Verify composed package consumption
         run: >-
           eng/tests/package-consumption.sh

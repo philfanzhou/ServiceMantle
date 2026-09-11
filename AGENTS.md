@@ -95,7 +95,8 @@ ASP.NET Core、数据库 provider 与 EF Core 持久化能力通过独立包提�
    在后续新版本交付，不覆盖历史版本。
 5. 验证用非增量构建加打包产物消费验证：`dotnet build ... --no-incremental` 之后跑 ReleaseTool
    `validate / restore / build / test / pack / verify`，并用 `eng/tests/consumers` 的最小消费项目
-   确认调用方没有新增 using 冲突或全限定名负担。
+   确认调用方没有新增 using 冲突或全限定名负担。消费项目必须覆盖本次改名涉及的每一个包，并且
+   同时 using 该包入口所需的框架 namespace——没有被消费项目引用的包，CS0104 不会在 CI 里暴露。
 
 ### Review 过程中
 

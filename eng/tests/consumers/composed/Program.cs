@@ -1,12 +1,19 @@
-// Proves that a consumer can import three ServiceMantle modules at once, next to the ASP.NET Core
-// implicit usings, and still name every configuration type without a using alias or a fully
-// qualified name.
+// Proves that a consumer can import four ServiceMantle modules at once, next to the ASP.NET Core
+// implicit usings and the framework namespaces each module's own entry points require, and still
+// name every public type without a using alias or a fully qualified name.
 //
 // That is the property the naming rules have to hold: dropping the product prefix from ordinary
 // types must not hand the caller an ambiguity between, say, ServiceMantle's forwarded-header trust
 // boundary and Microsoft.AspNetCore.Builder.ForwardedHeadersOptions. Every renamed public type this
 // file touches is named unqualified on purpose - the file failing to compile is the assertion.
+//
+// Microsoft.AspNetCore.DataProtection and Microsoft.EntityFrameworkCore are imported for the same
+// reason: reaching the EF Core persistence entry points requires them, so their types are in scope
+// whenever that module is, and any ServiceMantle type sharing a name with one of them would be
+// ambiguous here.
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.EntityFrameworkCore;
 using ServiceMantle;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.AspNetCore.Health;
@@ -17,6 +24,7 @@ using ServiceMantle.AspNetCore.RateLimiting;
 using ServiceMantle.OpenTelemetry;
 using ServiceMantle.OpenTelemetry.Otlp;
 using ServiceMantle.OpenTelemetry.Prometheus;
+using ServiceMantle.Persistence.EntityFrameworkCore;
 using ServiceMantle.Serilog;
 using ServiceMantle.Serilog.GrafanaLoki;
 
@@ -93,9 +101,35 @@ try
     Report<PrometheusOptions>();
     Report<SerilogOptions>();
     Report<GrafanaLokiOptions>();
+
+    // The EF Core persistence module's public surface is mostly static extension containers, whose
+    // names are the ones most likely to already exist in a framework namespace - Data Protection
+    // alone ships DataProtectionBuilderExtensions. Naming every one of them here, unqualified and
+    // with the framework namespaces above in scope, is what turns such a collision into a build
+    // failure rather than a CS0104 the consumer discovers.
+    ReportType(typeof(EfCoreDataProtectionExtensions));
+    ReportType(typeof(ModelBuilderExtensions));
+    ReportType(typeof(DataProtectionKeyModelBuilderExtensions));
+    ReportType(typeof(ManagementAuditModelBuilderExtensions));
+    ReportType(typeof(ServiceSettingModelBuilderExtensions));
+    ReportType(typeof(IServiceDbContext));
+    ReportType(typeof(ManagementAuditDatabaseDialect));
+    ReportType(typeof(WellKnownDataProtectionKeyRepositoryErrorCodes));
+    ReportType(typeof(DataProtectionKeyRepositoryException));
+    ReportType(typeof(ServiceInstallationEntity));
+    ReportType(typeof(EfCoreDataProtectionKeyRepository<>));
+    ReportType(typeof(EfCoreServiceInstallationStore<>));
+    ReportType(typeof(EfCoreServiceSettingStore<>));
+    ReportType(typeof(EfCoreServiceSettingUpdateTransaction<>));
+    ReportType(typeof(EfCoreServiceSetupCodeStore<>));
+    ReportType(typeof(EfCoreManagementAuditWriter<>));
+    ReportType(typeof(EfCoreManagementAuditQueryService<>));
+
     Console.WriteLine($"Correlation ID header: {ServiceHeaderNames.CorrelationId}.");
     Console.WriteLine($"Problem type prefix: {ProblemDetailsDefaults.TypeUriPrefix}.");
-    Console.WriteLine("Composed consumer started; AspNetCore, OpenTelemetry, and Serilog all resolved.");
+    Console.WriteLine(
+        "Composed consumer started; AspNetCore, OpenTelemetry, Serilog, and "
+        + "Persistence.EntityFrameworkCore all resolved.");
 
     await application.StopAsync();
 }
@@ -105,3 +139,6 @@ finally
 }
 
 static void Report<T>() => Console.WriteLine($"Resolved {typeof(T).FullName}.");
+
+// Static classes and open generics cannot be type arguments, so they are named through typeof.
+static void ReportType(Type type) => Console.WriteLine($"Resolved {type.FullName}.");

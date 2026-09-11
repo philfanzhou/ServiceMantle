@@ -26,6 +26,7 @@ ServiceMantle 现在由目录和 namespace 表达一个类型属于哪个模块�
 | `ServiceMantleMetrics` | `ServiceMetrics` | `Metrics` 与 `System.Diagnostics.Metrics` namespace 撞名。 |
 | `ServiceMantleForwardedHeadersOptions` | `ForwardedHeadersTrustOptions` | `ForwardedHeadersOptions` 与 `Microsoft.AspNetCore.Builder.ForwardedHeadersOptions` 撞名，而 Web 应用会隐式 using 那个 namespace。新名字直接说明职责：显式的信任边界。因为两个名字只差一个词，文档里原本就指向框架类型的 `ForwardedHeadersOptions` 已逐处核对，保持原样未改名——例如 `README.md` 里描述 `ForwardedHeadersSnapshotProvider` 交给框架中间件的那个实例。 |
 | `IServiceMantleDbContext` | `IServiceDbContext` | `IDbContext` 是消费方应用常见的自定义名字。 |
+| `ServiceMantleDataProtectionBuilderExtensions` | `EfCoreDataProtectionExtensions` | `DataProtectionBuilderExtensions` 与 `Microsoft.AspNetCore.DataProtection.DataProtectionBuilderExtensions` 撞名，而调用方要拿到 `IDataProtectionBuilder` 就必须 `using Microsoft.AspNetCore.DataProtection;`，显式写类名的调用会得到 CS0104。新名字沿用同目录 `EfCoreDataProtectionKeyRepository` 的 `EfCore*` 命名族，说明这组扩展把密钥环落到哪里。方法名 `PersistKeysToServiceMantleEfCore` 不变。 |
 | `ServiceMantleRegistration` | `HostRegistration` | 单独一个 `Registration` 什么也没说明；这个 record 记录的是 `AddServiceMantle` 固定下来的宿主身份。 |
 | `ServiceMantleSerilogLoggerProvider` | `RuntimeLoggerProvider` | `SerilogLoggerProvider` 与它所包装的 `Serilog.Extensions.Logging.SerilogLoggerProvider` 撞名。 |
 | `IServiceMantleStructuredLogSanitizer` / `ServiceMantleStructuredLogSanitizer` | `ILogFieldSanitizer` / `LogFieldSanitizer` | `StructuredLogSanitizer` 是它们所适配的核心类型。 |
@@ -115,7 +116,7 @@ namespace 跨越两个程序集。
 | `ServiceMantle.OpenTelemetry.Prometheus.ServiceMantlePrometheusDefaults` | `ServiceMantle.OpenTelemetry.Prometheus.PrometheusDefaults` |
 | `ServiceMantle.OpenTelemetry.Prometheus.ServiceMantlePrometheusOptions` | `ServiceMantle.OpenTelemetry.Prometheus.PrometheusOptions` |
 | `ServiceMantle.OpenTelemetry.Prometheus.WellKnownServiceMantlePrometheusErrorCodes` | `ServiceMantle.OpenTelemetry.Prometheus.WellKnownPrometheusErrorCodes` |
-| `ServiceMantle.Persistence.EntityFrameworkCore.ServiceMantleDataProtectionBuilderExtensions` | `ServiceMantle.Persistence.EntityFrameworkCore.DataProtectionBuilderExtensions` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ServiceMantleDataProtectionBuilderExtensions` | `ServiceMantle.Persistence.EntityFrameworkCore.EfCoreDataProtectionExtensions` |
 | `ServiceMantle.Persistence.EntityFrameworkCore.IServiceMantleDbContext` | `ServiceMantle.Persistence.EntityFrameworkCore.IServiceDbContext` |
 | `ServiceMantle.Serilog.ServiceMantleSerilogConfigurationException` | `ServiceMantle.Serilog.SerilogConfigurationException` |
 | `ServiceMantle.Serilog.ServiceMantleSerilogDefaults` | `ServiceMantle.Serilog.SerilogDefaults` |

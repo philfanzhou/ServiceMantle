@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace ServiceMantle.Persistence.EntityFrameworkCore;
 
 /// <summary>Connects ASP.NET Core Data Protection to ServiceMantle EF Core persistence.</summary>
-public static class DataProtectionBuilderExtensions
+public static class EfCoreDataProtectionExtensions
 {
     /// <summary>
     /// Persists this service's Data Protection keys through a dedicated EF Core context and an
