@@ -1,42 +1,41 @@
-# Reference service PostgreSQL setup staging
+# 参考服务 PostgreSQL setup staging
 
-The reference sample owns a small example of the *business* half of service setup on PostgreSQL:
+参考示例拥有一个小例子，展示服务 setup 的*业务*半边在 PostgreSQL 上的形态：
 
-- `ReferencePostgreSqlSetupContributor` - an `IServiceSetupContributor` with `Order = 100` that
-  validates read-only and stages one workspace row.
-- `ReferencePostgreSqlSetupStagingScope` - an `IServiceSetupStagingScope` over the same context.
+- `ReferencePostgreSqlSetupContributor`——一个 `Order = 100` 的 `IServiceSetupContributor`，
+  只读地验证并 staging 一行工作区。
+- `ReferencePostgreSqlSetupStagingScope`——同一 context 之上的 `IServiceSetupStagingScope`。
 
-Both take the caller's own `ReferencePostgreSqlDbContext`. Neither saves, opens a transaction,
-commits, rolls back, or disposes anything.
+两者都接收调用方自己的 `ReferencePostgreSqlDbContext`。两者都不保存、不开启事务、不提交、
+不回滚、不释放任何东西。
 
-## What this slice delivers, and what it does not
+## 这个切片交付什么，不交付什么
 
-Delivered here: a contributor and a staging scope that can be composed with the real
-`ServiceSetupOrchestrator` against a real PostgreSQL database.
+此处交付：一个 contributor 和一个 staging scope，可以与真实的 `ServiceSetupOrchestrator`
+组合，针对真实的 PostgreSQL 数据库使用。
 
-**Not delivered here, and not implied by anything below:** host enablement, a Setup Code,
-installation state, initial configuration, audit, HTTP, a new table or migration, any DI auto-wiring,
-and any lock. Staging a workspace is not an installation that is `Completed`. The sample's host does
-not run this contributor during startup, and running it does not make the running sample `Ready`.
+**此处不交付，且下面的任何内容都不隐含：**host 启用、Setup Code、安装状态、初始配置、审计、
+HTTP、新表或迁移、任何 DI 自动接线，以及任何锁。staging 一个工作区不是一个 `Completed`
+的安装。示例的 host 不会在启动期间运行此 contributor，运行它也不会使正在运行的示例变为
+`Ready`。
 
-## What each member does
+## 每个成员做什么
 
-| Member | Behaviour |
+| 成员 | 行为 |
 | --- | --- |
-| `ValidateAsync` | Observes the caller's cancellation. Changes no tracked entity and runs no SQL. |
-| `RegisterAsync` | Stages exactly one `ReferenceWorkspace` with a fresh `Guid` and the sample's existing default display name. It saves nothing. |
-| `HasPendingChanges` | Runs `DetectChanges` and reports whether the tracker holds an `Added`, `Modified`, or `Deleted` entry. |
-| `DiscardPendingChangesAsync` | Clears the change tracker. Nothing else. |
+| `ValidateAsync` | 观察调用方的取消。不改变任何被跟踪的实体，不运行任何 SQL。 |
+| `RegisterAsync` | 恰好 staging 一个 `ReferenceWorkspace`，带一个新的 `Guid` 和示例现有的默认显示名。它不保存任何东西。 |
+| `HasPendingChanges` | 运行 `DetectChanges`，并报告 tracker 是否持有 `Added`、`Modified` 或 `Deleted` 条目。 |
+| `DiscardPendingChangesAsync` | 清除变更 tracker。仅此而已。 |
 
-Composed with the real orchestrator, the existing protocol holds: a dirty context is refused on entry
-with `installation.dirty_context` and its pending work is left alone, every validation runs before
-any registration, and a later contributor's rejection, exception, or internal cancellation clears the
-uncommitted staging and returns a safe code (`setup.contributor_failed`, or the contributor's own
-rejection code).
+与真实的 orchestrator 组合时，现有协议保持不变：脏 context 在入口处被拒绝，返回
+`installation.dirty_context`，其待处理工作原样保留；每个验证都在任何注册之前运行；后续
+contributor 的拒绝、异常或内部取消会清除未提交的 staging 并返回一个安全码
+（`setup.contributor_failed`，或 contributor 自己的拒绝码）。
 
-## Calling it directly
+## 直接调用它
 
-The caller owns the unit of work end to end:
+调用方端到端拥有工作单元：
 
 ```csharp
 await using var context = new ReferencePostgreSqlDbContext(
@@ -61,36 +60,29 @@ await transaction.CommitAsync(cancellationToken);
 return null;
 ```
 
-Nothing is visible to another connection until that commit, and a rollback leaves no trace.
+在那次提交之前，其他连接什么都看不到，而回滚不留任何痕迹。
 
-## What this does not guarantee
+## 这并不保证什么
 
-- **No idempotence.** Two explicit registrations stage two rows with two different ids. There is no
-  duplicate-install protection, no "already installed" check, and no single winner across instances.
-  Setup Codes, completed installation state, and transaction serialization belong to the full
-  first-install work, not here.
-- **One context, one call.** A `DbContext` does not support concurrent use. The caller must supply a
-  dedicated, clean scope per call, and must discard the whole scope whenever it cannot establish that
-  the context is clean.
-- **Cleanup is tracker-only.** Discarding pending changes clears staged work. It cannot roll back a
-  database operation the caller already committed.
-- **No external recovery promise.** Nothing here bounds time or recovers from a failure outside the
-  database.
-- **No secret input.** There is no product input and no secret to leak. The negative assertions cover
-  this adapter's and the core orchestration's own results; they say nothing about raw EF Core or
-  Npgsql logging the caller enables.
+- **无幂等性。** 两次显式注册会 staging 两行，带两个不同的 id。没有重复安装保护，没有
+  “已安装”检查，也没有跨实例的单一胜出者。Setup Code、已完成的安装状态和事务序列化属于
+  完整的首次安装工作，不属于这里。
+- **一个 context，一次调用。** `DbContext` 不支持并发使用。调用方必须为每次调用提供一个
+  专用的干净 scope，并且在无法确定 context 干净时必须丢弃整个 scope。
+- **清理仅限 tracker。** 丢弃待处理变更会清除已 staging 的工作。它无法回滚调用方已经提交的
+  数据库操作。
+- **无外部恢复承诺。** 这里没有任何内容设定时间界限或从数据库之外的故障中恢复。
+- **无机密输入。** 没有产品输入，也没有可泄漏的机密。否定性断言覆盖此适配器和核心编排自己
+  的结果；它们对调用方启用的原始 EF Core 或 Npgsql 日志不作任何说明。
 
-## How it is covered
+## 覆盖方式
 
-`ReferencePostgreSqlSetupStagingTests` runs against a real PostgreSQL server and prepares the schema
-by calling EF's own `MigrateAsync` on the merged context, so it depends on neither the sample's
-migration executor nor any other adapter. It asserts that validation issues no statement and leaves
-the tracker untouched, that registration stages exactly one `Added` workspace while an independent
-connection still sees nothing, that only the caller's own commit publishes the row and a rollback
-leaves none, that the orchestrator's rejection, failure, cancellation, and dirty-context paths behave
-as tabled above, that two independent contexts do not affect each other, and that a repeated explicit
-registration stages two different ids.
+`ReferencePostgreSqlSetupStagingTests` 针对真实的 PostgreSQL 服务器运行，并通过在合并后的
+context 上调用 EF 自己的 `MigrateAsync` 来准备 schema，因此它既不依赖示例的迁移 executor，
+也不依赖任何其他适配器。它断言：验证不发出任何语句且不触碰 tracker；注册恰好 staging 一个
+`Added` 的工作区，而一个独立连接仍然什么都看不到；只有调用方自己的提交才发布该行，回滚则
+一行不留；orchestrator 的拒绝、失败、取消和脏 context 路径按上表所列行为；两个独立的
+context 互不影响；以及重复的显式注册会 staging 两个不同的 id。
 
-It follows the existing real-database policy: `RUN_SERVICEMANTLE_POSTGRES_TESTS=true` with Docker
-running. When that environment is explicitly required and unavailable, the tests fail rather than
-skip.
+它遵循现有的真实数据库策略：`RUN_SERVICEMANTLE_POSTGRES_TESTS=true` 且 Docker 正在运行。
+当该环境被显式要求而不可用时，测试会失败而不是跳过。
