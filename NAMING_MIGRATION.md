@@ -24,7 +24,7 @@ ServiceMantle 现在由目录和 namespace 表达一个类型属于哪个模块�
 | `ServiceMantle.AspNetCore.ServiceMantleBuilder` | 不变 | 它是 `AddServiceMantle` 的返回类型，也是每个 `AddServiceMantle*` 扩展挂靠的接收者，因此与那些入口一样以产品命名。另外 `Builder` 会与 `Microsoft.AspNetCore.Builder` namespace 撞名。 |
 | `ServiceMantleHeaderNames` | `ServiceHeaderNames` | `HeaderNames` 与 `Microsoft.Net.Http.Headers.HeaderNames` 撞名。`Service*` 是本仓库既有的「本宿主服务的 X」命名族（`ServiceLogContext`、`ServiceLogFieldNames`、`ServiceHealthSnapshot`）。 |
 | `ServiceMantleMetrics` | `ServiceMetrics` | `Metrics` 与 `System.Diagnostics.Metrics` namespace 撞名。 |
-| `ServiceMantleForwardedHeadersOptions` | `ForwardedHeadersTrustOptions` | `ForwardedHeadersOptions` 与 `Microsoft.AspNetCore.Builder.ForwardedHeadersOptions` 撞名，而 Web 应用会隐式 using 那个 namespace。新名字直接说明职责：显式的信任边界。 |
+| `ServiceMantleForwardedHeadersOptions` | `ForwardedHeadersTrustOptions` | `ForwardedHeadersOptions` 与 `Microsoft.AspNetCore.Builder.ForwardedHeadersOptions` 撞名，而 Web 应用会隐式 using 那个 namespace。新名字直接说明职责：显式的信任边界。因为两个名字只差一个词，文档里原本就指向框架类型的 `ForwardedHeadersOptions` 已逐处核对，保持原样未改名——例如 `README.md` 里描述 `ForwardedHeadersSnapshotProvider` 交给框架中间件的那个实例。 |
 | `IServiceMantleDbContext` | `IServiceDbContext` | `IDbContext` 是消费方应用常见的自定义名字。 |
 | `ServiceMantleRegistration` | `HostRegistration` | 单独一个 `Registration` 什么也没说明；这个 record 记录的是 `AddServiceMantle` 固定下来的宿主身份。 |
 | `ServiceMantleSerilogLoggerProvider` | `RuntimeLoggerProvider` | `SerilogLoggerProvider` 与它所包装的 `Serilog.Extensions.Logging.SerilogLoggerProvider` 撞名。 |
@@ -68,6 +68,8 @@ namespace 跨越两个程序集。
 
 ## 公开 API 映射
 
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
 | `ServiceMantle.AspNetCore.Health.ServiceMantleHealthOptions` | `ServiceMantle.AspNetCore.Health.HealthOptions` |
 | `ServiceMantle.AspNetCore.ServiceMantleForwardedHeadersConfigurationException` | `ServiceMantle.AspNetCore.Http.ForwardedHeadersConfigurationException` |
 | `ServiceMantle.AspNetCore.ServiceMantleForwardedHeadersOptions` | `ServiceMantle.AspNetCore.Http.ForwardedHeadersTrustOptions` |
@@ -130,6 +132,8 @@ namespace 跨越两个程序集。
 以下都是程序集内部类型。之所以列出，是因为 `InternalsVisibleTo` 的测试程序集和按名字反射的诊断
 会看到它们。
 
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
 | `ServiceMantle.AspNetCore.ServiceMantleRegistration` | `ServiceMantle.AspNetCore.HostRegistration` |
 | `ServiceMantle.AspNetCore.Health.ServiceMantleHealthRegistration` | `ServiceMantle.AspNetCore.Health.HealthRegistration` |
 | `ServiceMantle.AspNetCore.Health.ServiceMantleHealthStartupValidator` | `ServiceMantle.AspNetCore.Health.HealthStartupValidator` |
@@ -259,6 +263,8 @@ namespace 跨越两个程序集。
 
 ## 测试类映射
 
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
 | `ServiceMantle.AspNetCore.Tests.ServiceMantleAuditQueryEndpointTests` | `ServiceMantle.AspNetCore.Tests.AuditQueryEndpointTests` |
 | `ServiceMantle.AspNetCore.Tests.ServiceMantleBootstrapManagementTests` | `ServiceMantle.AspNetCore.Tests.BootstrapManagementTests` |
 | `ServiceMantle.AspNetCore.Tests.ServiceMantleBootstrapRequestTests` | `ServiceMantle.AspNetCore.Tests.BootstrapRequestTests` |

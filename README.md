@@ -272,7 +272,7 @@ app.UseServiceMantleForwardedHeaders();
 ```
 
 ServiceMantle creates a private immutable startup snapshot and a dedicated framework
-`ForwardedHeadersTrustOptions` instance. It always enables `X-Forwarded-For` and `X-Forwarded-Proto`,
+`ForwardedHeadersOptions` instance. It always enables `X-Forwarded-For` and `X-Forwarded-Proto`,
 requires header-count symmetry, and enables `X-Forwarded-Host` only when `AllowedHosts` is non-empty.
 The framework's implicit loopback trust is removed. Top-level allow-all hosts, ports, invalid or
 duplicate normalized values, enumeration failures, and conflicting repeated registrations fail at
