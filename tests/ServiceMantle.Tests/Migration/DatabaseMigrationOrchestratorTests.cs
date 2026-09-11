@@ -713,72 +713,137 @@ public class DatabaseMigrationOrchestratorTests
         Assert.Contains("timeout", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public async Task OrchestrateMigration_TrueDoubleInstanceScenario_OnlyOneExecutes()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    public async Task OrchestrateMigration_TrueDoubleInstanceScenario_OnlyOneExecutes(
+        int lockTimeoutSeconds)
     {
+        // A legal finite positive budget. The scenario's own turn double never starts a real-time
+        // acquisition timer, so the outcome cannot depend on the wall-clock budget: the short
+        // budget and the original budget must produce the identical scenario.
+        var lockTimeout = TimeSpan.FromSeconds(lockTimeoutSeconds);
+
         // Shared state: simulates a real database
         var sharedState = new SharedDatabaseState();
 
-        // Both instances contend over one lock space this test owns; no other test can enter it.
-        var lockSpace = new FakeMigrationLockSpace();
+        // Both instances contend over one turn this test owns, modelled on a real SemaphoreSlim;
+        // no other test can enter it.
+        using var turn = new GatedMigrationTurn();
 
         // First instance
         var executor1 = new SharedStateExecutor(sharedState);
-        var lockProvider1 = new FakeMigrationLockProvider(lockSpace: lockSpace);
+        var lockProvider1 = new GatedTurnLockProvider("PostgreSQL", turn);
         var registry1 = new DatabaseMigrationLockProviderRegistry([lockProvider1], DatabaseProviderIdResolver.Empty);
         var orchestrator1 = new DatabaseMigrationOrchestrator(executor1, registry1);
 
         // Second instance
         var executor2 = new SharedStateExecutor(sharedState);
-        var lockProvider2 = new FakeMigrationLockProvider(lockSpace: lockSpace);
+        var lockProvider2 = new GatedTurnLockProvider("PostgreSQL", turn);
         var registry2 = new DatabaseMigrationLockProviderRegistry([lockProvider2], DatabaseProviderIdResolver.Empty);
         var orchestrator2 = new DatabaseMigrationOrchestrator(executor2, registry2);
 
-        // Run concurrently
-        var task1 = orchestrator1.OrchestrateMigrationAsync(
-            TestServiceId,
-            TestBootstrap,
-            DefaultLockTimeout,
-            TestContext.Current.CancellationToken);
-
-        // Give first instance a tiny moment to acquire lock
-        await Task.Delay(50, GetTestCancellationToken());
-
-        var task2 = orchestrator2.OrchestrateMigrationAsync(
-            TestServiceId,
-            TestBootstrap,
-            DefaultLockTimeout,
-            TestContext.Current.CancellationToken);
-
-        var result1 = await task1;
-        var result2 = await task2;
-
-        // Both should succeed
-        Assert.True(result1.Succeeded);
-        Assert.True(result2.Succeeded);
-
-        // Only one should have executed
-        Assert.Equal(1, sharedState.ExecutionCount);
-
-        // Second instance should have skipped execution
-        Assert.True(result1.ExecutorWasCalled || result2.ExecutorWasCalled);
-        if (result1.ExecutorWasCalled)
+        using var abort = new CancellationTokenSource();
+        var instance1Started = false;
+        var instance2Started = false;
+        ValueTask<MigrationExecutionResult> task1 = default;
+        ValueTask<MigrationExecutionResult> task2 = default;
+        try
         {
+            // Instance 1 takes the turn and stops inside its own locked execution, holding it.
+            task1 = orchestrator1.OrchestrateMigrationAsync(
+                TestServiceId,
+                TestBootstrap,
+                lockTimeout,
+                abort.Token);
+            instance1Started = true;
+            await sharedState.ExecuteEntered.Task.WaitAsync(GateTimeout, abort.Token);
+
+            // Instance 2 cannot have entered any executor stage while instance 1 holds the turn.
+            Assert.Equal(0, executor2.InspectCallCount);
+            Assert.Equal(0, executor2.ExecuteCallCount);
+
+            task2 = orchestrator2.OrchestrateMigrationAsync(
+                TestServiceId,
+                TestBootstrap,
+                lockTimeout,
+                abort.Token);
+            instance2Started = true;
+
+            // Deterministic evidence of contention: instance 2's wait is committed on the
+            // semaphore - it cannot complete synchronously while instance 1 holds the turn -
+            // and the committed waiter has still not reached any executor stage.
+            await turn.WaitCommitted.Task.WaitAsync(GateTimeout, abort.Token);
+            Assert.Equal(0, executor2.InspectCallCount);
+            Assert.Equal(0, executor2.ExecuteCallCount);
+
+            // Release instance 1; both instances now run to completion.
+            sharedState.ExecuteRelease.SetResult();
+
+            var result1 = await task1.AsTask().WaitAsync(CompletionTimeout, abort.Token);
+            var result2 = await task2.AsTask().WaitAsync(CompletionTimeout, abort.Token);
+
+            // Both should succeed
+            Assert.True(result1.Succeeded);
+            Assert.True(result2.Succeeded);
+
+            // Only one should have executed, and it is the instance that held the turn first.
+            Assert.Equal(1, sharedState.ExecutionCount);
+            Assert.True(result1.ExecutorWasCalled);
             Assert.False(result2.ExecutorWasCalled);
+
+            // Both leases were released.
+            Assert.Equal(2, turn.LeaseReleases);
         }
-        else
+        finally
         {
-            Assert.True(result2.ExecutorWasCalled);
+            // An assertion failure must not leave waiters behind: open the execution gate,
+            // cancel whatever has not finished, and drain both orchestrations.
+            sharedState.ExecuteRelease.TrySetResult();
+            await abort.CancelAsync();
+            await SettleAsync(instance1Started, task1);
+            await SettleAsync(instance2Started, task2);
+        }
+    }
+
+    private static readonly TimeSpan GateTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan CompletionTimeout = TimeSpan.FromSeconds(30);
+
+    private static async ValueTask SettleAsync(
+        bool started,
+        ValueTask<MigrationExecutionResult> orchestration)
+    {
+        if (!started)
+        {
+            return;
+        }
+
+        try
+        {
+            await orchestration;
+        }
+        catch
+        {
+            // The cleanup pass already knows the scenario's outcome; a cancelled or failed
+            // orchestration adds nothing to it.
         }
     }
 
     /// <summary>
-    /// Shared database state for testing multi-instance scenario.
+    /// Shared database state for testing multi-instance scenario. Its gates let the test hold the
+    /// first instance inside the locked execution and release it only after the second instance's
+    /// committed lock wait is proven, with no wall-clock delay in between.
     /// </summary>
     private sealed class SharedDatabaseState
     {
         private MigrationObservationState currentState = MigrationObservationState.PendingMigration;
         private readonly object lockObj = new();
+
+        internal TaskCompletionSource ExecuteEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ExecuteRelease { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int ExecutionCount { get; private set; }
 
@@ -801,7 +866,9 @@ public class DatabaseMigrationOrchestratorTests
     }
 
     /// <summary>
-    /// Executor that uses shared database state.
+    /// Executor that uses shared database state. Its execution signals the test when the locked
+    /// work was entered and waits for the test's release instead of sleeping, so the double-
+    /// instance ordering is driven by test-controlled signals only.
     /// </summary>
     private sealed class SharedStateExecutor : IDatabaseMigrationExecutor
     {
@@ -812,9 +879,14 @@ public class DatabaseMigrationOrchestratorTests
             this.sharedState = sharedState;
         }
 
+        public int InspectCallCount { get; private set; }
+
+        public int ExecuteCallCount { get; private set; }
+
         public async ValueTask<MigrationObservationState> InspectAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            InspectCallCount++;
             await ValueTask.CompletedTask;
             return sharedState.GetCurrentState();
         }
@@ -822,8 +894,93 @@ public class DatabaseMigrationOrchestratorTests
         public async ValueTask ExecuteAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await Task.Delay(100); // Simulate work
+            ExecuteCallCount++;
+            sharedState.ExecuteEntered.TrySetResult();
+            await sharedState.ExecuteRelease.Task.WaitAsync(GateTimeout, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             sharedState.SetMigrationComplete();
+        }
+    }
+
+    /// <summary>
+    /// The scenario's own turn, modelled on a real <see cref="SemaphoreSlim"/>: mutual exclusion
+    /// and release only. It never starts a real-time acquisition timer, so the scenario's success
+    /// cannot depend on a wall-clock budget. <see cref="WaitCommitted"/> fires only after a
+    /// contended wait was actually committed on the semaphore, never at the acquire entry.
+    /// </summary>
+    private sealed class GatedMigrationTurn : IDisposable
+    {
+        internal SemaphoreSlim Gate { get; } = new(1, 1);
+
+        internal TaskCompletionSource WaitCommitted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal int LeaseReleases => Volatile.Read(ref leaseReleases);
+
+        private int leaseReleases;
+
+        internal void RecordRelease() => Interlocked.Increment(ref leaseReleases);
+
+        public void Dispose() => Gate.Dispose();
+    }
+
+    /// <summary>
+    /// A lock double private to the double-instance scenario. It hands out leases over the test's
+    /// own <see cref="GatedMigrationTurn"/> and waits on the caller's token alone; the finite
+    /// acquisition timeout it receives is validated by the production orchestrator but never
+    /// starts a timer here, so this double tests no provider timeout contract.
+    /// </summary>
+    private sealed class GatedTurnLockProvider(string providerId, GatedMigrationTurn turn)
+        : IDatabaseMigrationLockProvider
+    {
+        public string ProviderId { get; } = providerId ?? throw new ArgumentNullException(nameof(providerId));
+
+        public async ValueTask<IDatabaseMigrationLock> AcquireAsync(
+            ServiceId serviceId,
+            BootstrapDatabaseConfiguration bootstrap,
+            TimeSpan acquireTimeout,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(serviceId);
+            ArgumentNullException.ThrowIfNull(bootstrap);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var wait = turn.Gate.WaitAsync(cancellationToken);
+            if (wait.IsCompleted)
+            {
+                // The holder completed its wait without contention; nothing to commit.
+                await wait.ConfigureAwait(false);
+            }
+            else
+            {
+                // The waiter is now committed on the semaphore's wait queue; only at this point
+                // may the test treat the contention as proven.
+                turn.WaitCommitted.TrySetResult();
+                await wait.WaitAsync(GateTimeout, cancellationToken).ConfigureAwait(false);
+            }
+
+            return new GatedTurnLease(ProviderId, turn);
+        }
+
+        private sealed class GatedTurnLease(string providerId, GatedMigrationTurn turn)
+            : IDatabaseMigrationLock
+        {
+            private int disposed;
+
+            public string ProviderId { get; } = providerId;
+
+            public CancellationToken LeaseLost => CancellationToken.None;
+
+            public ValueTask DisposeAsync()
+            {
+                if (Interlocked.Exchange(ref disposed, 1) == 0)
+                {
+                    turn.RecordRelease();
+                    turn.Gate.Release();
+                }
+
+                return ValueTask.CompletedTask;
+            }
         }
     }
 
