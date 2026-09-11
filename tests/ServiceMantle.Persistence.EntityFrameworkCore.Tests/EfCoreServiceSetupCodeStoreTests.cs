@@ -1008,7 +1008,7 @@ public sealed class EfCoreServiceSetupCodeStoreTests
     }
 
     private sealed class SetupCodeDbContext(DbContextOptions<SetupCodeDbContext> options)
-        : DbContext(options), IServiceMantleDbContext
+        : DbContext(options), IServiceDbContext
     {
         internal Func<CancellationToken, Task>? BeforeSaveChangesAsync { get; set; }
 

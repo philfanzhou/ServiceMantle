@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.AspNetCore;
-using ServiceMantle.Http;
+using ServiceMantle.AspNetCore.Http;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -28,13 +28,13 @@ public static class ServiceMantleProblemDetailsApplicationBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        if (app.ApplicationServices.GetService<ServiceMantleRegistration>() is null)
+        if (app.ApplicationServices.GetService<HostRegistration>() is null)
         {
             throw new InvalidOperationException(
                 "The ServiceMantle Problem Details middleware requires AddServiceMantle to be called first.");
         }
 
-        ServiceMantlePipelineComposition.RecordUse(app);
-        return app.UseMiddleware<ServiceMantleProblemDetailsMiddleware>();
+        PipelineComposition.RecordUse(app);
+        return app.UseMiddleware<ProblemDetailsMiddleware>();
     }
 }

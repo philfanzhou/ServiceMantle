@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.PhaseGate;
+using ServiceMantle.AspNetCore.RateLimiting;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -15,7 +17,7 @@ public static class ServiceMantleManagementApiEndpointRouteBuilderExtensions
     /// <param name="endpoints">The application's endpoint route builder.</param>
     /// <returns>The route group the consuming service maps its own children into.</returns>
     /// <remarks>
-    /// Every child receives the <see cref="ServiceMantleManagementSurface.Management"/> surface, the
+    /// Every child receives the <see cref="ManagementSurface.Management"/> surface, the
     /// <c>ServiceMantle.ManagementAdmin</c> policy, the <c>servicemantle.management</c> rate-limit
     /// policy, and the mandatory security response headers. The group itself maps no endpoint, so a
     /// host that never adds a child exposes nothing. A child may add a stricter authorization
@@ -31,17 +33,17 @@ public static class ServiceMantleManagementApiEndpointRouteBuilderExtensions
     public static RouteGroupBuilder MapServiceMantleManagementApiV1(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        var state = endpoints.ServiceProvider.GetService<ServiceMantleManagementApiState>() ??
-            throw ServiceMantleManagementApiState.MissingCapability();
+        var state = endpoints.ServiceProvider.GetService<ManagementApiState>() ??
+            throw ManagementApiState.MissingCapability();
         state.RecordMap(endpoints);
         var group = endpoints.MapGroup(state.GetRootPath());
-        group.WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Management)
+        group.WithServiceMantleManagementSurface(ManagementSurface.Management)
             .RequireServiceMantleManagementAdmin()
-            .RequireRateLimiting(ServiceMantleRateLimitingDefaults.ManagementPolicyName)
+            .RequireRateLimiting(RateLimitingDefaults.ManagementPolicyName)
             .RequireServiceMantleSecurityResponseHeaders()
             // One marker per child endpoint: the startup baseline check must not reach an endpoint
             // the host mapped outside this group.
-            .WithMetadata(new ServiceMantleManagementApiMetadata());
+            .WithMetadata(new ManagementApiMetadata());
         return group;
     }
 }

@@ -5,7 +5,7 @@ checkpoint when the caller has already cancelled, and what is deliberately left 
 
 It covers the two public exits of the same health pipeline:
 
-- `ServiceMantleReadinessDecisionSource`, the default `IServiceReadinessDecisionSource`.
+- `ReadinessDecisionSource`, the default `IServiceReadinessDecisionSource`.
 - The readiness endpoints `GET /health/ready` and `GET /health`, over **any** registered decision
   source.
 

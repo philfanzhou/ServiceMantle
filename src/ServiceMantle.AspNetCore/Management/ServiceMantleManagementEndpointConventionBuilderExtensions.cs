@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
-using ServiceMantle.Management;
+using ServiceMantle.AspNetCore.Management;
 
 namespace Microsoft.AspNetCore.Builder;
 

@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Prometheus.Tests;
@@ -11,9 +10,9 @@ public sealed class PackageDependencyBoundaryTests
     {
         foreach (var type in new[]
                  {
-                     typeof(ServiceMantlePrometheusOptions),
-                     typeof(ServiceMantlePrometheusConfigurationException),
-                     typeof(WellKnownServiceMantlePrometheusErrorCodes),
+                     typeof(PrometheusOptions),
+                     typeof(PrometheusConfigurationException),
+                     typeof(WellKnownPrometheusErrorCodes),
                  })
         {
             Assert.Equal("ServiceMantle.OpenTelemetry", type.Assembly.GetName().Name);
@@ -43,10 +42,10 @@ public sealed class PackageDependencyBoundaryTests
             .AddOpenTelemetryInstrumentation();
 
         Assert.DoesNotContain(services, descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantlePrometheusRegistration) ||
-            descriptor.ImplementationType == typeof(ServiceMantlePrometheusSnapshotProvider) ||
-            descriptor.ImplementationType == typeof(ServiceMantlePrometheusEndpointState) ||
-            descriptor.ImplementationType == typeof(ServiceMantlePrometheusStartupValidator) ||
-            descriptor.ImplementationType == typeof(ServiceMantlePrometheusExporterOptionsPolicy));
+            descriptor.ServiceType == typeof(PrometheusRegistration) ||
+            descriptor.ImplementationType == typeof(PrometheusSnapshotProvider) ||
+            descriptor.ImplementationType == typeof(PrometheusEndpointState) ||
+            descriptor.ImplementationType == typeof(PrometheusStartupValidator) ||
+            descriptor.ImplementationType == typeof(PrometheusExporterOptionsPolicy));
     }
 }

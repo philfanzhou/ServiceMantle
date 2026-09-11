@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using ServiceMantle.AspNetCore.Management;
 using ServiceMantle.Audit;
 using ServiceMantle.Management;
 using Xunit;
@@ -25,9 +26,9 @@ public sealed class ManagementCookieAuthenticationTests
     {
         using var host = await StartHostAsync();
         var options = host.Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
-            .Get(ServiceMantleManagementSessionDefaults.AuthenticationScheme);
+            .Get(ManagementSessionDefaults.AuthenticationScheme);
 
-        Assert.Equal("ServiceMantle.ManagementCookie", ServiceMantleManagementSessionDefaults.AuthenticationScheme);
+        Assert.Equal("ServiceMantle.ManagementCookie", ManagementSessionDefaults.AuthenticationScheme);
         Assert.Equal("__Host-ServiceMantle.Management", options.Cookie.Name);
         Assert.True(options.Cookie.HttpOnly);
         Assert.Equal(CookieSecurePolicy.Always, options.Cookie.SecurePolicy);
@@ -36,14 +37,14 @@ public sealed class ManagementCookieAuthenticationTests
         Assert.Null(options.Cookie.Domain);
         Assert.Equal("/", options.Cookie.Path);
         Assert.Equal(
-            TimeSpan.FromHours(ServiceMantleManagementSessionDefaults.DefaultExpireTimeSpanHours),
+            TimeSpan.FromHours(ManagementSessionDefaults.DefaultExpireTimeSpanHours),
             options.ExpireTimeSpan);
         Assert.True(options.SlidingExpiration);
         Assert.DoesNotContain("catalog", options.Cookie.Name, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("catalog-01", options.Cookie.Name, StringComparison.OrdinalIgnoreCase);
     }
 
-    public static TheoryData<Action<ServiceMantleManagementCookieOptions>> UnsafeSettings => new()
+    public static TheoryData<Action<ManagementCookieOptions>> UnsafeSettings => new()
     {
         options => options.HttpOnly = false,
         options => options.SecurePolicy = CookieSecurePolicy.None,
@@ -53,13 +54,13 @@ public sealed class ManagementCookieAuthenticationTests
         options => options.ExpireTimeSpan = TimeSpan.Zero,
         options => options.ExpireTimeSpan = TimeSpan.FromSeconds(-1),
         options => options.ExpireTimeSpan = TimeSpan.FromHours(
-            ServiceMantleManagementSessionDefaults.MaximumExpireTimeSpanHours) + TimeSpan.FromTicks(1),
+            ManagementSessionDefaults.MaximumExpireTimeSpanHours) + TimeSpan.FromTicks(1),
     };
 
     [Theory]
     [MemberData(nameof(UnsafeSettings))]
     public async Task UnsafeOverrides_FailWhenTheHostStarts(
-        Action<ServiceMantleManagementCookieOptions> configure)
+        Action<ManagementCookieOptions> configure)
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Services
@@ -127,10 +128,10 @@ public sealed class ManagementCookieAuthenticationTests
                 .GetRequiredService<IAuthenticationSchemeProvider>()
                 .GetAllSchemesAsync();
             Assert.Single(schemes, scheme =>
-                scheme.Name == ServiceMantleManagementSessionDefaults.AuthenticationScheme);
+                scheme.Name == ManagementSessionDefaults.AuthenticationScheme);
             var options = duplicateHost.Services
                 .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
-                .Get(ServiceMantleManagementSessionDefaults.AuthenticationScheme);
+                .Get(ManagementSessionDefaults.AuthenticationScheme);
             Assert.Equal(TimeSpan.FromHours(4), options.ExpireTimeSpan);
             Assert.False(options.SlidingExpiration);
             await duplicateHost.StopAsync(TestContext.Current.CancellationToken);
@@ -159,7 +160,7 @@ public sealed class ManagementCookieAuthenticationTests
         using var forbidden = await SendWithCookieAsync(client, "/management/protected", readCookie);
         Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
         Assert.Equal(
-            ServiceMantleManagementSessionDefaults.ForbiddenErrorCode,
+            ManagementSessionDefaults.ForbiddenErrorCode,
             await ReadErrorCodeAsync(forbidden));
         AssertSafeSessionResponse(forbidden, readCookie, "sensitive-reader");
 
@@ -180,7 +181,7 @@ public sealed class ManagementCookieAuthenticationTests
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Unauthorized, missing.StatusCode);
         Assert.Equal(
-            ServiceMantleManagementSessionDefaults.UnauthenticatedErrorCode,
+            ManagementSessionDefaults.UnauthenticatedErrorCode,
             await ReadErrorCodeAsync(missing));
         AssertSafeSessionResponse(missing, "cookie-plaintext", "sensitive-admin");
 
@@ -188,7 +189,7 @@ public sealed class ManagementCookieAuthenticationTests
         using var forbidden = await SendWithCookieAsync(client, "/management/protected", readCookie);
         Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
         Assert.Equal(
-            ServiceMantleManagementSessionDefaults.ForbiddenErrorCode,
+            ManagementSessionDefaults.ForbiddenErrorCode,
             await ReadErrorCodeAsync(forbidden));
         AssertSafeSessionResponse(forbidden, readCookie, "sensitive-reader");
 
@@ -202,7 +203,7 @@ public sealed class ManagementCookieAuthenticationTests
         using var expired = await SendWithCookieAsync(client, "/management/protected", adminCookie);
         Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
         Assert.Equal(
-            ServiceMantleManagementSessionDefaults.ExpiredErrorCode,
+            ManagementSessionDefaults.ExpiredErrorCode,
             await ReadErrorCodeAsync(expired));
         AssertSafeSessionResponse(expired, adminCookie, "sensitive-admin");
     }
@@ -247,7 +248,7 @@ public sealed class ManagementCookieAuthenticationTests
                 [managementPermission],
                 "sensitive-display-name");
             await context.SignInAsync(
-                ServiceMantleManagementSessionDefaults.AuthenticationScheme,
+                ManagementSessionDefaults.AuthenticationScheme,
                 identity.ToClaimsPrincipal());
             return Results.NoContent();
         }).AllowAnonymous();

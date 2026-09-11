@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.AspNetCore;
-using ServiceMantle.Management;
+using ServiceMantle.AspNetCore.ManagementApi;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -32,11 +32,11 @@ public static class ServiceMantleManagementApiBuilderExtensions
     /// </remarks>
     public static ServiceMantleBuilder AddServiceMantleManagementApiV1(
         this ServiceMantleBuilder builder,
-        Action<ServiceMantleManagementApiOptions>? configure = null)
+        Action<ManagementApiOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new ServiceMantleManagementApiOptions();
+        var options = new ManagementApiOptions();
         configure?.Invoke(options);
         builder.AddServiceMantlePhaseGate(gate =>
         {
@@ -44,13 +44,13 @@ public static class ServiceMantleManagementApiBuilderExtensions
             gate.SnapshotTimeout = options.SnapshotTimeout;
         });
         builder.Services.AddServiceMantleManagementAuthorization();
-        builder.Services.AddSingleton(new ServiceMantleManagementApiRegistration(
+        builder.Services.AddSingleton(new ManagementApiRegistration(
             options.RootPath,
             options.SnapshotTimeout));
-        builder.Services.TryAddSingleton<ServiceMantleManagementApiState>();
+        builder.Services.TryAddSingleton<ManagementApiState>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleManagementApiStartupValidator>());
+            ManagementApiStartupValidator>());
         return builder;
     }
 }

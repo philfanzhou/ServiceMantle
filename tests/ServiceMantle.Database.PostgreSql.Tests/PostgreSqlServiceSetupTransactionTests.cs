@@ -473,7 +473,7 @@ public sealed class PostgreSqlServiceSetupTransactionTests : IAsyncLifetime
     }
 
     private sealed class SetupTransactionDbContext(
-        DbContextOptions<SetupTransactionDbContext> options) : DbContext(options), IServiceMantleDbContext
+        DbContextOptions<SetupTransactionDbContext> options) : DbContext(options), IServiceDbContext
     {
         public DbSet<ServiceInstallationEntity> ServiceInstallations => Set<ServiceInstallationEntity>();
 

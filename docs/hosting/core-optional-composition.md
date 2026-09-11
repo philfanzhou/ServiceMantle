@@ -64,7 +64,7 @@ app.UseServiceMantlePipeline();
 app.MapGet("/ok", (HttpContext context) =>
 {
     var safeHeaders = context.RequestServices
-        .GetRequiredService<ServiceMantleRequestHeaderDiagnosticProjector>()
+        .GetRequiredService<RequestHeaderDiagnosticProjector>()
         .Project(context.Request.Headers);
     context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Composition")
         .LogInformation("Composition handled {@Headers}", safeHeaders);
@@ -73,7 +73,7 @@ app.MapGet("/ok", (HttpContext context) =>
 if (authentication)
 {
     app.MapServiceMantleManagementGroup().MapGet("/protected", () => Results.Ok())
-        .WithServiceMantleManagementSurface(ServiceMantleManagementSurface.Management)
+        .WithServiceMantleManagementSurface(ManagementSurface.Management)
         .RequireServiceMantleManagementAdmin()
         .RequireServiceMantleSecurityResponseHeaders();
 }
@@ -153,7 +153,7 @@ must be released and awaited by the fixture. Forced termination cannot guarantee
 
 ## Evidence and limits
 
-`ServiceMantleCoreOptionalCompositionTests` runs all eight rows through Build, pipeline composition,
+`CoreOptionalCompositionTests` runs all eight rows through Build, pipeline composition,
 mapping, Start, real loopback HTTP, Stop and Dispose. It additionally covers all defined health
 snapshots, safe failure responses, barrier-triggered cancellation, Console output in both registration
 orders, duplicate/conflicting registration, pre-cancelled startup, and controlled sink disposal.

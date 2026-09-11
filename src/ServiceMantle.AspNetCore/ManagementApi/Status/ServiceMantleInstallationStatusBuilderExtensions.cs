@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.ManagementApi.Status;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -26,10 +27,10 @@ public static class ServiceMantleInstallationStatusBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.AddServiceMantleManagementEntries();
-        builder.Services.TryAddSingleton<ServiceMantleBootstrapRestartLatch>();
+        builder.Services.TryAddSingleton<BootstrapRestartLatch>();
         builder.Services.TryAddSingleton<
-            IServiceMantleBootstrapStatusReader,
-            ServiceMantleBootstrapStatusReader>();
+            IBootstrapStatusReader,
+            BootstrapStatusReader>();
         return builder;
     }
 }

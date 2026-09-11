@@ -3,7 +3,6 @@
 // ServiceMantle.OpenTelemetry.Prometheus as separate packages.
 using Microsoft.AspNetCore.Authorization;
 using ServiceMantle;
-using ServiceMantle.AspNetCore;
 using ServiceMantle.OpenTelemetry.Otlp;
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-consumer");
@@ -25,7 +24,7 @@ try
     serviceMantle.AddOpenTelemetryOtlpExporter(options =>
     {
         options.Traces.Enabled = true;
-        options.Traces.Protocol = ServiceMantleOtlpProtocol.Grpc;
+        options.Traces.Protocol = OtlpProtocol.Grpc;
         options.Traces.Endpoint = new Uri("https://collector.invalid:4317/");
     });
     serviceMantle.AddOpenTelemetryPrometheusEndpoint(options =>
@@ -42,7 +41,7 @@ try
     await application.StartAsync();
     Console.WriteLine(
         "ServiceMantle.OpenTelemetry consumer started; instrumentation, OTLP, and Prometheus all " +
-        $"resolved from {typeof(ServiceMantleOtlpOptions).Assembly.Location}.");
+        $"resolved from {typeof(OtlpOptions).Assembly.Location}.");
     await application.StopAsync();
 }
 finally

@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.Http;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -12,13 +12,13 @@ public static class ServiceMantleSecurityResponseHeadersApplicationBuilderExtens
         this IApplicationBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        if (app.ApplicationServices.GetService<ServiceMantleSecurityResponseHeadersRegistration>() is null)
+        if (app.ApplicationServices.GetService<SecurityResponseHeadersRegistration>() is null)
         {
             throw new InvalidOperationException(
                 "The ServiceMantle security response-header middleware requires AddSecurityResponseHeaders.");
         }
 
-        ServiceMantlePipelineComposition.RecordUse(app);
-        return app.UseMiddleware<ServiceMantleSecurityResponseHeadersMiddleware>();
+        PipelineComposition.RecordUse(app);
+        return app.UseMiddleware<SecurityResponseHeadersMiddleware>();
     }
 }

@@ -59,7 +59,7 @@ idempotent. The existing `AddServiceMantle`, `AddServiceMantlePhaseGate` and
 
 Every child mapped into the returned group receives, as endpoint metadata:
 
-- the `ServiceMantleManagementSurface.Management` surface,
+- the `ManagementSurface.Management` surface,
 - the `ServiceMantle.ManagementAdmin` authorization policy,
 - the `servicemantle.management` rate-limit policy,
 - the mandatory security response-header baseline.
@@ -88,8 +88,8 @@ rate limiting, and authorization in that order, so a rejection from an earlier s
 | Presented session cannot be accepted | 401 | `{"errorCode":"management.session.expired"}` |
 | Authenticated principal without `Admin` | 403 | `{"errorCode":"management.session.forbidden"}` |
 | Rate-limit quota exhausted | 429 | Problem Details, `rate_limit.exceeded` |
-| `ServiceMantleManagementApiResults.InvalidRequest()` | 400 | Problem Details, `management.request.invalid` |
-| `ServiceMantleManagementApiResults.Conflict()` | 409 | Problem Details, `management.request.conflict` |
+| `ManagementApiResults.InvalidRequest()` | 400 | Problem Details, `management.request.invalid` |
+| `ManagementApiResults.Conflict()` | 409 | Problem Details, `management.request.conflict` |
 | Unmapped exception, or an internal `OperationCanceledException` | 500 | Problem Details, `http.internal_server_error` |
 | Handler result | 2xx | The consuming service's own response |
 
@@ -104,7 +104,7 @@ Every answered response above carries the six mandatory security headers and exa
 management.MapPost("/settings", (SettingsRequest request) =>
     request.IsValid
         ? Results.NoContent()
-        : ServiceMantleManagementApiResults.InvalidRequest());
+        : ManagementApiResults.InvalidRequest());
 ```
 
 Both results are closed. They take no free text, no input value, no exception, and no custom

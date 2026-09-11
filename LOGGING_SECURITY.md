@@ -46,7 +46,7 @@ case-insensitive startup snapshot. It always includes
 names but cannot remove a built-in. Repeated names and casing variants collapse into one entry.
 Configuration collections are enumerated once when the Host starts, and later mutations are ignored.
 
-The DI-provided `StructuredLogSanitizer` and `ServiceMantleRequestHeaderDiagnosticProjector` consume
+The DI-provided `StructuredLogSanitizer` and `RequestHeaderDiagnosticProjector` consume
 that snapshot. The projector copies an ASP.NET Core request Header collection into the sanitizer;
 denied single-value and multi-value Headers therefore produce only `[REDACTED]`. A request Header
 enumeration failure produces only `[SANITIZATION_FAILED]` and never falls back to the original values.

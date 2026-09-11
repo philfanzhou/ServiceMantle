@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 
-namespace ServiceMantle.Http;
+namespace ServiceMantle.AspNetCore.Http;
 
 /// <summary>
 /// Applies the fixed Correlation ID acceptance and generation rules.
@@ -21,7 +21,7 @@ internal static class CorrelationIdValue
     /// </remarks>
     internal static string Resolve(IHeaderDictionary headers)
     {
-        var headerValues = headers[ServiceMantleHeaderNames.CorrelationId];
+        var headerValues = headers[ServiceHeaderNames.CorrelationId];
         return headerValues.Count == 1 && IsAccepted(headerValues[0])
             ? headerValues[0]!
             : Generate();

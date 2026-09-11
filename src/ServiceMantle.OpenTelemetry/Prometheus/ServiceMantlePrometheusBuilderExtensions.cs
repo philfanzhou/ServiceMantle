@@ -21,15 +21,15 @@ public static class ServiceMantlePrometheusBuilderExtensions
     /// </remarks>
     public static ServiceMantleBuilder AddOpenTelemetryPrometheusEndpoint(
         this ServiceMantleBuilder builder,
-        Action<ServiceMantlePrometheusOptions>? configure = null)
+        Action<PrometheusOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new ServiceMantlePrometheusOptions();
+        var options = new PrometheusOptions();
         configure?.Invoke(options);
-        var registration = new ServiceMantlePrometheusRegistration(options);
+        var registration = new PrometheusRegistration(options);
         var firstRegistration = !builder.Services.Any(descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantlePrometheusRegistration));
+            descriptor.ServiceType == typeof(PrometheusRegistration));
 
         builder.Services.AddSingleton(registration);
         if (!firstRegistration)
@@ -37,11 +37,11 @@ public static class ServiceMantlePrometheusBuilderExtensions
             return builder;
         }
 
-        builder.Services.TryAddSingleton<ServiceMantlePrometheusSnapshotProvider>();
-        builder.Services.TryAddSingleton<ServiceMantlePrometheusEndpointState>();
+        builder.Services.TryAddSingleton<PrometheusSnapshotProvider>();
+        builder.Services.TryAddSingleton<PrometheusEndpointState>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantlePrometheusStartupValidator>());
+            PrometheusStartupValidator>());
 
         if (!options.Enabled)
         {
@@ -50,10 +50,10 @@ public static class ServiceMantlePrometheusBuilderExtensions
 
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IPostConfigureOptions<PrometheusAspNetCoreOptions>,
-            ServiceMantlePrometheusExporterOptionsPolicy>());
+            PrometheusExporterOptionsPolicy>());
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IValidateOptions<PrometheusAspNetCoreOptions>,
-            ServiceMantlePrometheusExporterOptionsPolicy>());
+            PrometheusExporterOptionsPolicy>());
         builder.Services.AddOpenTelemetry().WithMetrics(metrics => metrics.AddPrometheusExporter());
 
         return builder;

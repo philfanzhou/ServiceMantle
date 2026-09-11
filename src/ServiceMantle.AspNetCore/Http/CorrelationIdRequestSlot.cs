@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Http;
 
-namespace ServiceMantle.Http;
+namespace ServiceMantle.AspNetCore.Http;
 
 /// <summary>
 /// Holds the resolved Correlation ID for one request under a private, non-collidable key.

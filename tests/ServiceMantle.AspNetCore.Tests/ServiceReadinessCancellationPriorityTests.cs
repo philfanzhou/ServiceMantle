@@ -135,7 +135,7 @@ public sealed class ServiceReadinessCancellationPriorityTests
         var source = new BlockingSnapshotSource();
         await using var application = await StartAsync(
             services => services.AddSingleton<IServiceHealthSnapshotSource>(source),
-            options => options.ProbeTimeout = ServiceMantleHealthOptions.MinimumProbeTimeout);
+            options => options.ProbeTimeout = HealthOptions.MinimumProbeTimeout);
         using var scope = application.Services.CreateScope();
         try
         {
@@ -283,7 +283,7 @@ public sealed class ServiceReadinessCancellationPriorityTests
 
     private static async Task<WebApplication> StartAsync(
         Action<IServiceCollection>? configureServices = null,
-        Action<ServiceMantleHealthOptions>? configureHealth = null,
+        Action<HealthOptions>? configureHealth = null,
         HandlerObservation? observe = null)
     {
         var builder = WebApplication.CreateBuilder();

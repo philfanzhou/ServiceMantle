@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.AuditQueries;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -32,8 +33,8 @@ public static class ServiceMantleAuditQueryEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
 
         var services = endpoints.ServiceProvider;
-        var state = services.GetService<ServiceMantleManagementApiState>() ??
-            throw ServiceMantleAuditQueryMapping.Failure();
+        var state = services.GetService<ManagementApiState>() ??
+            throw AuditQueryMapping.Failure();
         string root;
         try
         {
@@ -41,20 +42,20 @@ public static class ServiceMantleAuditQueryEndpointRouteBuilderExtensions
         }
         catch (InvalidOperationException)
         {
-            throw ServiceMantleAuditQueryMapping.Failure();
+            throw AuditQueryMapping.Failure();
         }
 
-        if (!ServiceMantleAuditQueryMapping.HasQueryService(services))
+        if (!AuditQueryMapping.HasQueryService(services))
         {
-            throw ServiceMantleAuditQueryMapping.MissingQueryService();
+            throw AuditQueryMapping.MissingQueryService();
         }
 
-        ServiceMantleAuditQueryMapping.RecordMap(services);
-        var expectedPath = root + ServiceMantleAuditQueryMapping.Path;
+        AuditQueryMapping.RecordMap(services);
+        var expectedPath = root + AuditQueryMapping.Path;
         endpoints.MapGet(
-                ServiceMantleAuditQueryMapping.Path,
-                (Func<HttpContext, Task<IResult>>)ServiceMantleAuditQueryHandlers.QueryAsync)
-            .Finally(builder => ServiceMantleAuditQueryMapping.Validate(builder, expectedPath));
+                AuditQueryMapping.Path,
+                (Func<HttpContext, Task<IResult>>)AuditQueryHandlers.QueryAsync)
+            .Finally(builder => AuditQueryMapping.Validate(builder, expectedPath));
         return endpoints;
     }
 }

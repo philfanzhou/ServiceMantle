@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.Http;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -13,13 +13,13 @@ public static class ServiceMantleForwardedHeadersApplicationBuilderExtensions
     public static IApplicationBuilder UseServiceMantleForwardedHeaders(this IApplicationBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        if (app.ApplicationServices.GetService<ServiceMantleForwardedHeadersSnapshotProvider>() is null)
+        if (app.ApplicationServices.GetService<ForwardedHeadersSnapshotProvider>() is null)
         {
             throw new InvalidOperationException(
                 "The ServiceMantle forwarded-header middleware requires AddForwardedHeaders.");
         }
 
-        ServiceMantlePipelineComposition.RecordUse(app);
-        return app.UseMiddleware<ServiceMantleForwardedHeadersMiddleware>();
+        PipelineComposition.RecordUse(app);
+        return app.UseMiddleware<ForwardedHeadersMiddleware>();
     }
 }

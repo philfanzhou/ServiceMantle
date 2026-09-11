@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using ServiceMantle.AspNetCore.Management;
 using ServiceMantle.Management;
 
 namespace Microsoft.Extensions.DependencyInjection;

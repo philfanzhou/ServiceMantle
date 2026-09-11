@@ -153,7 +153,7 @@ public sealed class ServiceReadinessContributorEndpointTests
                 services.AddSingleton<IServiceReadinessContributor>(contributor);
             },
             options => options.ContributorTimeout =
-                ServiceMantleHealthOptions.MinimumContributorTimeout);
+                HealthOptions.MinimumContributorTimeout);
         var started = DateTimeOffset.UtcNow;
 
         using var response = await application.GetTestClient().GetAsync(
@@ -305,7 +305,7 @@ public sealed class ServiceReadinessContributorEndpointTests
 
     private static async Task<WebApplication> StartAsync(
         Action<IServiceCollection>? configureServices = null,
-        Action<ServiceMantleHealthOptions>? configureHealth = null)
+        Action<HealthOptions>? configureHealth = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();

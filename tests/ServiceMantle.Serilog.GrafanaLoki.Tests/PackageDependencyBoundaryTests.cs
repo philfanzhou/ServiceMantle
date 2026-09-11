@@ -14,11 +14,11 @@ public sealed class PackageDependencyBoundaryTests
     {
         foreach (var type in new[]
                  {
-                     typeof(ServiceMantleGrafanaLokiOptions),
-                     typeof(ServiceMantleGrafanaLokiDefaults),
-                     typeof(ServiceMantleGrafanaLokiDiagnostics),
-                     typeof(WellKnownServiceMantleGrafanaLokiErrorCodes),
-                     typeof(IServiceMantleLokiAuthorizationHeaderResolver),
+                     typeof(GrafanaLokiOptions),
+                     typeof(GrafanaLokiDefaults),
+                     typeof(GrafanaLokiDiagnostics),
+                     typeof(WellKnownGrafanaLokiErrorCodes),
+                     typeof(ILokiAuthorizationHeaderResolver),
                  })
         {
             Assert.Equal("ServiceMantle.Serilog", type.Assembly.GetName().Name);
@@ -71,12 +71,12 @@ public sealed class PackageDependencyBoundaryTests
         builder.AddServiceMantleSerilog();
 
         Assert.DoesNotContain(builder.Services, descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantleGrafanaLokiRegistration) ||
+            descriptor.ServiceType == typeof(GrafanaLokiRegistration) ||
             IsLokiOwned(descriptor.ImplementationType));
 
         var sinkFactory = builder.Services.Single(descriptor =>
-            descriptor.ServiceType == typeof(IServiceMantleSerilogSinkFactory));
-        Assert.Equal(typeof(ServiceMantleConsoleSinkFactory), sinkFactory.ImplementationType);
+            descriptor.ServiceType == typeof(ISerilogSinkFactory));
+        Assert.Equal(typeof(ConsoleSinkFactory), sinkFactory.ImplementationType);
     }
 
     private static bool IsLokiOwned(Type? type) =>

@@ -16,26 +16,26 @@ public static class ServiceMantleSerilogHostApplicationBuilderExtensions
     /// </summary>
     public static IHostApplicationBuilder AddServiceMantleSerilog(
         this IHostApplicationBuilder builder,
-        Action<ServiceMantle.Serilog.ServiceMantleSerilogOptions>? configure = null)
+        Action<ServiceMantle.Serilog.SerilogOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new ServiceMantle.Serilog.ServiceMantleSerilogOptions();
+        var options = new ServiceMantle.Serilog.SerilogOptions();
         try
         {
             configure?.Invoke(options);
         }
         catch
         {
-            throw new ServiceMantle.Serilog.ServiceMantleSerilogConfigurationException(
+            throw new ServiceMantle.Serilog.SerilogConfigurationException(
                 "Configure",
                 "serilog.configure_failed");
         }
 
         var firstRegistration = !builder.Services.Any(descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantle.Serilog.ServiceMantleSerilogMarker));
+            descriptor.ServiceType == typeof(ServiceMantle.Serilog.SerilogMarker));
         var existingSerilogConfiguration = firstRegistration && HasSerilogConfiguration(builder.Services);
-        builder.Services.AddSingleton(new ServiceMantle.Serilog.ServiceMantleSerilogRegistration(
+        builder.Services.AddSingleton(new ServiceMantle.Serilog.SerilogRegistration(
             options,
             existingSerilogConfiguration));
         if (!firstRegistration)
@@ -44,23 +44,23 @@ public static class ServiceMantleSerilogHostApplicationBuilderExtensions
         }
 
         builder.Logging.ClearProviders();
-        builder.Services.AddSingleton<ServiceMantle.Serilog.ServiceMantleSerilogMarker>();
+        builder.Services.AddSingleton<ServiceMantle.Serilog.SerilogMarker>();
         builder.Services.TryAddSingleton<StructuredLogSanitizer>(serviceProvider =>
             serviceProvider.GetService<IStructuredLogSanitizerProvider>()?.Sanitizer ??
             new StructuredLogSanitizer());
         builder.Services.TryAddSingleton<
-            ServiceMantle.Serilog.IServiceMantleStructuredLogSanitizer,
-            ServiceMantle.Serilog.ServiceMantleStructuredLogSanitizer>();
+            ServiceMantle.Serilog.ILogFieldSanitizer,
+            ServiceMantle.Serilog.LogFieldSanitizer>();
         builder.Services.TryAddSingleton<
-            ServiceMantle.Serilog.IServiceMantleSerilogSinkFactory,
-            ServiceMantle.Serilog.ServiceMantleConsoleSinkFactory>();
-        builder.Services.TryAddSingleton<ServiceMantle.Serilog.ServiceMantleSerilogRuntime>();
+            ServiceMantle.Serilog.ISerilogSinkFactory,
+            ServiceMantle.Serilog.ConsoleSinkFactory>();
+        builder.Services.TryAddSingleton<ServiceMantle.Serilog.SerilogRuntime>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             ILoggerProvider,
-            ServiceMantle.Serilog.ServiceMantleSerilogLoggerProvider>());
+            ServiceMantle.Serilog.RuntimeLoggerProvider>());
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantle.Serilog.ServiceMantleSerilogLifecycle>());
+            ServiceMantle.Serilog.SerilogLifecycle>());
         return builder;
     }
 

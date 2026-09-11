@@ -12,6 +12,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.SettingUpdates;
 using ServiceMantle.Audit;
 using ServiceMantle.Configuration;
 using ServiceMantle.Health;
@@ -50,7 +53,7 @@ internal sealed class SettingUpdateHostFixture : IAsyncDisposable
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
     internal static async Task<SettingUpdateHostFixture> CreateAsync(
-        ServiceMantleSettingUpdateExecutor? executor,
+        SettingUpdateExecutor? executor,
         ServiceHealthSnapshot? health = null,
         IManagementCurrentOperatorResolver? resolver = null,
         string? root = null,
@@ -103,11 +106,11 @@ internal sealed class SettingUpdateHostFixture : IAsyncDisposable
 
         return new SettingUpdateHostFixture(
             application,
-            root ?? ServiceMantleManagementApiDefaults.DefaultRootPath);
+            root ?? ManagementApiDefaults.DefaultRootPath);
     }
 
     internal static async Task<SettingUpdateHostFixture> StartAsync(
-        ServiceMantleSettingUpdateExecutor executor,
+        SettingUpdateExecutor executor,
         ServiceHealthSnapshot? health = null,
         IManagementCurrentOperatorResolver? resolver = null,
         string? root = null,
@@ -159,7 +162,7 @@ internal sealed class SettingUpdateHostFixture : IAsyncDisposable
         Protect(new ClaimsPrincipal(new ClaimsIdentity("ServiceMantle.Test")), null);
 
     internal static string CorruptedCookie() =>
-        ServiceMantleManagementSessionDefaults.CookieName + "=not-a-protected-ticket";
+        ManagementSessionDefaults.CookieName + "=not-a-protected-ticket";
 
     internal Task<HttpResponseMessage> SendAsync(
         string body,
@@ -244,7 +247,7 @@ internal sealed class SettingUpdateHostFixture : IAsyncDisposable
 
     private string Protect(ClaimsPrincipal principal, TimeSpan? age)
     {
-        var scheme = ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+        var scheme = ManagementSessionDefaults.AuthenticationScheme;
         var options = Application.Services
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(scheme);
@@ -257,7 +260,7 @@ internal sealed class SettingUpdateHostFixture : IAsyncDisposable
                 ExpiresUtc = issued + TimeSpan.FromMinutes(5)
             },
             scheme);
-        return ServiceMantleManagementSessionDefaults.CookieName + "="
+        return ManagementSessionDefaults.CookieName + "="
             + options.TicketDataFormat.Protect(ticket);
     }
 

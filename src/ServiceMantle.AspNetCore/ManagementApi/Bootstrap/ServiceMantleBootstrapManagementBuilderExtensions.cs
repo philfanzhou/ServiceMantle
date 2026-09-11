@@ -2,7 +2,8 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.AspNetCore;
-using ServiceMantle.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
+using ServiceMantle.AspNetCore.ManagementApi.Status;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -42,12 +43,12 @@ public static class ServiceMantleBootstrapManagementBuilderExtensions
         // The registry unions every registration with the built-in denied names, so this adds one
         // name without touching the built-in list or another registration's.
         builder.AddSensitiveHeaders(options =>
-            options.DeniedHeaderNames = [ServiceMantleBootstrapMapping.CredentialHeaderName]);
-        builder.Services.TryAddSingleton<ServiceMantleBootstrapRestartLatch>();
-        builder.Services.TryAddSingleton<ServiceMantleBootstrapManagementRegistration>();
+            options.DeniedHeaderNames = [BootstrapMapping.CredentialHeaderName]);
+        builder.Services.TryAddSingleton<BootstrapRestartLatch>();
+        builder.Services.TryAddSingleton<BootstrapManagementRegistration>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleBootstrapManagementStartupValidator>());
+            BootstrapManagementStartupValidator>());
         return builder;
     }
 }

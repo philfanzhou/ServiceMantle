@@ -13,6 +13,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi;
 using ServiceMantle.Audit;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
@@ -110,7 +112,7 @@ internal sealed class ManagementApiHostFixture : IAsyncDisposable
             mantle.AddServiceMantlePhaseGate(options =>
             {
                 options.ManagementPathPrefix =
-                    explicitGateRoot ?? root ?? ServiceMantleManagementApiDefaults.DefaultRootPath;
+                    explicitGateRoot ?? root ?? ManagementApiDefaults.DefaultRootPath;
                 if (explicitGateTimeout is not null) options.SnapshotTimeout = explicitGateTimeout.Value;
             });
         }
@@ -199,7 +201,7 @@ internal sealed class ManagementApiHostFixture : IAsyncDisposable
         Protect(new ClaimsPrincipal(new ClaimsIdentity("ServiceMantle.Test")), null);
 
     internal static string CorruptedCookie() =>
-        ServiceMantleManagementSessionDefaults.CookieName + "=not-a-protected-ticket";
+        ManagementSessionDefaults.CookieName + "=not-a-protected-ticket";
 
     internal Task<HttpResponseMessage> SendAsync(
         string path,
@@ -295,7 +297,7 @@ internal sealed class ManagementApiHostFixture : IAsyncDisposable
 
     private string Protect(ClaimsPrincipal principal, TimeSpan? age)
     {
-        var scheme = ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+        var scheme = ManagementSessionDefaults.AuthenticationScheme;
         var options = Application.Services
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(scheme);
@@ -308,7 +310,7 @@ internal sealed class ManagementApiHostFixture : IAsyncDisposable
                 ExpiresUtc = issued + TimeSpan.FromMinutes(5),
             },
             scheme);
-        return ServiceMantleManagementSessionDefaults.CookieName + "=" +
+        return ManagementSessionDefaults.CookieName + "=" +
             options.TicketDataFormat.Protect(ticket);
     }
 
@@ -339,9 +341,9 @@ internal sealed class ManagementApiHostFixture : IAsyncDisposable
         group.MapMethods("/ok", ReadAndWriteMethods, () => recorder.Run(Results.Ok(new { status = "ok" })));
         group.MapMethods("/no-content", ReadAndWriteMethods, () => recorder.Run(Results.NoContent()));
         group.MapMethods("/invalid", ReadAndWriteMethods,
-            () => recorder.Run(ServiceMantleManagementApiResults.InvalidRequest()));
+            () => recorder.Run(ManagementApiResults.InvalidRequest()));
         group.MapMethods("/conflict", ReadAndWriteMethods,
-            () => recorder.Run(ServiceMantleManagementApiResults.Conflict()));
+            () => recorder.Run(ManagementApiResults.Conflict()));
         group.MapMethods("/exception", ReadAndWriteMethods, IResult () => recorder.Run<IResult>(() => throw Failure()));
         group.MapMethods("/internal-cancel", ReadAndWriteMethods, IResult () => recorder.Run<IResult>(
             () => throw new OperationCanceledException(Secret, new CancellationTokenSource().Token)));
@@ -350,7 +352,7 @@ internal sealed class ManagementApiHostFixture : IAsyncDisposable
             recorder.Count();
             await context.Response.WriteAsync("already-started", context.RequestAborted);
             await context.Response.Body.FlushAsync(context.RequestAborted);
-            return ServiceMantleManagementApiResults.InvalidRequest();
+            return ManagementApiResults.InvalidRequest();
         });
         group.MapGet("/hold", async (HttpContext context) =>
         {

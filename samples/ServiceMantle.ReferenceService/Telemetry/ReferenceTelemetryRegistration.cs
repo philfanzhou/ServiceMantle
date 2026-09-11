@@ -14,7 +14,7 @@ public sealed class ReferenceTelemetryRegistration;
 /// <para>
 /// This is the whole of the sample's telemetry. It adds the ServiceMantle-owned ASP.NET Core,
 /// <see cref="HttpClient"/>, and .NET runtime instrumentation and nothing else: no OTLP exporter, no
-/// Prometheus endpoint, no <c>ServiceMantleMetrics</c>, no health endpoint, and no service or
+/// Prometheus endpoint, no <c>ServiceMetrics</c>, no health endpoint, and no service or
 /// installation phase metric. It does not fabricate a phase, and it creates no remote export target.
 /// </para>
 /// <para>

@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.SettingQueries;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -42,8 +43,8 @@ public static class ServiceMantleSettingQueryEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
 
         var services = endpoints.ServiceProvider;
-        var state = services.GetService<ServiceMantleManagementApiState>() ??
-            throw ServiceMantleSettingQueryMapping.Failure();
+        var state = services.GetService<ManagementApiState>() ??
+            throw SettingQueryMapping.Failure();
         string root;
         try
         {
@@ -53,17 +54,17 @@ public static class ServiceMantleSettingQueryEndpointRouteBuilderExtensions
         {
             // The baseline owns the root's own diagnostics; these endpoints never repeat a
             // configured value of their own.
-            throw ServiceMantleSettingQueryMapping.Failure();
+            throw SettingQueryMapping.Failure();
         }
 
-        if (!ServiceMantleSettingQueryMapping.HasQueryService(services))
+        if (!SettingQueryMapping.HasQueryService(services))
         {
-            throw ServiceMantleSettingQueryMapping.MissingQueryService();
+            throw SettingQueryMapping.MissingQueryService();
         }
 
-        ServiceMantleSettingQueryMapping.RecordMap(services);
-        Map(endpoints, root, ServiceMantleSettingQueryMapping.DefinitionsPath, ServiceMantleSettingQueryHandlers.Definitions);
-        Map(endpoints, root, ServiceMantleSettingQueryMapping.CurrentValuesPath, ServiceMantleSettingQueryHandlers.CurrentValuesAsync);
+        SettingQueryMapping.RecordMap(services);
+        Map(endpoints, root, SettingQueryMapping.DefinitionsPath, SettingQueryHandlers.Definitions);
+        Map(endpoints, root, SettingQueryMapping.CurrentValuesPath, SettingQueryHandlers.CurrentValuesAsync);
         return endpoints;
     }
 
@@ -75,6 +76,6 @@ public static class ServiceMantleSettingQueryEndpointRouteBuilderExtensions
     {
         var expectedPath = root + path;
         endpoints.MapGet(path, handler)
-            .Finally(builder => ServiceMantleSettingQueryMapping.Validate(builder, expectedPath));
+            .Finally(builder => SettingQueryMapping.Validate(builder, expectedPath));
     }
 }

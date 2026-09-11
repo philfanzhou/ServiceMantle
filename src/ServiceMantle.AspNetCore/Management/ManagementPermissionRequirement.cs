@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
+using ServiceMantle.Management;
 
-namespace ServiceMantle.Management;
+namespace ServiceMantle.AspNetCore.Management;
 
 /// <summary>
 /// Requires a legitimate current management operator holding one specific permission.

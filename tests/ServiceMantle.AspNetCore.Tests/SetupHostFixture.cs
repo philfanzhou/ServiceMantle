@@ -7,9 +7,11 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.AspNetCore.ManagementApi.Setup;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
-using ServiceMantle.Management;
 using Xunit;
 
 namespace ServiceMantle.AspNetCore.Tests;
@@ -45,7 +47,7 @@ internal sealed class SetupHostFixture : IAsyncDisposable
 
     internal string Root { get; }
 
-    internal string SetupPath => Root + ServiceMantleManagementEntryDefaults.SetupPath;
+    internal string SetupPath => Root + ManagementEntryDefaults.SetupPath;
 
     internal WebApplication Application =>
         application ?? throw new InvalidOperationException("The host was disposed.");
@@ -57,7 +59,7 @@ internal sealed class SetupHostFixture : IAsyncDisposable
 
     internal static async Task<SetupHostFixture> CreateAsync(
         InstallationStatus? installed = InstallationStatus.PendingSetup,
-        ServiceMantleSetupCompletionResult? completion = null,
+        SetupCompletionResult? completion = null,
         ServiceStartupPhase phase = ServiceStartupPhase.PendingSetup,
         ServiceMigrationReadinessState migrationStatus = ServiceMigrationReadinessState.Succeeded,
         ServiceDatabaseReadinessState databaseStatus = ServiceDatabaseReadinessState.Reachable,
@@ -67,9 +69,9 @@ internal sealed class SetupHostFixture : IAsyncDisposable
         int mapCount = 1,
         int setupPermitLimit = 60)
     {
-        var resolvedRoot = root ?? ServiceMantleManagementApiDefaults.DefaultRootPath;
+        var resolvedRoot = root ?? ManagementApiDefaults.DefaultRootPath;
         var store = new RecordingInstallationStore(installed);
-        var executor = new RecordingExecutor(completion ?? ServiceMantleSetupCompletionResult.Committed());
+        var executor = new RecordingExecutor(completion ?? SetupCompletionResult.Committed());
         var builder = WebApplication.CreateSlimBuilder(
             new WebApplicationOptions { EnvironmentName = "Production" });
         builder.WebHost.UseTestServer();
@@ -115,7 +117,7 @@ internal sealed class SetupHostFixture : IAsyncDisposable
 
     internal static async Task<SetupHostFixture> StartAsync(
         InstallationStatus? installed = InstallationStatus.PendingSetup,
-        ServiceMantleSetupCompletionResult? completion = null,
+        SetupCompletionResult? completion = null,
         ServiceStartupPhase phase = ServiceStartupPhase.PendingSetup,
         ServiceMigrationReadinessState migrationStatus = ServiceMigrationReadinessState.Succeeded,
         ServiceDatabaseReadinessState databaseStatus = ServiceDatabaseReadinessState.Reachable,
@@ -164,12 +166,12 @@ internal sealed class SetupHostFixture : IAsyncDisposable
         CancellationTokenSource? abort = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, path ?? SetupPath);
-        foreach (var value in unsafeHeader ?? [ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderValue])
+        foreach (var value in unsafeHeader ?? [ManagementEntryDefaults.UnsafeRequestHeaderValue])
         {
             if (value is not null)
             {
                 request.Headers.TryAddWithoutValidation(
-                    ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderName,
+                    ManagementEntryDefaults.UnsafeRequestHeaderName,
                     value);
             }
         }
@@ -256,7 +258,7 @@ internal sealed class SetupHostFixture : IAsyncDisposable
     }
 
     /// <summary>Records the codes it received and answers one fixed completion result.</summary>
-    internal sealed class RecordingExecutor(ServiceMantleSetupCompletionResult result)
+    internal sealed class RecordingExecutor(SetupCompletionResult result)
     {
         private int calls;
 
@@ -273,15 +275,15 @@ internal sealed class SetupHostFixture : IAsyncDisposable
         internal TaskCompletionSource Entered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        internal ServiceMantleSetupCompletionResult? Result { get; set; } = result;
+        internal SetupCompletionResult? Result { get; set; } = result;
 
         /// <summary>Selects a result from the 1-based call number, overriding <see cref="Result"/>.</summary>
-        internal Func<int, ServiceMantleSetupCompletionResult?>? Selector { get; set; }
+        internal Func<int, SetupCompletionResult?>? Selector { get; set; }
 
         /// <summary>The number of concurrent calls that must arrive before <see cref="Entered"/> completes.</summary>
         internal int ExpectedCalls { get; set; } = 1;
 
-        internal async ValueTask<ServiceMantleSetupCompletionResult> Execute(
+        internal async ValueTask<SetupCompletionResult> Execute(
             Microsoft.AspNetCore.Http.HttpContext httpContext,
             SetupCode setupCode,
             CancellationToken cancellationToken)

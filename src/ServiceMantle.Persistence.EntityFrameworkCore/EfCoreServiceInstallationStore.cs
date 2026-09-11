@@ -8,7 +8,7 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 /// EF Core-based implementation for shared service installation state.
 /// </summary>
 public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstallationStore
-    where TDbContext : DbContext, IServiceMantleDbContext
+    where TDbContext : DbContext, IServiceDbContext
 {
     private readonly TDbContext dbContext;
     private readonly TimeProvider timeProvider;
@@ -16,7 +16,7 @@ public sealed class EfCoreServiceInstallationStore<TDbContext> : IServiceInstall
     /// <summary>
     /// Initializes a new installation store.
     /// </summary>
-    /// <param name="dbContext">The business DbContext implementing <see cref="IServiceMantleDbContext"/>.</param>
+    /// <param name="dbContext">The business DbContext implementing <see cref="IServiceDbContext"/>.</param>
     /// <param name="timeProvider">Optional time provider for deterministic operations.</param>
     public EfCoreServiceInstallationStore(TDbContext dbContext, TimeProvider? timeProvider = null)
     {

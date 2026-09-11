@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.AspNetCore.Http;
+using ServiceMantle.AspNetCore.PhaseGate;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -22,10 +23,10 @@ public static class ServiceMantlePhaseGateApplicationBuilderExtensions
     public static WebApplication UseServiceMantlePhaseGate(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var state = app.Services.GetService<ServiceMantlePhaseGateState>() ?? throw ServiceMantlePhaseGateState.Failure();
-        ServiceMantlePipelineComposition.RecordUse(app);
+        var state = app.Services.GetService<PhaseGateState>() ?? throw PhaseGateState.Failure();
+        PipelineComposition.RecordUse(app);
         state.RecordUse(app);
-        app.UseMiddleware<ServiceMantlePhaseGateMiddleware>();
+        app.UseMiddleware<PhaseGateMiddleware>();
         return app;
     }
 
@@ -33,20 +34,20 @@ public static class ServiceMantlePhaseGateApplicationBuilderExtensions
     public static RouteGroupBuilder MapServiceMantleManagementGroup(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        var state = endpoints.ServiceProvider.GetService<ServiceMantlePhaseGateState>() ?? throw ServiceMantlePhaseGateState.Failure();
+        var state = endpoints.ServiceProvider.GetService<PhaseGateState>() ?? throw PhaseGateState.Failure();
         return endpoints.MapGroup(state.GetConfiguration().Prefix);
     }
 
     /// <summary>Classifies an endpoint or subgroup within the fixed management surface.</summary>
     /// <remarks>Bootstrap, setup and status routes must use their matching fixed path branches.</remarks>
-    public static TBuilder WithServiceMantleManagementSurface<TBuilder>(this TBuilder builder, ServiceMantleManagementSurface surface)
+    public static TBuilder WithServiceMantleManagementSurface<TBuilder>(this TBuilder builder, ManagementSurface surface)
         where TBuilder : IEndpointConventionBuilder
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.Add(endpoint =>
         {
-            if (!endpoint.Metadata.OfType<ServiceMantleManagementSurfaceMetadata>().Any(marker => marker.Surface == surface))
-                endpoint.Metadata.Add(new ServiceMantleManagementSurfaceMetadata(surface));
+            if (!endpoint.Metadata.OfType<ManagementSurfaceMetadata>().Any(marker => marker.Surface == surface))
+                endpoint.Metadata.Add(new ManagementSurfaceMetadata(surface));
         });
         return builder;
     }

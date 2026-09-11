@@ -28,10 +28,10 @@ var app = builder.Build();
 app.UseServiceMantlePipeline();
 
 app.MapServiceMantleManagementEntry(
-    ServiceMantleManagementEntryKind.InstallationStatus,
+    ManagementEntryKind.InstallationStatus,
     ReadInstallationStatus);
 app.MapServiceMantleManagementEntry(
-    ServiceMantleManagementEntryKind.SessionLogin,
+    ManagementEntryKind.SessionLogin,
     SignIn);
 ```
 

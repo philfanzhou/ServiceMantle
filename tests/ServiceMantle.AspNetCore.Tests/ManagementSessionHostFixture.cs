@@ -12,6 +12,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
 using ServiceMantle.Audit;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
@@ -51,11 +54,11 @@ internal sealed class ManagementSessionHostFixture : IAsyncDisposable
 
     internal string Root { get; }
 
-    internal string LoginPath => Root + ServiceMantleManagementEntryDefaults.SessionLoginPath;
+    internal string LoginPath => Root + ManagementEntryDefaults.SessionLoginPath;
 
-    internal string SessionPath => Root + ServiceMantleManagementEntryDefaults.SessionPath;
+    internal string SessionPath => Root + ManagementEntryDefaults.SessionPath;
 
-    internal string LogoutPath => Root + ServiceMantleManagementEntryDefaults.SessionLogoutPath;
+    internal string LogoutPath => Root + ManagementEntryDefaults.SessionLogoutPath;
 
     internal WebApplication Application =>
         application ?? throw new InvalidOperationException("The host was disposed.");
@@ -78,7 +81,7 @@ internal sealed class ManagementSessionHostFixture : IAsyncDisposable
         string? keyRingDirectory = null,
         bool mapProtectedGroup = false)
     {
-        var resolvedRoot = root ?? ServiceMantleManagementApiDefaults.DefaultRootPath;
+        var resolvedRoot = root ?? ManagementApiDefaults.DefaultRootPath;
         var adapter = new RecordingLoginAdapter();
         var builder = WebApplication.CreateSlimBuilder(
             new WebApplicationOptions { EnvironmentName = "Production" });
@@ -274,13 +277,13 @@ internal sealed class ManagementSessionHostFixture : IAsyncDisposable
     {
         var request = new HttpRequestMessage(method, path);
         var values = unsafeHeader ??
-            [ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderValue];
+            [ManagementEntryDefaults.UnsafeRequestHeaderValue];
         foreach (var value in values)
         {
             if (value is not null)
             {
                 request.Headers.TryAddWithoutValidation(
-                    ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderName,
+                    ManagementEntryDefaults.UnsafeRequestHeaderName,
                     value);
             }
         }
@@ -295,7 +298,7 @@ internal sealed class ManagementSessionHostFixture : IAsyncDisposable
 
     private string Protect(ClaimsPrincipal principal, TimeSpan? age)
     {
-        var scheme = ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+        var scheme = ManagementSessionDefaults.AuthenticationScheme;
         var options = Application.Services
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(scheme);
@@ -308,7 +311,7 @@ internal sealed class ManagementSessionHostFixture : IAsyncDisposable
                 ExpiresUtc = issued + TimeSpan.FromMinutes(30),
             },
             scheme);
-        return ServiceMantleManagementSessionDefaults.CookieName + "=" +
+        return ManagementSessionDefaults.CookieName + "=" +
             options.TicketDataFormat.Protect(ticket);
     }
 

@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.AspNetCore.ManagementApi.Session;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -79,35 +79,35 @@ public static class ServiceMantleManagementSessionEndpointRouteBuilderExtensions
     /// </exception>
     public static IEndpointRouteBuilder MapServiceMantleManagementSession(
         this IEndpointRouteBuilder endpoints,
-        ServiceMantleManagementLoginAdapter? loginAdapter,
-        Action<ServiceMantleManagementSessionOptions>? configure = null)
+        ManagementLoginAdapter? loginAdapter,
+        Action<ManagementSessionOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         if (loginAdapter is null)
         {
-            throw ServiceMantleManagementSessionMapping.MissingAdapter();
+            throw ManagementSessionMapping.MissingAdapter();
         }
 
-        var options = new ServiceMantleManagementSessionOptions();
+        var options = new ManagementSessionOptions();
         configure?.Invoke(options);
         var loginTimeout = options.LoginTimeout;
-        if (loginTimeout < ServiceMantleManagementSessionOptions.MinimumLoginTimeout ||
-            loginTimeout > ServiceMantleManagementSessionOptions.MaximumLoginTimeout)
+        if (loginTimeout < ManagementSessionOptions.MinimumLoginTimeout ||
+            loginTimeout > ManagementSessionOptions.MaximumLoginTimeout)
         {
-            throw ServiceMantleManagementSessionMapping.InvalidLoginTimeout();
+            throw ManagementSessionMapping.InvalidLoginTimeout();
         }
 
-        ServiceMantleManagementSessionMapping.RecordMap(endpoints.ServiceProvider);
+        ManagementSessionMapping.RecordMap(endpoints.ServiceProvider);
         endpoints.MapServiceMantleManagementEntry(
-            ServiceMantleManagementEntryKind.SessionLogin,
+            ManagementEntryKind.SessionLogin,
             (HttpContext context) =>
-                ServiceMantleManagementSessionHandlers.LoginAsync(context, loginAdapter, loginTimeout));
+                ManagementSessionHandlers.LoginAsync(context, loginAdapter, loginTimeout));
         endpoints.MapServiceMantleManagementEntry(
-            ServiceMantleManagementEntryKind.CurrentSession,
-            (HttpContext context) => ServiceMantleManagementSessionHandlers.CurrentAsync(context));
+            ManagementEntryKind.CurrentSession,
+            (HttpContext context) => ManagementSessionHandlers.CurrentAsync(context));
         endpoints.MapServiceMantleManagementEntry(
-            ServiceMantleManagementEntryKind.SessionLogout,
-            (HttpContext context) => ServiceMantleManagementSessionHandlers.LogoutAsync(context));
+            ManagementEntryKind.SessionLogout,
+            (HttpContext context) => ManagementSessionHandlers.LogoutAsync(context));
         return endpoints;
     }
 }

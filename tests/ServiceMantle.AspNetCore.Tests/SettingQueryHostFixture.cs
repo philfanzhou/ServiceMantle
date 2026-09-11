@@ -12,6 +12,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi;
 using ServiceMantle.Audit;
 using ServiceMantle.Configuration;
 using ServiceMantle.Health;
@@ -139,7 +141,7 @@ internal sealed class SettingQueryHostFixture : IAsyncDisposable
 
         return new SettingQueryHostFixture(
             application,
-            root ?? ServiceMantleManagementApiDefaults.DefaultRootPath,
+            root ?? ManagementApiDefaults.DefaultRootPath,
             healthSource);
     }
 
@@ -202,7 +204,7 @@ internal sealed class SettingQueryHostFixture : IAsyncDisposable
         Protect(new ClaimsPrincipal(new ClaimsIdentity("ServiceMantle.Test")), null);
 
     internal static string CorruptedCookie() =>
-        ServiceMantleManagementSessionDefaults.CookieName + "=not-a-protected-ticket";
+        ManagementSessionDefaults.CookieName + "=not-a-protected-ticket";
 
     internal string AdminCookie() => Cookie("admin", ManagementPermission.Admin);
 
@@ -304,7 +306,7 @@ internal sealed class SettingQueryHostFixture : IAsyncDisposable
 
     private string Protect(ClaimsPrincipal principal, TimeSpan? age)
     {
-        var scheme = ServiceMantleManagementSessionDefaults.AuthenticationScheme;
+        var scheme = ManagementSessionDefaults.AuthenticationScheme;
         var options = Application.Services
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(scheme);
@@ -317,7 +319,7 @@ internal sealed class SettingQueryHostFixture : IAsyncDisposable
                 ExpiresUtc = issued + TimeSpan.FromMinutes(5),
             },
             scheme);
-        return ServiceMantleManagementSessionDefaults.CookieName + "=" +
+        return ManagementSessionDefaults.CookieName + "=" +
             options.TicketDataFormat.Protect(ticket);
     }
 

@@ -17,7 +17,7 @@ and `service.instance.id` that `AddServiceMantle` and `ServiceLogContext` alread
 
 ## What is not wired, and is not implied
 
-No OTLP exporter, no Prometheus endpoint or authorization, no `ServiceMantleMetrics`, no health
+No OTLP exporter, no Prometheus endpoint or authorization, no `ServiceMetrics`, no health
 endpoint, no health source, no Consul, and no fixed service or installation phase metric. The switch
 fabricates no phase, and it does not turn the sample into a service that reports readiness.
 `/metrics`, `/health`, and `/management` return 404 whether the switch is on or off. Those

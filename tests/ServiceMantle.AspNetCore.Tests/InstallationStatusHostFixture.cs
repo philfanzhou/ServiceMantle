@@ -6,10 +6,12 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.AspNetCore.ManagementApi.Status;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
-using ServiceMantle.Management;
 using Xunit;
 
 namespace ServiceMantle.AspNetCore.Tests;
@@ -48,7 +50,7 @@ internal sealed class InstallationStatusHostFixture : IAsyncDisposable
 
     internal string BootstrapFilePath { get; }
 
-    internal string StatusPath => Root + ServiceMantleManagementEntryDefaults.StatusPath;
+    internal string StatusPath => Root + ManagementEntryDefaults.StatusPath;
 
     internal WebApplication Application =>
         application ?? throw new InvalidOperationException("The host was disposed.");
@@ -56,8 +58,8 @@ internal sealed class InstallationStatusHostFixture : IAsyncDisposable
     internal HttpClient Client =>
         client ?? throw new InvalidOperationException("The host was not started.");
 
-    internal ServiceMantleBootstrapRestartLatch Latch =>
-        Application.Services.GetRequiredService<ServiceMantleBootstrapRestartLatch>();
+    internal BootstrapRestartLatch Latch =>
+        Application.Services.GetRequiredService<BootstrapRestartLatch>();
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
@@ -83,13 +85,13 @@ internal sealed class InstallationStatusHostFixture : IAsyncDisposable
         bool entries = true,
         int mapCount = 1,
         string bootstrapFile = "absent",
-        IServiceMantleBootstrapStatusReader? bootstrapReader = null,
+        IBootstrapStatusReader? bootstrapReader = null,
         TimeSpan? snapshotTimeout = null,
         int managementPermitLimit = 120,
         Action<WebApplication, string>? extra = null)
     {
         var directory = new TemporaryDirectory();
-        var resolvedRoot = root ?? ServiceMantleManagementApiDefaults.DefaultRootPath;
+        var resolvedRoot = root ?? ManagementApiDefaults.DefaultRootPath;
         var bootstrapFilePath = Path.Combine(directory.Path, "config", "catalog.bootstrap.json");
         switch (bootstrapFile)
         {
@@ -177,7 +179,7 @@ internal sealed class InstallationStatusHostFixture : IAsyncDisposable
         IServiceHealthSnapshotSource? source = null,
         string? root = null,
         string bootstrapFile = "absent",
-        IServiceMantleBootstrapStatusReader? bootstrapReader = null,
+        IBootstrapStatusReader? bootstrapReader = null,
         TimeSpan? snapshotTimeout = null,
         int managementPermitLimit = 120,
         Action<WebApplication, string>? extra = null)
@@ -300,7 +302,7 @@ internal sealed class InstallationStatusHostFixture : IAsyncDisposable
 
     /// <summary>Counts Bootstrap boundary reads and answers a fixed outcome.</summary>
     internal sealed class CountingBootstrapStatusReader(bool configured)
-        : IServiceMantleBootstrapStatusReader
+        : IBootstrapStatusReader
     {
         private int calls;
 

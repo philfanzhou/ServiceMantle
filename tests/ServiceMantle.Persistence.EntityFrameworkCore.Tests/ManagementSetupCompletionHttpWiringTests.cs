@@ -8,9 +8,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.AspNetCore.ManagementApi.Setup;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
-using ServiceMantle.Management;
 using Xunit;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests;
@@ -276,8 +277,8 @@ public sealed class ManagementSetupCompletionHttpWiringTests
                     "application/json"),
             };
             request.Headers.Add(
-                ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderName,
-                ServiceMantleManagementEntryDefaults.UnsafeRequestHeaderValue);
+                ManagementEntryDefaults.UnsafeRequestHeaderName,
+                ManagementEntryDefaults.UnsafeRequestHeaderValue);
             return client.SendAsync(request, Token);
         }
 
@@ -294,7 +295,7 @@ public sealed class ManagementSetupCompletionHttpWiringTests
         /// The consumer transaction boundary: a fresh scope, a clean DbContext, read-only
         /// validation, orchestration, staged consumption, one save, and a commit.
         /// </summary>
-        private async ValueTask<ServiceMantleSetupCompletionResult> ExecuteAsync(
+        private async ValueTask<SetupCompletionResult> ExecuteAsync(
             HttpContext httpContext,
             SetupCode setupCode,
             FailureMode mode,
@@ -329,8 +330,8 @@ public sealed class ManagementSetupCompletionHttpWiringTests
                 {
                     await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                     return orchestration.ErrorCode == WellKnownServiceSetupErrorCodes.CleanupFailed
-                        ? ServiceMantleSetupCompletionResult.Unavailable()
-                        : ServiceMantleSetupCompletionResult.ValidationFailed();
+                        ? SetupCompletionResult.Unavailable()
+                        : SetupCompletionResult.ValidationFailed();
                 }
 
                 var consumption = await codeStore
@@ -346,16 +347,16 @@ public sealed class ManagementSetupCompletionHttpWiringTests
                 if (mode == FailureMode.CommitFails)
                 {
                     await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                    return ServiceMantleSetupCompletionResult.Unavailable();
+                    return SetupCompletionResult.Unavailable();
                 }
 
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                return ServiceMantleSetupCompletionResult.Committed();
+                return SetupCompletionResult.Committed();
             }
             catch
             {
                 await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-                return ServiceMantleSetupCompletionResult.Unavailable();
+                return SetupCompletionResult.Unavailable();
             }
         }
 
@@ -390,17 +391,17 @@ public sealed class ManagementSetupCompletionHttpWiringTests
             File.Delete(databasePath);
         }
 
-        private static ServiceMantleSetupCompletionResult Map(string? errorCode) => errorCode switch
+        private static SetupCompletionResult Map(string? errorCode) => errorCode switch
         {
             WellKnownSetupCodeErrorCodes.InstallationCompleted or
                 WellKnownSetupCodeErrorCodes.ConcurrencyConflict =>
-                ServiceMantleSetupCompletionResult.Conflict(),
+                SetupCompletionResult.Conflict(),
             WellKnownSetupCodeErrorCodes.Invalid or
                 WellKnownSetupCodeErrorCodes.Expired or
                 WellKnownSetupCodeErrorCodes.NotCreated or
                 WellKnownSetupCodeErrorCodes.SetupCodeRequired =>
-                ServiceMantleSetupCompletionResult.CredentialInvalid(),
-            _ => ServiceMantleSetupCompletionResult.Unavailable(),
+                SetupCompletionResult.CredentialInvalid(),
+            _ => SetupCompletionResult.Unavailable(),
         };
     }
 
@@ -511,7 +512,7 @@ public sealed class ManagementSetupCompletionHttpWiringTests
     }
 
     private sealed class SetupHttpDbContext(DbContextOptions<SetupHttpDbContext> options)
-        : DbContext(options), IServiceMantleDbContext
+        : DbContext(options), IServiceDbContext
     {
         public DbSet<ServiceInstallationEntity> ServiceInstallations => Set<ServiceInstallationEntity>();
 

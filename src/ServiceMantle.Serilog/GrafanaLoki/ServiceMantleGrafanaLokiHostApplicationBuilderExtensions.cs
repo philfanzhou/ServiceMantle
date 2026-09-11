@@ -20,46 +20,46 @@ public static class ServiceMantleGrafanaLokiHostApplicationBuilderExtensions
     /// </remarks>
     public static IHostApplicationBuilder AddServiceMantleGrafanaLoki(
         this IHostApplicationBuilder builder,
-        Action<ServiceMantleGrafanaLokiOptions>? configure = null)
+        Action<GrafanaLokiOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        var options = new ServiceMantleGrafanaLokiOptions();
+        var options = new GrafanaLokiOptions();
         try
         {
             configure?.Invoke(options);
         }
         catch
         {
-            throw ServiceMantleGrafanaLokiConfigurationProvider.Failure(
+            throw GrafanaLokiConfigurationProvider.Failure(
                 "Configure",
                 "loki.configure_failed");
         }
 
-        var registration = new ServiceMantleGrafanaLokiRegistration(options);
+        var registration = new GrafanaLokiRegistration(options);
         var firstRegistration = !builder.Services.Any(descriptor =>
-            descriptor.ServiceType == typeof(ServiceMantleGrafanaLokiRegistration));
+            descriptor.ServiceType == typeof(GrafanaLokiRegistration));
         builder.Services.AddSingleton(registration);
         if (!firstRegistration)
         {
             return builder;
         }
 
-        builder.Services.TryAddSingleton<ServiceMantleGrafanaLokiConfigurationProvider>();
-        builder.Services.TryAddSingleton<ServiceMantleGrafanaLokiDiagnostics>();
-        builder.Services.TryAddSingleton<ServiceMantleGrafanaLokiRuntime>();
+        builder.Services.TryAddSingleton<GrafanaLokiConfigurationProvider>();
+        builder.Services.TryAddSingleton<GrafanaLokiDiagnostics>();
+        builder.Services.TryAddSingleton<GrafanaLokiRuntime>();
         builder.Services.TryAddSingleton<
-            IServiceMantleLokiHttpMessageHandlerFactory,
-            ServiceMantleLokiHttpMessageHandlerFactory>();
+            ILokiHttpMessageHandlerFactory,
+            LokiHttpMessageHandlerFactory>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
-            ServiceMantleGrafanaLokiLifecycle>());
+            GrafanaLokiLifecycle>());
 
         if (options.Enabled)
         {
             builder.Services.Replace(ServiceDescriptor.Singleton<
-                IServiceMantleSerilogSinkFactory,
-                ServiceMantleGrafanaLokiSinkFactory>());
+                ISerilogSinkFactory,
+                GrafanaLokiSinkFactory>());
         }
 
         return builder;

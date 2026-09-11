@@ -19,7 +19,7 @@ public sealed class PackageDependencyBoundaryTests
     [Fact]
     public void Package_can_be_referenced()
     {
-        Assert.Equal("ServiceMantle.Serilog", typeof(ServiceMantleSerilogPackage).Assembly.GetName().Name);
+        Assert.Equal("ServiceMantle.Serilog", typeof(SerilogPackage).Assembly.GetName().Name);
     }
 
     [Fact]
