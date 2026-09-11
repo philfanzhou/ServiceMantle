@@ -1,67 +1,59 @@
-# Health readiness: caller cancellation priority
+# 健康就绪：调用方取消优先级
 
-One readiness read has one output checkpoint per layer. This document states what happens at that
-checkpoint when the caller has already cancelled, and what is deliberately left outside the promise.
+一次就绪读取在每一层有一个输出检查点。本文档说明当调用方已经取消时，在该检查点会发生什么，
+以及哪些内容是刻意留在承诺之外的。
 
-It covers the two public exits of the same health pipeline:
+它覆盖同一健康管道的两个公开出口：
 
-- `ReadinessDecisionSource`, the default `IServiceReadinessDecisionSource`.
-- The readiness endpoints `GET /health/ready` and `GET /health`, over **any** registered decision
-  source.
+- `ReadinessDecisionSource`，默认的 `IServiceReadinessDecisionSource`。
+- 就绪 endpoint `GET /health/ready` 和 `GET /health`，作用于**任何**已注册的决策源。
 
-`GET /health/live` is not part of this: it never resolves a readiness decision source.
+`GET /health/live` 不在此列：它从不解析就绪决策源。
 
-## The rule
+## 规则
 
-If, at the point where this layer would hand back its result, the caller's cancellation has been
-requested, the read ends with an `OperationCanceledException` whose `CancellationToken` is the
-caller's own token. That outranks every other outcome the read had already computed:
+如果在这一层将要交回其结果的那个点上，调用方的取消已被请求，则该读取以一个
+`OperationCanceledException` 结束，其 `CancellationToken` 是调用方自己的 token。这优先于
+该读取已经计算出的所有其他结果：
 
-| The read's own outcome | Caller has cancelled | Result |
+| 读取自身的结果 | 调用方已取消 | 结果 |
 | --- | --- | --- |
-| Snapshot source throws an ordinary exception | yes | `OperationCanceledException`, caller's token |
-| Snapshot source throws `TimeoutException` | yes | `OperationCanceledException`, caller's token |
-| Snapshot source throws somebody else's `OperationCanceledException` | yes | `OperationCanceledException`, caller's token |
-| Snapshot source returns a snapshot, or `null` | yes | `OperationCanceledException`, caller's token |
-| Decision source returns `Ready`, `NotReady`, `Unavailable`, or `null` | yes | request ends with `OperationCanceledException`, request's token - no response is written |
-| Decision source throws anything | yes | request ends with `OperationCanceledException`, request's token |
-| Any of the above | no | the existing finite classification, unchanged |
+| 快照源抛出普通异常 | 是 | `OperationCanceledException`，调用方的 token |
+| 快照源抛出 `TimeoutException` | 是 | `OperationCanceledException`，调用方的 token |
+| 快照源抛出别人的 `OperationCanceledException` | 是 | `OperationCanceledException`，调用方的 token |
+| 快照源返回快照或 `null` | 是 | `OperationCanceledException`，调用方的 token |
+| 决策源返回 `Ready`、`NotReady`、`Unavailable` 或 `null` | 是 | 请求以 `OperationCanceledException` 结束，携带请求的 token——不写入任何响应 |
+| 决策源抛出任何异常 | 是 | 请求以 `OperationCanceledException` 结束，携带请求的 token |
+| 上述任意情况 | 否 | 现有的有限分类，保持不变 |
 
-Without a caller cancellation nothing moves: an ordinary source failure is still
-`health.probe_failed`, an internal budget timeout is still `health.probe_timeout`, a base snapshot
-that is not ready is still projected with its own error code, and a ready snapshot still runs the
-ordered contributors under their shared budget.
+没有调用方取消时，一切不动：普通的源故障仍然是 `health.probe_failed`，内部预算超时仍然是
+`health.probe_timeout`，未就绪的基础快照仍然以其自身错误码投影，就绪快照仍然在共享预算下
+运行有序的贡献者。
 
-The default source keeps its existing cancellation exit: before it releases the linked token source
-it owns, it cancels it, so a cooperative snapshot source is notified on the token it received. That
-is true on the failure exits as well, not only on the completed-snapshot exit.
+默认源保持其现有的取消出口：在释放它拥有的链接 token 源之前，它会取消该源，因此配合的
+快照源会在它收到的 token 上得到通知。这在失败出口上同样成立，而不仅是在完成快照的出口上。
 
-## What is not promised
+## 不承诺的内容
 
-- **The window after the checkpoint.** A cancellation requested between the checkpoint and the
-  caller receiving the result is not caught. The checkpoint is a boundary, not a continuous guard.
-- **Transport timing.** Nothing here bounds the delay between a client's socket FIN/RST and the
-  server's request token being cancelled.
-- **Third-party behaviour.** A source that ignores its token, blocks, or throws from a cancellation
-  callback is not forcibly interrupted, and this layer does not wait for it to finish its own
-  cleanup.
-- **What a `TimeoutException` means.** A source that throws one is classified as a timeout. That is a
-  classification, not proof that the configured budget was actually exhausted.
-- **Diagnostics beyond this path.** The negative assertions cover the errors and responses this path
-  produces, and what the tests capture from it. They say nothing about what a source logs for itself.
+- **检查点之后的窗口。** 在检查点与调用方收到结果之间请求的取消不会被捕获。检查点是一个
+  边界，不是持续的守卫。
+- **传输时序。** 这里没有任何内容约束客户端 socket FIN/RST 与服务器请求 token 被取消之间
+  的延迟。
+- **第三方行为。** 忽略其 token、阻塞，或在取消回调中抛异常的源不会被强制中断，本层也不会
+  等待它完成自己的清理。
+- **`TimeoutException` 的含义。** 抛出它的源被分类为超时。那是一种分类，不是配置的预算确实
+  已被耗尽的证明。
+- **此路径之外的诊断。** 否定性断言覆盖此路径产生的错误和响应，以及测试从中捕获的内容。
+  它们对源为自己记录什么不作任何说明。
 
-## How it is covered
+## 如何被覆盖
 
-`ServiceReadinessCancellationPriorityTests` drives both exits:
+`ServiceReadinessCancellationPriorityTests` 驱动两个出口：
 
-- The **source** exit is driven through the real default decision source, composed through public
-  DI, with a snapshot source that cancels the caller's own token and then finishes in each of the
-  ways above. Uncancelled control cases assert the finite classifications are unchanged, one
-  controlled internal budget timeout asserts the timeout classification survives, and the fixture
-  releases and awaits the probe it blocked.
-- The **endpoint** exit is driven with a replaced decision source over both readiness routes,
-  asserting on the exception the *handler* produced - observed by middleware around the pipeline -
-  because an `HttpClient` cancelling itself would prove nothing about what the endpoint did.
+- **源**出口通过真实的默认决策源驱动，经由公开 DI 组合，配一个先取消调用方自己的 token、
+  然后以上述每种方式结束的快照源。未取消的对照用例断言有限分类保持不变，一个受控的内部预算
+  超时断言超时分类得以保留，fixture 释放并等待它阻塞的探测。
+- **endpoint** 出口用替换后的决策源在两个就绪路由上驱动，对*处理器*产生的异常进行断言——由
+  管道周围的中间件观察到——因为自我取消的 `HttpClient` 无法证明 endpoint 做了什么。
 
-An already-cancelled request resolves no decision source and invokes none; the live route resolves
-none either.
+已取消的请求不解析任何决策源，也不调用任何决策源；live 路由同样不解析任何决策源。
