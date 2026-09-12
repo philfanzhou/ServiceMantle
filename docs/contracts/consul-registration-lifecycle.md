@@ -47,12 +47,60 @@ controller 之前再次检查调用方 token：
 | `ClientCreationFailed` | 以既有的安全异常使启动失败；不重试 | 无后台工作 |
 | 启动之前或期间的调用方取消 | 传播携带原始 token 的 `OperationCanceledException` | 处置在观察到取消之前创建的任何 session |
 
-session 捕获一个活动设置快照及其版本。所有 `consul.*` 定义都绑定到重启。之后更新的活动快照版本
+session 捕获一个活动设置快照及其版本。所有 `discovery.*` 定义都绑定到重启。之后更新的活动快照版本
 不会被监视、重新绑定或调和。endpoint、token、注册、disabled 标志或健康 URL 的变更只有在消费方
 自行重启进程后才生效。生命周期不会再次调用 `CreateClient()`。
 
 注册重试、清理注销和停止使用同一个 session 和注册 ID。生命周期在最终远程操作落定之后，或在协作
 关闭预算耗尽之后，调用一次 `Dispose()`。处置失败会成为一条安全诊断，且不重试。处置不意味着注销。
+
+## 设置键中立化与显式迁移（#436）
+
+Consul adapter 注册的 8 个持久化设置键从 `consul.*` 改为 `discovery.*`。常量成员名、类型名与
+namespace 保持不变，只有键值移动。诊断码（含 `consul.invalid_configuration`）、`X-Consul-Token`
+认证 Header 与 HTTP wire model 本次不变。这是随新版本交付的外部契约变更，不覆盖历史包。
+
+| 旧键 | 新键 |
+| --- | --- |
+| `consul.enabled` | `discovery.enabled` |
+| `consul.endpoint` | `discovery.endpoint` |
+| `consul.token` | `discovery.credential` |
+| `consul.service-name` | `discovery.service-name` |
+| `consul.address` | `discovery.address` |
+| `consul.port` | `discovery.port` |
+| `consul.health-path` | `discovery.health-path` |
+| `consul.health-scheme` | `discovery.health-scheme` |
+
+`discovery.credential` 表示 provider 定义的单一凭据字符串；当前 Consul adapter 仍将它作为 ACL
+token 使用，保留 1–4096 个非空白可打印 ASCII 字符校验，不宣称支持其他 provider 的多字段认证。
+持久化密文以设置键为保护 purpose，因此 `consul.token` 密文必须以旧 purpose 解密、以
+`discovery.credential` 为 purpose 重新加密；密文行不能只改键名。
+
+新版拒绝包含任何旧键的完整快照：loader 返回 `configuration.snapshot_unknown_key`，首次加载不
+激活，包含旧键的“禁用”混合快照也不会静默成功。没有别名、读兼容或自动迁移。已激活快照之后的
+失败刷新保留原快照引用，沿用既有契约。
+
+停机升级步骤：
+
+1. 用原版备份完整设置行及版本，然后停止读取或写入该设置存储的全部消费实例；禁止新旧版本混跑。
+2. 消费方在自有工作单元内检查旧/新键冲突，逐项映射已有行；其他产品键保持。遇到目标键已存在、
+   未知版本/类型或解密失败时终止，不覆盖已有数据。
+3. 凭据密文以旧键 `consul.token` 为 purpose 解密，再以 `discovery.credential` 为 purpose 重新
+   加密；使用既有 `SensitiveValueProtector`、相同 service_id 和正确外部根密钥。不输出明文、根
+   密钥或密文。
+4. 消费方一次性提交完整映射与一致的新设置版本，按自己的审计/事务约束执行；库不自动保存或提交
+   消费方 DbContext。
+5. 启动新版前确认设置中不再存在任何旧键；刷新完整快照成功后才创建 client。
+
+新版管理 API 不是旧行迁移入口：未知旧键使完整加载/更新失败，不能靠新版 POST settings 清除旧键
+后“边运行边迁移”。回滚必须在全部实例停止后恢复成套旧设置/版本备份及旧程序；仅回滚二进制不能
+读取新 purpose 密文。未知提交结果由消费方核查，不提供自动补偿。
+
+README（英文）中的 `ConsulDiscoverySettingMigration.TryConvert` 内存转换示例是经测试的事实源，
+对应 `tests/ServiceMantle.Consul.Tests/ConsulDiscoverySettingMigrationTests.cs`：无凭据、合法凭据、
+目标键冲突、错误根密钥、损坏密文与已取消 token 各有断言，失败与取消均不产出可提交的部分结果。
+示例只做内存转换与输入检查，不证明消费方数据库提交的原子性、持久性或异常恢复；停机、备份、根
+密钥、事务、版本、审计与回滚均由消费方负责。
 
 ## 状态模型
 
