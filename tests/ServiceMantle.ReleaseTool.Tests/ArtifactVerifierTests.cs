@@ -33,10 +33,12 @@ public sealed class ArtifactVerifierTests : IDisposable
         Verify();
     }
 
-    [Fact]
-    public void A_corrupt_zip_is_a_controlled_verification_failure()
+    [Theory]
+    [InlineData("garbage")]
+    [InlineData("central-directory")]
+    public void A_corrupt_zip_is_a_controlled_verification_failure(string corruption)
     {
-        WritePackage([1, 2, 3]);
+        WritePackage(BuildCorruptZip(corruption));
 
         var failure = Assert.Throws<ReleaseToolException>(Verify);
 
@@ -139,6 +141,32 @@ public sealed class ArtifactVerifierTests : IDisposable
 
     private static byte[] BuildPackage(string? commit = Commit) =>
         BuildZip(("ServiceMantle.nuspec", BuildNuspec(commit)));
+
+    /// <summary>
+    /// Produces the corrupt-zip input set. Each shape fails at a different point of the archive
+    /// read - the end-of-central-directory record that <c>ZipFile.OpenRead</c> reads eagerly, and
+    /// the central directory that the entry list reads lazily afterwards - so the assertion covers
+    /// the classification invariant rather than a single branch.
+    /// </summary>
+    private static byte[] BuildCorruptZip(string corruption) => corruption switch
+    {
+        "garbage" => [1, 2, 3],
+        "central-directory" => CorruptCentralDirectory(BuildPackage()),
+        _ => throw new ArgumentOutOfRangeException(nameof(corruption), corruption, "Unknown corruption."),
+    };
+
+    /// <summary>
+    /// Breaks the first central directory header signature and leaves the end-of-central-directory
+    /// record intact, so the archive opens and only the entry list read observes the damage.
+    /// </summary>
+    private static byte[] CorruptCentralDirectory(byte[] zip)
+    {
+        var index = zip.AsSpan().IndexOf<byte>([0x50, 0x4B, 0x01, 0x02]);
+        Assert.True(index >= 0, "The built zip has no central directory header to corrupt.");
+        zip[index + 2] = 0xEE;
+        zip[index + 3] = 0xEE;
+        return zip;
+    }
 
     private static string BuildNuspec(string? commit = Commit, int repositoryCount = 1, int licenseCount = 1)
     {

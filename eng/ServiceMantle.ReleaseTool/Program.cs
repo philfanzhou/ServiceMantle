@@ -648,8 +648,8 @@ internal static class ArtifactVerifier
         string commit)
     {
         var packagePath = Path.Combine(inputPath, $"{package.Id}.{version}.nupkg");
-        using var archive = OpenPackageArchive(packagePath);
-        var nuspecEntries = archive.Entries
+        using var archive = OpenPackageArchive(packagePath, out var entries);
+        var nuspecEntries = entries
             .Where(entry => entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         if (nuspecEntries.Length != 1)
@@ -743,14 +743,26 @@ internal static class ArtifactVerifier
         }
     }
 
-    private static ZipArchive OpenPackageArchive(string packagePath)
+    /// <summary>
+    /// Opens a package archive and reads its entry list under the same classification. A read-mode
+    /// <see cref="ZipArchive"/> reads the end-of-central-directory record when it is constructed but
+    /// only reads the central directory when the entry list is first requested, so both reads have
+    /// to happen here for damage at either point to end as a controlled failure.
+    /// </summary>
+    private static ZipArchive OpenPackageArchive(
+        string packagePath,
+        out IReadOnlyList<ZipArchiveEntry> entries)
     {
+        ZipArchive? archive = null;
         try
         {
-            return ZipFile.OpenRead(packagePath);
+            archive = ZipFile.OpenRead(packagePath);
+            entries = archive.Entries;
+            return archive;
         }
         catch (InvalidDataException)
         {
+            archive?.Dispose();
             throw new ReleaseToolException("A package artifact is not a readable zip archive.");
         }
     }
