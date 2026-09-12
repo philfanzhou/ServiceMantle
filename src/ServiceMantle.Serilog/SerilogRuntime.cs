@@ -26,7 +26,7 @@ internal sealed class SerilogRuntime : IDisposable
             var sink = sinkFactory.Create(configuration, sanitizer);
             var loggerConfiguration = new LoggerConfiguration()
                 .MinimumLevel.Is(configuration.MinimumLevel);
-            if (configuration.EnricherNames.Contains("FromLogContext", StringComparer.Ordinal))
+            if (configuration.IncludeScopes)
             {
                 loggerConfiguration.Enrich.FromLogContext();
             }

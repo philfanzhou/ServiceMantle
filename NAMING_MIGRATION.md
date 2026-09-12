@@ -128,6 +128,19 @@ namespace 跨越两个程序集。
 | `ServiceMantle.Serilog.GrafanaLoki.IServiceMantleLokiAuthorizationHeaderResolver` | `ServiceMantle.Serilog.GrafanaLoki.ILokiAuthorizationHeaderResolver` |
 | `ServiceMantle.Serilog.GrafanaLoki.WellKnownServiceMantleGrafanaLokiErrorCodes` | `ServiceMantle.Serilog.GrafanaLoki.WellKnownGrafanaLokiErrorCodes` |
 
+## 成员级变更
+
+`SerilogOptions` 的两个成员在类型迁移之外改用了 MEL 词汇。成员的属性类型变更同样是源码与二进制破坏性变更，随新版本交付：
+
+| 原成员 | 新成员 |
+| --- | --- |
+| `SerilogOptions.MinimumLevel`（`string`，Serilog 级别名，默认 `"Information"`） | `SerilogOptions.MinimumLevel`（`Microsoft.Extensions.Logging.LogLevel`，默认 `LogLevel.Information`） |
+| `SerilogOptions.EnricherNames`（`IEnumerable<string>`，仅支持 `FromLogContext`） | `SerilogOptions.IncludeScopes`（`bool`，默认 `true`，语义即 MEL scope 传播） |
+| `SerilogDefaults.MinimumLevel`（`const string`） | `SerilogDefaults.MinimumLevel`（`const LogLevel`） |
+| `SerilogDefaults.EnricherNames` | 移除；由 `SerilogDefaults.IncludeScopes`（`const bool`）取代 |
+
+`LogLevel` 到 Serilog 级别的映射固定为：`Trace`→`Verbose`、`Debug`→`Debug`、`Information`→`Information`、`Warning`→`Warning`、`Error`→`Error`、`Critical`→`Fatal`；该映射在两端边界值上不是双射。`LogLevel.None` 与未定义的枚举值不被接受，仍以 `serilog.minimum_level_invalid` 在 Host 启动前失败。默认有效行为不变：默认最低级别仍对应 Information，scope 传播默认启用。原来的 `serilog.enricher_names_invalid` 错误码随 `EnricherNames` 的移除不再发出；其余 `serilog.*` 错误码取值不变。`OutputTemplate` 保持 Serilog 模板语法不变，其 XML 文档已声明它是 sink 实现相关的逃生舱，更换 sink 实现时不保证兼容。
+
 ## 内部类型映射
 
 以下都是程序集内部类型。之所以列出，是因为 `InternalsVisibleTo` 的测试程序集和按名字反射的诊断

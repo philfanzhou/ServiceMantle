@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace ServiceMantle.Serilog;
 
 /// <summary>Configures the bounded ServiceMantle Serilog host and Console pipeline.</summary>
@@ -8,18 +10,21 @@ namespace ServiceMantle.Serilog;
 /// </remarks>
 public sealed class SerilogOptions
 {
-    /// <summary>Gets or sets the minimum Serilog level name.</summary>
-    public string MinimumLevel { get; set; } = SerilogDefaults.MinimumLevel;
+    /// <summary>Gets or sets the minimum level in Microsoft.Extensions.Logging vocabulary.</summary>
+    public LogLevel MinimumLevel { get; set; } = SerilogDefaults.MinimumLevel;
 
-    /// <summary>Gets or sets the Console output template.</summary>
+    /// <summary>
+    /// Gets or sets the Console output template. This is a Serilog template-syntax escape hatch:
+    /// the syntax belongs to the current sink implementation, and its portability is not
+    /// guaranteed when a different sink implementation is installed.
+    /// </summary>
     public string OutputTemplate { get; set; } = SerilogDefaults.OutputTemplate;
 
     /// <summary>
-    /// Gets or sets the deterministic enricher names. The first release supports only
-    /// <c>FromLogContext</c>.
+    /// Gets or sets whether Microsoft.Extensions.Logging scopes are propagated to the Serilog
+    /// log context. Scope propagation is enabled by default.
     /// </summary>
-    public IEnumerable<string> EnricherNames { get; set; } =
-        SerilogDefaults.EnricherNames;
+    public bool IncludeScopes { get; set; } = SerilogDefaults.IncludeScopes;
 
     /// <summary>Gets or sets the maximum time allowed for one-time pipeline flushing.</summary>
     public TimeSpan FlushTimeout { get; set; } = SerilogDefaults.FlushTimeout;
@@ -29,15 +34,14 @@ public sealed class SerilogOptions
 public static class SerilogDefaults
 {
     /// <summary>The default minimum level.</summary>
-    public const string MinimumLevel = "Information";
+    public const LogLevel MinimumLevel = LogLevel.Information;
 
     /// <summary>The default Console output template.</summary>
     public const string OutputTemplate =
         "[{Timestamp:yyyy-MM-ddTHH:mm:ss.fffzzz} {Level:u3}] {Message:lj} {Properties:j}{NewLine}";
 
-    /// <summary>The default immutable enricher set.</summary>
-    public static IReadOnlyList<string> EnricherNames { get; } =
-        Array.AsReadOnly(["FromLogContext"]);
+    /// <summary>The default scope propagation.</summary>
+    public const bool IncludeScopes = true;
 
     /// <summary>The default upper bound for one-time flushing.</summary>
     public static TimeSpan FlushTimeout { get; } = TimeSpan.FromSeconds(2);

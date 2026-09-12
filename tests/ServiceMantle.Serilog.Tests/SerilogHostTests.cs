@@ -55,9 +55,8 @@ public sealed class SerilogHostTests
         var properties = typeof(SerilogOptions).GetProperties();
 
         Assert.Equal(
-            ["EnricherNames", "FlushTimeout", "MinimumLevel", "OutputTemplate"],
+            ["FlushTimeout", "IncludeScopes", "MinimumLevel", "OutputTemplate"],
             properties.Select(property => property.Name).Order(StringComparer.Ordinal));
-        Assert.DoesNotContain(properties, property => property.PropertyType == typeof(bool));
         Assert.DoesNotContain(
             properties,
             property => property.Name.Contains("Sanit", StringComparison.OrdinalIgnoreCase) ||
@@ -66,18 +65,18 @@ public sealed class SerilogHostTests
     }
 
     [Fact]
-    public async Task Normalized_equivalent_duplicate_registration_is_idempotent()
+    public async Task Equivalent_duplicate_registration_is_idempotent()
     {
         var builder = Host.CreateApplicationBuilder();
         builder.AddServiceMantleSerilog(options =>
         {
-            options.MinimumLevel = " information ";
-            options.EnricherNames = ["fromlogcontext", "FromLogContext"];
+            options.MinimumLevel = LogLevel.Information;
+            options.IncludeScopes = true;
         });
         builder.AddServiceMantleSerilog(options =>
         {
-            options.MinimumLevel = "Information";
-            options.EnricherNames = ["FromLogContext"];
+            options.MinimumLevel = LogLevel.Information;
+            options.IncludeScopes = true;
         });
         using var host = builder.Build();
 
@@ -92,8 +91,8 @@ public sealed class SerilogHostTests
     {
         const string untrusted = "untrusted-level-value";
         var builder = Host.CreateApplicationBuilder();
-        builder.AddServiceMantleSerilog(options => options.MinimumLevel = "Information");
-        builder.AddServiceMantleSerilog(options => options.MinimumLevel = "Warning");
+        builder.AddServiceMantleSerilog(options => options.MinimumLevel = LogLevel.Information);
+        builder.AddServiceMantleSerilog(options => options.MinimumLevel = LogLevel.Warning);
         using var host = builder.Build();
 
         var exception = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
@@ -134,7 +133,7 @@ public sealed class SerilogHostTests
         {
             if (field == "level")
             {
-                options.MinimumLevel = invalidValue;
+                options.MinimumLevel = (LogLevel)42;
             }
             else
             {
@@ -150,6 +149,73 @@ public sealed class SerilogHostTests
             field == "level" ? "serilog.minimum_level_invalid" : "serilog.output_template_invalid",
             exception.ErrorCode);
         Assert.DoesNotContain(invalidValue, exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(LogLevel.Trace, LogEventLevel.Verbose)]
+    [InlineData(LogLevel.Debug, LogEventLevel.Debug)]
+    [InlineData(LogLevel.Information, LogEventLevel.Information)]
+    [InlineData(LogLevel.Warning, LogEventLevel.Warning)]
+    [InlineData(LogLevel.Error, LogEventLevel.Error)]
+    [InlineData(LogLevel.Critical, LogEventLevel.Fatal)]
+    public void Every_log_level_maps_onto_the_documented_serilog_level_including_the_boundaries(
+        LogLevel minimumLevel,
+        LogEventLevel expected)
+    {
+        var configuration = SerilogConfiguration.Resolve(
+        [
+            new SerilogRegistration(new SerilogOptions { MinimumLevel = minimumLevel }, false)
+        ]);
+
+        Assert.Equal(expected, configuration.MinimumLevel);
+    }
+
+    [Theory]
+    [InlineData(LogLevel.None)]
+    [InlineData((LogLevel)42)]
+    public async Task LogLevel_none_and_undefined_values_fail_at_startup_with_the_stable_code(
+        LogLevel minimumLevel)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.MinimumLevel = minimumLevel);
+        using var host = builder.Build();
+
+        var exception = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("MinimumLevel", exception.FieldName);
+        Assert.Equal("serilog.minimum_level_invalid", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Trace_level_boundary_still_accepts_verbose_events_and_information_drops_them()
+    {
+        var traceEvents = new CollectingSink();
+        var traceHost = BuildHostWithLevel(LogLevel.Trace, traceEvents);
+        await traceHost.StartAsync(TestContext.Current.CancellationToken);
+        traceHost.Services.GetRequiredService<SerilogRuntime>()
+            .Logger.Write(LogEventLevel.Verbose, "boundary-event");
+        await traceHost.StopAsync(TestContext.Current.CancellationToken);
+        Assert.Contains(traceEvents.Events, boundary =>
+            boundary.Level == LogEventLevel.Verbose);
+
+        var informationEvents = new CollectingSink();
+        var informationHost = BuildHostWithLevel(LogLevel.Information, informationEvents);
+        await informationHost.StartAsync(TestContext.Current.CancellationToken);
+        informationHost.Services.GetRequiredService<SerilogRuntime>()
+            .Logger.Write(LogEventLevel.Verbose, "boundary-event");
+        await informationHost.StopAsync(TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(informationEvents.Events, boundary =>
+            boundary.Level == LogEventLevel.Verbose);
+    }
+
+    private static IHost BuildHostWithLevel(LogLevel minimumLevel, CollectingSink sink)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.MinimumLevel = minimumLevel);
+        builder.Services.Replace(ServiceDescriptor.Singleton<ISerilogSinkFactory>(
+            new SanitizingCollectingSinkFactory(sink)));
+        return builder.Build();
     }
 
     [Fact]

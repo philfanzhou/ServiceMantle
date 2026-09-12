@@ -39,7 +39,7 @@ try
         "metrics-scrape",
         policy => policy.RequireAssertion(_ => true)));
 
-    builder.AddServiceMantleSerilog(options => options.MinimumLevel = "Information");
+    builder.AddServiceMantleSerilog(options => options.MinimumLevel = LogLevel.Information);
     builder.AddServiceMantleGrafanaLoki(options => options.Enabled = false);
 
     ServiceMantleBuilder serviceMantle = builder.Services.AddServiceMantle(
