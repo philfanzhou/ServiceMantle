@@ -23,6 +23,9 @@ public sealed class SensitiveValueProtector
     private static readonly byte[] DerivationSalt =
         "ServiceMantle/SensitiveValueProtector/v1/root"u8.ToArray();
 
+    private static readonly UTF8Encoding StrictUtf8 =
+        new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
     private readonly byte[] derivationInfo;
     private readonly byte[] associatedData;
 
@@ -32,7 +35,9 @@ public sealed class SensitiveValueProtector
     /// <param name="serviceId">The service whose sensitive value is being protected.</param>
     /// <param name="purpose">A non-secret identifier for the value's use.</param>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
-    /// <exception cref="ArgumentException">The purpose is empty or too long.</exception>
+    /// <exception cref="ArgumentException">
+    /// The purpose is empty, too long, or is not well-formed UTF-16 (it contains unpaired surrogates).
+    /// </exception>
     public SensitiveValueProtector(ServiceId serviceId, string purpose)
     {
         ArgumentNullException.ThrowIfNull(serviceId);
@@ -69,6 +74,11 @@ public sealed class SensitiveValueProtector
     /// <param name="rootKey">The external root key loaded from Bootstrap.</param>
     /// <param name="cancellationToken">The cancellation token for the operation.</param>
     /// <returns>A versioned protected-value envelope.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The root key is empty, or the root key or plaintext is not well-formed UTF-16
+    /// (it contains unpaired surrogates). Caller cancellation is observed before this check.
+    /// </exception>
     public string Protect(
         string plaintext,
         string rootKey,
@@ -84,8 +94,8 @@ public sealed class SensitiveValueProtector
 
         try
         {
-            rootKeyBytes = Encoding.UTF8.GetBytes(rootKey);
-            plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
+            rootKeyBytes = GetWellFormedUtf8Bytes(rootKey, nameof(rootKey));
+            plaintextBytes = GetWellFormedUtf8Bytes(plaintext, nameof(plaintext));
             derivedKey = DeriveKey(rootKeyBytes, derivationInfo);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -122,6 +132,11 @@ public sealed class SensitiveValueProtector
     /// <param name="rootKey">The external root key loaded from Bootstrap.</param>
     /// <param name="cancellationToken">The cancellation token for the operation.</param>
     /// <returns>The original sensitive value.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The root key is empty or is not well-formed UTF-16 (it contains unpaired surrogates).
+    /// Caller cancellation is observed before this check.
+    /// </exception>
     /// <exception cref="SensitiveValueProtectionException">
     /// The envelope is invalid, unsupported, or cannot be authenticated in this context.
     /// </exception>
@@ -156,7 +171,7 @@ public sealed class SensitiveValueProtector
 
         try
         {
-            rootKeyBytes = Encoding.UTF8.GetBytes(rootKey);
+            rootKeyBytes = GetWellFormedUtf8Bytes(rootKey, nameof(rootKey));
             derivedKey = DeriveKey(rootKeyBytes, derivationInfo);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -188,7 +203,7 @@ public sealed class SensitiveValueProtector
 
             try
             {
-                return new UTF8Encoding(false, true).GetString(plaintextBytes);
+                return StrictUtf8.GetString(plaintextBytes);
             }
             catch (DecoderFallbackException)
             {
@@ -210,11 +225,31 @@ public sealed class SensitiveValueProtector
     public override string ToString() =>
         $"SensitiveValueProtector(ServiceId={ServiceId.Value}, Purpose={Purpose})";
 
+    /// <summary>
+    /// Encodes caller-supplied text as UTF-8 using a strict encoder that rejects unpaired
+    /// UTF-16 surrogates instead of silently folding them to a replacement character. Silent
+    /// folding would collapse distinct key or purpose contexts onto the same derived material.
+    /// </summary>
+    private static byte[] GetWellFormedUtf8Bytes(string value, string paramName)
+    {
+        ArgumentNullException.ThrowIfNull(value, paramName);
+        try
+        {
+            return StrictUtf8.GetBytes(value);
+        }
+        catch (EncoderFallbackException)
+        {
+            throw new ArgumentException(
+                "The value is not well-formed UTF-16 because it contains unpaired surrogates.",
+                paramName);
+        }
+    }
+
     private static byte[] BuildContext(string kind, string serviceId, string purpose)
     {
         var domain = Encoding.UTF8.GetBytes($"ServiceMantle/SensitiveValueProtector/v1/{kind}");
         var service = Encoding.UTF8.GetBytes(serviceId);
-        var purposeBytes = Encoding.UTF8.GetBytes(purpose);
+        var purposeBytes = GetWellFormedUtf8Bytes(purpose, nameof(purpose));
         var result = new byte[
             sizeof(int) + domain.Length +
             sizeof(int) + service.Length +
