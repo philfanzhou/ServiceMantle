@@ -71,6 +71,7 @@ namespace 跨越两个程序集。
 
 | 原完整类型名 | 新完整类型名 |
 | --- | --- |
+| `Microsoft.Extensions.DependencyInjection.ServiceSettingSnapshotServiceCollectionExtensions` | `Microsoft.Extensions.DependencyInjection.ServiceMantleSettingSnapshotServiceCollectionExtensions` |
 | `ServiceMantle.AspNetCore.Health.ServiceMantleHealthOptions` | `ServiceMantle.AspNetCore.Health.HealthOptions` |
 | `ServiceMantle.AspNetCore.ServiceMantleForwardedHeadersConfigurationException` | `ServiceMantle.AspNetCore.Http.ForwardedHeadersConfigurationException` |
 | `ServiceMantle.AspNetCore.ServiceMantleForwardedHeadersOptions` | `ServiceMantle.AspNetCore.Http.ForwardedHeadersTrustOptions` |
