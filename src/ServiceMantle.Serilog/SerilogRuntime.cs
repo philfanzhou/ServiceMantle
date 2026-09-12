@@ -13,6 +13,7 @@ internal sealed class SerilogRuntime : IDisposable
     private readonly Logger logger;
     private readonly TimeSpan flushTimeout;
     private readonly SerilogConfigurationException? configurationFailure;
+    private readonly bool includeScopes;
     private int flushStarted;
 
     public SerilogRuntime(
@@ -33,16 +34,20 @@ internal sealed class SerilogRuntime : IDisposable
 
             logger = loggerConfiguration.WriteTo.Sink(sink).CreateLogger();
             flushTimeout = configuration.FlushTimeout;
+            includeScopes = configuration.IncludeScopes;
         }
         catch (SerilogConfigurationException exception)
         {
             configurationFailure = exception;
             logger = new LoggerConfiguration().CreateLogger();
             flushTimeout = SerilogDefaults.FlushTimeout;
+            includeScopes = SerilogDefaults.IncludeScopes;
         }
     }
 
     internal global::Serilog.ILogger Logger => logger;
+
+    internal bool IncludeScopes => includeScopes;
 
     internal int FlushInvocationCount => Volatile.Read(ref flushStarted);
 
@@ -89,17 +94,27 @@ internal sealed class SerilogRuntime : IDisposable
 internal sealed class RuntimeLoggerProvider : ILoggerProvider, ISupportExternalScope
 {
     private readonly SerilogLoggerProvider provider;
+    private readonly bool includeScopes;
 
     public RuntimeLoggerProvider(SerilogRuntime runtime)
     {
         provider = new SerilogLoggerProvider(runtime.Logger, dispose: false);
+        includeScopes = runtime.IncludeScopes;
     }
 
     public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) =>
         provider.CreateLogger(categoryName);
 
-    public void SetScopeProvider(IExternalScopeProvider scopeProvider) =>
-        provider.SetScopeProvider(scopeProvider);
+    public void SetScopeProvider(IExternalScopeProvider scopeProvider)
+    {
+        // For providers implementing ISupportExternalScope, LoggerFactory routes all BeginScope
+        // state through this shared provider instead of calling the inner logger's BeginScope,
+        // so withholding it here is what actually disables MEL scope propagation.
+        if (includeScopes)
+        {
+            provider.SetScopeProvider(scopeProvider);
+        }
+    }
 
     public void Dispose() => provider.Dispose();
 }

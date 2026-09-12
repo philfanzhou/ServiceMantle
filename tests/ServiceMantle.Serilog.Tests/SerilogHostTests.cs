@@ -358,6 +358,59 @@ public sealed class SerilogHostTests
         await host.StopAsync(TestContext.Current.CancellationToken);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IncludeScopes_controls_whether_MEL_scope_state_reaches_the_sink(
+        bool includeScopes)
+    {
+        var events = new CollectingSink();
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.IncludeScopes = includeScopes);
+        builder.Services.Replace(ServiceDescriptor.Singleton<ISerilogSinkFactory>(
+            new SanitizingCollectingSinkFactory(events)));
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        events.Events.Clear();
+
+        var logger = host.Services.GetRequiredService<ILogger<SerilogHostTests>>();
+        using (logger.BeginScope(new Dictionary<string, object?>
+        {
+            ["IncludeScopesProbe"] = "scope-value"
+        }))
+        {
+            logger.LogInformation("scope-probe-event");
+        }
+
+        var logEvent = Assert.Single(events.Events);
+        Assert.Equal(includeScopes, logEvent.Properties.ContainsKey("IncludeScopesProbe"));
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Structured_properties_remain_sanitized_when_scope_propagation_is_disabled()
+    {
+        const string secret = "scope-disabled-structured-secret";
+        var events = new CollectingSink();
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.IncludeScopes = false);
+        builder.Services.Replace(ServiceDescriptor.Singleton<ISerilogSinkFactory>(
+            new SanitizingCollectingSinkFactory(events)));
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        events.Events.Clear();
+
+        host.Services.GetRequiredService<ILogger<SerilogHostTests>>()
+            .LogInformation("Handled login for {UserName} with {Password}", "alice", secret);
+
+        var logEvent = Assert.Single(events.Events);
+        Assert.Equal("alice", Assert.IsType<ScalarValue>(logEvent.Properties["UserName"]).Value);
+        Assert.Equal(
+            StructuredLogSanitizer.RedactedValue,
+            Assert.IsType<ScalarValue>(logEvent.Properties["Password"]).Value);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
     private static IHost BuildHost(TrackingSink sink, TimeSpan? timeout = null)
     {
         var builder = Host.CreateApplicationBuilder();
