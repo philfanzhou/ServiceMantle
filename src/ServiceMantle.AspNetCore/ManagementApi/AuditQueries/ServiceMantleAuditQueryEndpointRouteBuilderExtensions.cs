@@ -23,6 +23,9 @@ public static class ServiceMantleAuditQueryEndpointRouteBuilderExtensions
     /// consuming application's unit of work. Inputs and output fields are closed and bounded; audit
     /// query validation failures answer the fixed management <c>400</c>, while stored-data and
     /// internal query failures answer a fixed <c>503</c> without exposing internal classifications.
+    /// Once an aborted request has been observed while a query dependency settles, the endpoint
+    /// answers the caller's cancellation instead of any fixed response or the dependency's own
+    /// cancellation.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// The management API v1 capability or audit query service is not registered, the endpoint is

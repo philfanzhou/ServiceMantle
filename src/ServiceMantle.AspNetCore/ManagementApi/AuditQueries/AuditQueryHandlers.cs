@@ -25,18 +25,29 @@ internal static class AuditQueryHandlers
             context.RequestAborted.ThrowIfCancellationRequested();
             return AuditQueryResult.Success(result);
         }
+        catch (Exception) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // A query dependency - including the scoped service resolution - that settles after
+            // the request aborted, whether it answered, failed validation, or cancelled
+            // internally, does not get to deliver its ordinary response mapping, and its own
+            // exception is never propagated either.
+            throw CancelledByCaller(context.RequestAborted);
+        }
         catch (ManagementAuditException exception) when (
             exception.ErrorCode.StartsWith("audit.query_", StringComparison.Ordinal))
         {
             return ManagementApiResults.InvalidRequest();
-        }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
-        {
-            throw;
         }
         catch (Exception)
         {
             return AuditQueryResult.Unavailable;
         }
     }
+
+    /// <summary>
+    /// Builds the caller's own cancellation result. It carries the request token and nothing
+    /// else: no dependency exception, no audit error code, and no consumer text.
+    /// </summary>
+    private static OperationCanceledException CancelledByCaller(CancellationToken cancellationToken) =>
+        new("The management audit query request was cancelled by the caller.", cancellationToken);
 }
