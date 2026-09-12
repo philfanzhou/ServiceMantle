@@ -8,6 +8,10 @@ namespace ServiceMantle.Configuration;
 /// The caller owns authentication, transaction creation and final commit. This service never
 /// publishes a runtime snapshot or retries a conflict. Product keys and validation codes must be
 /// non-secret; unknown input keys and raw exception details are not returned.
+/// A result returned by Apply is not delivered when the caller is already cancelled at the
+/// completion checkpoint: the update then ends in a safe cancellation instead. Cancellation does
+/// not roll back changes that Apply already staged inside the caller's transaction; the caller
+/// owns that rollback.
 /// </remarks>
 public sealed class ServiceSettingUpdateService(
     ServiceId serviceId,
@@ -145,8 +149,10 @@ public sealed class ServiceSettingUpdateService(
             var update = new ServiceSettingStoreUpdate(command.ExpectedVersion, persisted,
                 command.Operator.OperatorId ?? "system", restartRequired);
             cancellationToken.ThrowIfCancellationRequested();
-            return await transaction.ApplyAsync(serviceId, update, audits.AsReadOnly(), cancellationToken)
+            var result = await transaction.ApplyAsync(serviceId, update, audits.AsReadOnly(), cancellationToken)
                 .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
