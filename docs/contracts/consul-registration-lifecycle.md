@@ -98,7 +98,9 @@ token 使用，保留 1–4096 个非空白可打印 ASCII 字符校验，不宣
 
 README（英文）中的 `ConsulDiscoverySettingMigration.TryConvert` 内存转换示例是经测试的事实源，
 对应 `tests/ServiceMantle.Consul.Tests/ConsulDiscoverySettingMigrationTests.cs`：无凭据、合法凭据、
-目标键冲突、错误根密钥、损坏密文与已取消 token 各有断言，失败与取消均不产出可提交的部分结果。
+旧键大小写/空白变体（按 store 的 `Trim()` + 小写规范化识别，含凭据变体的重新保护与规范化后的
+目标键冲突）、非凭据行类型不匹配或未定义（按目录检查这 8 个迁移键）、错误根密钥、损坏密文与已
+取消 token（含空输入集合）各有断言，失败与取消均不产出可提交的部分结果。
 示例只做内存转换与输入检查，不证明消费方数据库提交的原子性、持久性或异常恢复；停机、备份、根
 密钥、事务、版本、审计与回滚均由消费方负责。
 

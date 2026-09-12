@@ -2283,7 +2283,12 @@ library provides no automatic compensation.
 The following in-memory conversion example is the tested source of truth
 (`tests/ServiceMantle.Consul.Tests/ConsulDiscoverySettingMigrationTests.cs`); database reads and the
 final commit stay with the consumer. It returns rows only on success - failures and caller
-cancellation never produce a partial committable result.
+cancellation never produce a partial committable result. Rows are resolved with the store's key
+normalization (trimmed, lowercased invariantly), so case or whitespace variants of a retired key
+still map to their neutral key, still re-protect the credential, and still conflict with an existing
+neutral target key. Rows that resolve to one of the eight catalog keys are type-checked against the
+registry: an undefined or mismatched value type aborts with `migration.type_mismatch`. Cancellation
+is observed even for an empty row set.
 
 ```csharp
 internal static class ConsulDiscoverySettingMigration
@@ -2306,6 +2311,7 @@ internal static class ConsulDiscoverySettingMigration
     internal static bool TryConvert(
         ServiceId serviceId,
         string rootKey,
+        ServiceSettingDefinitionRegistry registry,
         long targetVersion,
         IReadOnlyList<PersistedServiceSettingValue> persistedRows,
         out IReadOnlyList<PersistedServiceSettingValue>? migratedRows,
@@ -2313,6 +2319,7 @@ internal static class ConsulDiscoverySettingMigration
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(serviceId);
+        ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(persistedRows);
         if (targetVersion < 1)
         {
@@ -2327,6 +2334,9 @@ internal static class ConsulDiscoverySettingMigration
         long? version = null;
         var migrated = new List<PersistedServiceSettingValue>(persistedRows.Count);
         var targetKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // An empty row set is a valid default-disabled store, so cancellation is observed even when
+        // no row is ever visited.
+        cancellationToken.ThrowIfCancellationRequested();
         foreach (var row in persistedRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -2338,14 +2348,31 @@ internal static class ConsulDiscoverySettingMigration
 
             version = row.Version;
 
-            var targetKey = LegacyKeyMap.TryGetValue(row.Key, out var mapped) ? mapped : row.Key;
-            if (!targetKeys.Add(targetKey))
+            // The store and the loader resolve keys by trimming and lowercasing them; retired-key
+            // variants must map, re-protect, and collide with their neutral target key the same way.
+            var normalizedKey = NormalizeKey(row.Key);
+            var targetKey = LegacyKeyMap.TryGetValue(normalizedKey, out var mapped) ? mapped : row.Key;
+            if (!targetKeys.Add(NormalizeKey(targetKey)))
             {
                 errorCode = "migration.target_key_conflict";
                 return false;
             }
 
-            if (row.Key != LegacyCredentialKey)
+            if (registry.TryGetDefinition(targetKey, out var definition))
+            {
+                // Mirror the loader's materialization rules: a row whose declared type is undefined
+                // or differs from the catalog aborts here instead of reaching the consumer as a
+                // committed row the new version cannot load.
+                if (!Enum.IsDefined(row.ValueType) || row.ValueType != definition!.ValueType)
+                {
+                    errorCode = normalizedKey == LegacyCredentialKey
+                        ? "migration.credential_type_invalid"
+                        : "migration.type_mismatch";
+                    return false;
+                }
+            }
+
+            if (normalizedKey != LegacyCredentialKey)
             {
                 migrated.Add(new PersistedServiceSettingValue(targetKey, targetVersion, row.ValueType, row.Value));
                 continue;
@@ -2379,9 +2406,12 @@ internal static class ConsulDiscoverySettingMigration
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         migratedRows = migrated.AsReadOnly();
         return true;
     }
+
+    private static string NormalizeKey(string key) => key.Trim().ToLowerInvariant();
 }
 ```
 
