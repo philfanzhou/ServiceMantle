@@ -71,6 +71,14 @@ internal sealed class PhaseGateMiddleware(RequestDelegate next, PhaseGateState s
         {
             throw CancelledByCaller(linked, cancellationToken);
         }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            snapshot = BudgetExpired(linked);
+        }
+        catch (TimeoutException)
+        {
+            snapshot = BudgetExpired(linked);
+        }
         catch
         {
             snapshot = null;
@@ -82,6 +90,25 @@ internal sealed class PhaseGateMiddleware(RequestDelegate next, PhaseGateState s
             return;
         }
         await next(context).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Owns the budget expiry exit: the snapshot source is notified on the token it received before
+    /// the linked source is released, whatever timer reached the deadline first.
+    /// </summary>
+    private static ServiceHealthSnapshot? BudgetExpired(CancellationTokenSource linked)
+    {
+        try
+        {
+            linked.Cancel();
+        }
+        catch (AggregateException)
+        {
+            // Cancellation callbacks that throw are outside the cooperative cancellation contract
+            // and must not replace the closed rejection.
+        }
+
+        return null;
     }
 
     /// <summary>
