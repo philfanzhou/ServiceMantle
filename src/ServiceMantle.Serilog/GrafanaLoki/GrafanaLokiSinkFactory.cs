@@ -4,6 +4,7 @@ using global::Serilog.Sinks.Grafana.Loki;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog.Core;
 using Serilog.Events;
+using ServiceMantle.Logging;
 using ServiceMantle.Serilog;
 
 namespace ServiceMantle.Serilog.GrafanaLoki;
@@ -11,7 +12,7 @@ namespace ServiceMantle.Serilog.GrafanaLoki;
 internal sealed class GrafanaLokiSinkFactory(
     IServiceProvider serviceProvider,
     GrafanaLokiConfigurationProvider configurationProvider,
-    GrafanaLokiDiagnostics diagnostics,
+    RemoteLogDeliveryDiagnostics diagnostics,
     GrafanaLokiRuntime runtime) : ISerilogSinkFactory
 {
     public ILogEventSink Create(
@@ -103,11 +104,11 @@ internal sealed class GrafanaLokiSinkFactory(
 
     private string ResolveAuthorizationHeader(string resolverName)
     {
-        ILokiAuthorizationHeaderResolver[] resolvers;
+        IRemoteLogAuthorizationResolver[] resolvers;
         try
         {
             resolvers = serviceProvider
-                .GetServices<ILokiAuthorizationHeaderResolver>()
+                .GetServices<IRemoteLogAuthorizationResolver>()
                 .Take(2)
                 .ToArray();
         }
@@ -151,7 +152,7 @@ internal sealed class GrafanaLokiSinkFactory(
 }
 
 internal sealed class GrafanaLokiFailureListener(
-    GrafanaLokiDiagnostics diagnostics) : ILoggingFailureListener
+    RemoteLogDeliveryDiagnostics diagnostics) : ILoggingFailureListener
 {
     public void OnLoggingFailed(
         object sender,
@@ -197,7 +198,7 @@ internal sealed class GrafanaLokiRemoteSink(
     Logger remoteLogger,
     HttpClient httpClient,
     TimeSpan drainTimeout,
-    GrafanaLokiDiagnostics diagnostics,
+    RemoteLogDeliveryDiagnostics diagnostics,
     GrafanaLokiDeliveryCounter deliveryCounter) : ILogEventSink, IDisposable
 {
     private readonly object disposeSync = new();
@@ -258,11 +259,11 @@ internal sealed class GrafanaLokiRemoteSink(
 
         if (first == cancellationDelay)
         {
-            diagnostics.RecordDrainCancellation();
+            diagnostics.RecordDrainCancellation(WellKnownGrafanaLokiErrorCodes.ShutdownDrainCancelled);
         }
         else
         {
-            diagnostics.RecordDrainTimeout();
+            diagnostics.RecordDrainTimeout(WellKnownGrafanaLokiErrorCodes.ShutdownDrainTimedOut);
         }
 
         httpClient.CancelPendingRequests();

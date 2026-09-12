@@ -1,7 +1,7 @@
-namespace ServiceMantle.Serilog.GrafanaLoki;
+namespace ServiceMantle.Logging;
 
-/// <summary>Resolves a runtime authorization header value from a non-secret name.</summary>
-public interface ILokiAuthorizationHeaderResolver
+/// <summary>Resolves a runtime authorization header value for a remote log endpoint from a non-secret name.</summary>
+public interface IRemoteLogAuthorizationResolver
 {
     /// <summary>Resolves the complete Authorization header value for the supplied name.</summary>
     /// <param name="name">The non-secret resolver entry name.</param>

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using ServiceMantle.Logging;
 using ServiceMantle.Serilog;
 using ServiceMantle.Serilog.GrafanaLoki;
 
@@ -46,7 +47,7 @@ public static class ServiceMantleGrafanaLokiHostApplicationBuilderExtensions
         }
 
         builder.Services.TryAddSingleton<GrafanaLokiConfigurationProvider>();
-        builder.Services.TryAddSingleton<GrafanaLokiDiagnostics>();
+        builder.Services.TryAddSingleton<RemoteLogDeliveryDiagnostics>();
         builder.Services.TryAddSingleton<GrafanaLokiRuntime>();
         builder.Services.TryAddSingleton<
             ILokiHttpMessageHandlerFactory,
