@@ -1,106 +1,91 @@
-# Bootstrap file failure classification contract
+# Bootstrap 文件故障分类契约
 
-`BootstrapException` reports that an instance-local Bootstrap file could not be read or safely
-written. `BootstrapException.FailureKind` is the stable, machine-readable reason for that failure,
-so a consumer never has to parse the English message, the file path, or a platform exception to tell
-one cause from another.
+`BootstrapException` 报告实例本地的 Bootstrap 文件无法被读取或安全写入。
+`BootstrapException.FailureKind` 是该故障的稳定、机器可读原因，因此消费方永远不必解析英文
+消息、文件路径或平台异常来区分一种原因和另一种原因。
 
-This is a core `ServiceMantle.Bootstrap` capability with no ASP.NET Core, EF Core, or
-database-provider dependency. It defines a classification only. It does not define an HTTP endpoint,
-a status code mapping, a credential protocol, a cross-process lock, or a retry policy; the Bootstrap
-`POST`/`PUT` endpoints that project this classification belong to their own task.
+这是一个核心 `ServiceMantle.Bootstrap` 能力，不依赖 ASP.NET Core、EF Core 或任何数据库
+provider。它只定义一种分类。它不定义 HTTP endpoint、状态码映射、凭据协议、跨进程锁或重试
+策略；投影此分类的 Bootstrap `POST`/`PUT` endpoint 属于它们自己的任务。
 
-## The closed set
+## 封闭集合
 
-`BootstrapFileFailureKind` is closed. No other value is produced, and a consumer that receives an
-unrecognized value must treat it as `Unavailable`.
+`BootstrapFileFailureKind` 是封闭的。不会产生任何其他值，收到无法识别值的消费方必须将其
+视为 `Unavailable`。
 
-| Value | Numeric | Meaning |
+| 值 | 数值 | 含义 |
 | --- | --- | --- |
-| `Unavailable` | 0 | The file could not be read or written, and the store did not establish that the target already exists or is missing. This is the default for every unclassified failure. |
-| `TargetAlreadyExists` | 1 | The operation required a target that does not yet exist, and the store observed an existing target. |
-| `TargetMissing` | 2 | The operation required an existing target, and the store proved the target is absent by opening it and being told it is not there. |
+| `Unavailable` | 0 | 文件无法读取或写入，且存储未能确定目标已存在还是缺失。这是每个未分类故障的默认值。 |
+| `TargetAlreadyExists` | 1 | 操作要求目标尚不存在，而存储观察到目标已存在。 |
+| `TargetMissing` | 2 | 操作要求目标已存在，而存储通过打开目标并被告知它不在那里，证明了目标缺失。 |
 
-The classification is formed inside `BootstrapFileStore`, at the point where the store decides why an
-operation failed. `BootstrapConfigurationManager` passes the exception through unchanged, so the
-`Create`/`Update` use cases report the same value as the corresponding store call.
+分类在 `BootstrapFileStore` 内部形成，位于存储决定某个操作为何失败的那个点上。
+`BootstrapConfigurationManager` 原样透传异常，因此 `Create`/`Update` 用例报告与相应存储调用
+相同的值。
 
-## What each operation reports
+## 每个操作报告什么
 
-| Operation and condition | `FailureKind` |
+| 操作与条件 | `FailureKind` |
 | --- | --- |
-| `TryLoad` on a missing file | No exception; returns `null` |
-| `Load` on a file the open reported as not found | `TargetMissing` |
-| `Replace` on a file the probe open reported as not found | `TargetMissing` |
-| `Create` on a target the operating system refused to link over | `TargetAlreadyExists` |
-| Empty file, damaged JSON, unsupported format version, invalid or missing fields | `Unavailable` |
-| A file that belongs to a different service | `Unavailable` |
-| A write requested for a different service | `Unavailable` |
-| A denied read or write | `Unavailable` |
-| Any other I/O error | `Unavailable` |
+| `TryLoad` 作用于缺失的文件 | 无异常；返回 `null` |
+| `Load` 作用于打开时报告未找到的文件 | `TargetMissing` |
+| `Replace` 作用于探测打开报告未找到的文件 | `TargetMissing` |
+| `Create` 作用于操作系统拒绝在其上建立链接的目标 | `TargetAlreadyExists` |
+| 空文件、损坏的 JSON、不支持的格式版本、无效或缺失字段 | `Unavailable` |
+| 属于另一个服务的文件 | `Unavailable` |
+| 为另一个服务请求的写入 | `Unavailable` |
+| 被拒绝的读取或写入 | `Unavailable` |
+| 任何其他 I/O 错误 | `Unavailable` |
 
-## Evidence, not inference
+## 证据，而非推断
 
-Only a failure the store proved is classified beyond `Unavailable`.
+只有存储证明了的故障才会被分类到 `Unavailable` 之外。
 
-A negative `File.Exists` result also means "the path could not be inspected" - on a directory the
-caller cannot traverse it returns `false` for a file that is present. It is therefore never the
-evidence for `TargetMissing`. `Load` reaches that value because the read open itself reported the
-file or its directory as not found, and `Replace` opens the target for the same reason. A denied or
-failed probe leaves the cause unestablished and is reported as `Unavailable`.
+`File.Exists` 的否定结果同样意味着“该路径无法被检查”——对于调用方无法遍历的目录，即使文件
+存在它也返回 `false`。因此它绝不是 `TargetMissing` 的证据。`Load` 到达该值是因为读取打开
+本身就报告了文件或其目录未找到，而 `Replace` 出于同样的原因打开目标。被拒绝或失败的探测
+使原因未被确定，报告为 `Unavailable`。
 
-`Create` never overwrites an existing file, and one operating system step decides the single winner
-among concurrent creators - not a preceding existence check. The store writes the complete file to a
-temporary path beside the target and then links that file to the target, which the operating system
-refuses rather than replaces when the target is already taken. A creator whose link was refused
-because the target is taken reports `TargetAlreadyExists`, on the operating system's own answer
-rather than on a separate observation; a creator whose link was refused for any other reason,
-including a file system that does not support links, reports `Unavailable`.
+`Create` 绝不覆盖现有文件，并发创建者中的唯一赢家由一个操作系统步骤决定——而非先行的存在性
+检查。存储将完整文件写到目标旁边的临时路径，然后将该文件链接到目标；当目标已被占用时，操作
+系统会拒绝而不是替换。链接因目标被占用而被拒绝的创建者报告 `TargetAlreadyExists`，依据是
+操作系统自己的回答，而非单独的观察；链接因任何其他原因（包括文件系统不支持链接）被拒绝的
+创建者报告 `Unavailable`。
 
-Nothing is placed at the target before the content is complete. A create that fails, and a process
-that dies at any point during one, therefore leaves the target exactly as it found it: a failed
-create is indistinguishable from one that never ran, and a retry is never blocked by the remains of
-an earlier attempt. What can be left behind is the temporary file beside the target, which no
-operation reads and which never affects what a later call reports.
+在内容完成之前，任何东西都不会被放置到目标处。因此，失败的创建，以及在创建期间任意时刻
+死掉的进程，都会让目标保持它被发现时的样子：一次失败的创建与一次从未运行的创建不可区分，
+重试绝不会被更早尝试的残留物阻塞。可能被留下的是目标旁边的临时文件，任何操作都不读取它，
+它也绝不影响之后调用所报告的内容。
 
-## Reader sharing during a replace
+## 替换期间的读取共享
 
-Every read of the target - `TryLoad`, `Load`, and the manager status read that goes through them -
-opens the file through one place, read-only, sharing read and delete. Sharing delete is what an
-atomic replace of the target needs while such a handle is open: on Windows, `ReplaceFileW` opens the
-replaced target with `DELETE` access, and a handle that does not share delete makes that open fail
-and turns the replace into `Unavailable`. On Unix the rename does not consult open handles at all,
-so a Unix run cannot show the difference.
+对目标的每次读取——`TryLoad`、`Load` 以及经由它们的 manager 状态读取——都通过同一个地方
+以只读方式打开文件，共享读取和删除。共享删除正是当此类句柄打开时，对目标进行原子替换所需要
+的：在 Windows 上，`ReplaceFileW` 以 `DELETE` 访问权限打开被替换的目标，而不共享删除的句柄
+会使该打开失败，并把替换变成 `Unavailable`。在 Unix 上，重命名根本不会查询已打开的句柄，
+因此 Unix 运行无法显示这种差异。
 
-The flag widens only what *other* handles are allowed to ask for. The store's read handle still has
-read access and nothing more, and a reader keeps observing the file it opened; a replacement becomes
-visible at the next open, never inside an open stream.
+该标志只放宽*其他*句柄被允许请求的内容。存储的读取句柄仍然只有读取访问权限，别无其他；
+读取方持续观察它打开的那个文件；替换在下一次打开时才可见，绝不会在已打开的流内部可见。
 
-The guarantee is limited to the store's own read-only handle, on a normal local file system with
-usable permissions and no outside interference: such a handle does not, by missing delete sharing,
-stop a replace. Nothing here promises that a replace succeeds against an outside exclusive handle,
-a changed ACL, anti-virus software, a failing disk, or an arbitrary file system, and it adds no
-cross-process update exclusion, power-loss durability, hard I/O time bound, or snapshot consistency
-under external modification.
+该保证仅限于存储自身的只读句柄，在权限可用且无外部干扰的正常本地文件系统上：这样的句柄不会
+因为缺失删除共享而阻止替换。这里没有任何内容承诺替换能对抗外部独占句柄、被更改的 ACL、
+杀毒软件、故障磁盘或任意文件系统成功，它也不添加跨进程更新互斥、断电持久性、硬性 I/O 时间
+上限，或外部修改下的快照一致性。
 
-## Limits
+## 限制
 
-- The classification does not subdivide every platform I/O error, and it is never widened by
-  matching error strings.
-- The state a check observed is not held: an external process may create, replace, or delete the
-  target immediately afterwards.
-- A reader never observes a partially written target from a create. The target becomes a second
-  name for a file that is already complete, so a concurrent reader sees the target absent or sees
-  the finished file.
-- `Create` requires a directory whose file system supports links, which the temporary file and the
-  target always share because they sit side by side. A file system that refuses links cannot
-  publish a new bootstrap file at all, and reports `Unavailable` rather than falling back to a
-  publish that could overwrite a concurrent creator.
-- A create that fails may leave its temporary file beside the target, named
-  `.{file name}.{random}.tmp`. It is never read, never consulted for any classification, and never
-  reused; removing it is housekeeping, not recovery. `Replace` consumes its temporary file instead.
-- This contract adds no single-winner guarantee for concurrent updates, no cross-process update
-  exclusion, no power-loss durability, and no hard time bound.
-- `Message`, `FilePath`, and `InnerException` remain local diagnostic detail. They carry no new
-  redaction guarantee and must not be serialized to an HTTP response; a consumer projects the
-  classification only.
+- 该分类不会细分每种平台 I/O 错误，也绝不会通过匹配错误字符串来放宽。
+- 检查观察到的状态不会被持有：外部进程可能在紧接着之后创建、替换或删除目标。
+- 读取方绝不会从创建中观察到部分写入的目标。目标成为一个已完成文件的第二个名字，因此并发
+  读取方要么看到目标不存在，要么看到完成的文件。
+- `Create` 要求目录所在的文件系统支持链接，临时文件和目标始终共享这一点，因为它们并排放置。
+  拒绝链接的文件系统根本无法发布新的 bootstrap 文件，它报告 `Unavailable`，而不是回退到一种
+  可能覆盖并发创建者的发布方式。
+- 失败的创建可能把它的临时文件留在目标旁边，命名为 `.{file name}.{random}.tmp`。它绝不被
+  读取，绝不被用于任何分类，也绝不被复用；移除它属于内务清理，而非恢复。`Replace` 则相反，
+  会消费自己的临时文件。
+- 本契约不添加并发更新的单一赢家保证、不添加跨进程更新互斥、不添加断电持久性，也不添加硬性
+  时间上限。
+- `Message`、`FilePath` 和 `InnerException` 仍然是本地诊断细节。它们不携带任何新的脱敏
+  保证，不得被序列化到 HTTP 响应；消费方只投影分类。

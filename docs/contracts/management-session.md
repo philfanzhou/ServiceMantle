@@ -1,13 +1,13 @@
-# Management session contract (#97)
+# 管理会话契约（#97）
 
-Status: implemented. This document describes the management identity login, current-session, and
-logout entries. It refines the Login, Logout, and Current session rows of
-[management-entry-authorization.md](management-entry-authorization.md) and adds nothing to them.
+状态：已实现。本文档描述管理身份登录、当前会话与登出三个入口。它细化了
+[management-entry-authorization.md](management-entry-authorization.md) 中 Login、Logout 与
+Current session 三行，并且不向其中添加任何内容。
 
-## Mapping
+## 映射
 
-`MapServiceMantleManagementSession` maps all three entries at once and requires an explicit consumer
-login adapter:
+`MapServiceMantleManagementSession` 一次性映射全部三个入口，并要求一个显式的消费方登录
+adapter：
 
 ```csharp
 app.MapServiceMantleManagementSession(
@@ -24,87 +24,73 @@ app.MapServiceMantleManagementSession(
     options => options.LoginTimeout = TimeSpan.FromSeconds(5));
 ```
 
-The three entries are direct children of the configured versioned root, mapped beside the protected
-group returned by `MapServiceMantleManagementApiV1` and never inside it, so the anonymous login
-exception exists only in the shared entry baseline and the Admin group keeps rejecting anonymous
-access. They are mapped at most once. A missing adapter, a login timeout outside 100 milliseconds
-through 30 seconds, a missing capability, and a second mapping all fail before the host starts.
+这三个入口是所配置版本化根路径的直接子级，映射在 `MapServiceMantleManagementApiV1` 返回的受
+保护组旁边、绝不位于其内部，因此匿名登录例外只存在于共享入口基线中，Admin 组仍然拒绝匿名访
+问。它们最多只能映射一次。缺少 adapter、登录超时不在 100 毫秒到 30 秒之间、缺少必需能力，以
+及第二次映射，都会在宿主启动之前失败。
 
-## Admission and security baseline
+## 准入与安全基线
 
-The shared entry baseline admits all three only in `Completed + Succeeded + Reachable`. Login is
-`AllowAnonymous` under the Setup rate-limit policy with the client partition; the current-session
-read and the logout require **any** legitimate ServiceMantle management identity cookie - not Admin -
-under the management operator-partitioned policy. Both `POST` entries require exactly one
-`X-ServiceMantle-Request: 1` header. All three carry the mandatory security response headers and the
-correlation contract. A Phase Gate rejection, a rate-limit rejection, a missing or unacceptable
-cookie, invalid claims, and a missing unsafe-request header all execute no adapter, no sign-in, and
-no sign-out.
+共享入口基线仅在 `Completed + Succeeded + Reachable` 状态下放行全部三个入口。Login 在 Setup
+速率限制策略下使用客户端分区并标记 `AllowAnonymous`；当前会话读取与登出在按管理操作员分区的
+策略下要求**任意**合法的 ServiceMantle 管理身份 cookie——不要求 Admin。两个 `POST` 入口都要
+求恰好一个 `X-ServiceMantle-Request: 1` Header。三个入口都携带强制的安全响应 Header 与关联契
+约。Phase Gate 拒绝、速率限制拒绝、cookie 缺失或不可接受、claim 无效，以及缺少不安全请求
+Header，都不会执行 adapter、不会登录、也不会登出。
 
-## Login
+## 登录
 
-ServiceMantle admits at most 64 KiB of raw request body and rejects a query string or a
-`Content-Encoding` header before the adapter runs. The envelope is counted while the body is read,
-not taken from a header: a declared length over the limit is the fixed management `400` before a
-byte is read, a body with no declared length at all - a chunked upload, for example - meets exactly
-the same limit, and a declared length below the limit excuses nothing that follows it. At most one
-byte past the envelope is ever read, that byte is what proves the overrun, and the admitted copy is
-held in memory and never written to disk.
+ServiceMantle 在 adapter 运行之前最多准入 64 KiB 的原始请求体，并拒绝查询字符串或
+`Content-Encoding` Header。信封大小是在读取请求体的过程中累计的，而不是取自某个 Header：声明
+长度超过限制会在读取任何字节之前得到固定的管理 `400`；完全没有声明长度的请求体——例如分块上
+传——受到完全相同的限制约束；而声明长度低于限制并不能豁免其后的任何内容。超出信封的字节最多
+只会被读取一个，正是这个字节证明了超限，被准入的副本保存在内存中，绝不写入磁盘。
 
-The host's own request size limit is left exactly as the host set it. ServiceMantle never widens it,
-and never narrows it either: a server that counts a chunked request counts its framing too, so
-lowering that limit to the envelope would reject a body inside the envelope. A host whose limit is
-already smaller still rejects first, and its `413` is reported as the same fixed management `400`.
-The media type and the schema inside the envelope stay the adapter's obligation.
+宿主自身的请求大小限制保持宿主设置的原样。ServiceMantle 绝不放宽它，也绝不收紧它：对分块请
+求计数的服务器会把分块帧本身也计入，因此把该限制降到信封大小反而会拒绝一个位于信封之内的请
+求体。限制本身就更小的宿主仍然会先行拒绝，其 `413` 会被报告为同一个固定的管理 `400`。信封内
+的媒体类型与 schema 仍是 adapter 的义务。
 
-The adapter is called with the whole admitted body already in memory. `Request.Body` and a
-`Request.BodyReader` obtained inside that call both read the complete original bytes, whether the
-adapter reads synchronously, asynchronously, through `CopyToAsync`, or through a `StreamReader`;
-they are alternatives rather than a sequence, and interleaving them within one call has no defined
-result. An adapter that reads only a prefix, or nothing at all, cannot widen the envelope, because
-the decision was already made. When the call ends - returning, throwing, or cancelled - the
-request's own body stream and body pipe feature are put back, and only the copy this endpoint
-created is released.
+调用 adapter 时，整个被准入的请求体已经在内存中。在该调用内获得的 `Request.Body` 与
+`Request.BodyReader` 都能读取到完整的原始字节，无论 adapter 是同步读取、异步读取、通过
+`CopyToAsync` 还是通过 `StreamReader`；它们是可选方式而非先后顺序，在同一次调用内交错使用它
+们没有定义的结果。只读取前缀或完全不读取的 adapter 无法放宽信封，因为该决定早已作出。当调用
+结束时——返回、抛出异常或被取消——请求自身的 body 流与 body pipe 特性会被放回，只有本
+endpoint 创建的副本会被释放。
 
-The adapter receives the `HttpContext` and a token that is the request token additionally bounded by
-the login budget (10 seconds by default). It places credentials only into its own trusted scoped
-accessor and calls `ManagementIdentityProviderInvoker`; the public core provider SPI still receives
-no credential object. The adapter must not retain or return raw credentials, write to the response,
-or sign anything in.
+adapter 接收 `HttpContext` 和一个 token，该 token 是请求 token 再叠加登录预算（默认 10 秒）
+的边界。它只把凭据放入自己信任的 scoped 访问器并调用 `ManagementIdentityProviderInvoker`；
+公开的核心 provider SPI 仍然不接收任何凭据对象。adapter 不得保留或返回原始凭据、不得写响应、
+不得执行任何登录。
 
-| Login outcome | HTTP result | Cookie effect |
+| 登录结果 | HTTP 结果 | Cookie 效果 |
 | --- | --- | --- |
-| Authenticated and `SignInAsync` completed | `204`, empty body | One fixed-scheme cookie is issued |
-| Unauthenticated | `401 {"errorCode":"management.session.unauthenticated"}` | None |
-| Failed, null, undefined status, authenticated without an identity | `503 {"errorCode":"management.session.unavailable"}` | None |
-| Raw body over the envelope, or the host's own `413` | `400 management.request.invalid` | None; no adapter runs |
-| Body read failure, adapter exception, internal cancellation, internal timeout | Same `503` | None |
-| Response already started before the sign-in | Same `503` | None; no sign-in is attempted |
-| `SignInAsync` failed | Same `503` | Whatever it appended or replaced is rolled back |
-| Caller cancellation | The original `RequestAborted` token propagates | None |
+| 已认证且 `SignInAsync` 完成 | `204`，空 body | 签发一个固定 scheme 的 cookie |
+| 未认证 | `401 {"errorCode":"management.session.unauthenticated"}` | 无 |
+| 失败、null、未定义状态、已认证但无身份 | `503 {"errorCode":"management.session.unavailable"}` | 无 |
+| 原始请求体超出信封，或宿主自身的 `413` | `400 management.request.invalid` | 无；不运行 adapter |
+| 请求体读取失败、adapter 异常、内部取消、内部超时 | 同样的 `503` | 无 |
+| 登录前响应已开始 | 同样的 `503` | 无；不尝试登录 |
+| `SignInAsync` 失败 | 同样的 `503` | 它追加或替换的内容会被回滚 |
+| 调用方取消 | 原始的 `RequestAborted` token 向上传播 | 无 |
 
-### Sign-in rollback
+### 登录回滚
 
-The response's own `Set-Cookie` values are copied before `SignInAsync` starts, and every failure exit
-of that sign-in restores the copy before the caller's cancellation is answered. The rollback removes
-the complete or chunked ticket the sign-in appended, and undoes a replacement of the whole header,
-including the case where the cookie was written by the handler before a `SignedIn` callback threw.
-The cookies the response already carried - unrelated ones and an earlier management cookie alike -
-come back with their original count, order, and values, and no `SignOutAsync` compensation is used.
-The snapshot belongs to the one request that took it. If the snapshot cannot be read, no sign-in is
-started at all; if the restore cannot be applied, the connection is aborted rather than completed, so
-a response still carrying part of that ticket is never sent and the original exception is not
-exposed.
+响应自身的 `Set-Cookie` 值在 `SignInAsync` 开始之前被复制，该登录的每个失败出口都会在应答调
+用方取消之前恢复这份副本。回滚会移除登录追加的完整或分块 ticket，并撤销对整个 Header 的替
+换，包括 cookie 由处理器写入、随后 `SignedIn` 回调抛出异常的情形。响应原本已携带的
+cookie——无关的 cookie 与更早的管理 cookie 一律如此——会以原始的数量、顺序和值恢复，并且不使
+用任何 `SignOutAsync` 补偿。快照属于拍摄它的那一个请求。如果快照无法读取，则根本不开始登录；
+如果恢复无法应用，则中止连接而不是完成响应，因此仍携带该 ticket 一部分的响应绝不会被发出，
+原始异常也不会暴露。
 
-The unauthenticated `401` reuses the existing session error code, status, and content type. It is
-written directly instead of through a challenge, so an anonymous login response cannot reveal
-whether a cookie happened to be presented. A consumer-supplied provider error code is never copied
-into an HTTP response or a ServiceMantle diagnostic: syntactic validity is not proof that a string
-is non-secret.
+未认证的 `401` 复用既有的会话错误码、状态与内容类型。它被直接写出而不是通过质询（challenge）
+产生，因此匿名登录响应无法泄露是否恰好出示过某个 cookie。消费方提供的 provider 错误码绝不会被
+复制进 HTTP 响应或 ServiceMantle 诊断：语法有效并不能证明一个字符串不是秘密。
 
-## Current session
+## 当前会话
 
-`GET` and `HEAD {v1}/session` answer exactly:
+`GET` 与 `HEAD {v1}/session` 精确应答：
 
 ```json
 {
@@ -114,59 +100,48 @@ is non-secret.
 }
 ```
 
-Permissions are the defined names in the fixed `ManagementPermission` order, independent of claim
-order. The projection omits the operator identifier, the display name, the identity source, the
-claims, the authentication properties, ticket material, and any provider data. `HEAD` answers the
-same status code and headers, including `Content-Length`, with no body. The existing sliding renewal
-may still occur, because the read authenticates through the same cookie handler. A principal that no
-longer resolves keeps the existing forbidden contract, and a ticket carrying no expiry answers the
-fixed unavailable result rather than a guessed value.
+权限是固定的 `ManagementPermission` 顺序中定义的名称，与 claim 顺序无关。投影会省略操作员标
+识符、显示名、身份来源、claim、认证属性、ticket 材料以及任何 provider 数据。`HEAD` 应答相同
+的状态码与 Header（包括 `Content-Length`），但没有 body。既有的滑动续期仍可能发生，因为该读
+取通过同一个 cookie 处理器完成认证。不再能解析的 principal 保持既有的 forbidden 契约，而不携
+带过期时间的 ticket 会应答固定的 unavailable 结果，而不是一个猜测的值。
 
-Missing, expired, corrupted, and invalid-claim cookies retain the existing `401`/`403` contract
-unchanged.
+缺失、过期、损坏以及 claim 无效的 cookie 保持既有的 `401`/`403` 契约不变。
 
-## Logout
+## 登出
 
-`POST {v1}/session/logout` requires a valid identity but not Admin. It calls the fixed scheme's
-`SignOutAsync` and answers `204` with no body only once the cookie deletion is on the response. It
-deletes this client's own host-scoped cookie and nothing else.
+`POST {v1}/session/logout` 要求有效身份但不要求 Admin。它调用固定 scheme 的 `SignOutAsync`，
+并且只有在 cookie 删除已经写入响应之后才应答无 body 的 `204`。它只删除本客户端自己的宿主作用
+域 cookie，不删除任何其他内容。
 
-## Explicit non-guarantees
+## 明确的不保证
 
-- Logout is local and stateless. It adds no server-side revocation authority and cannot invalidate a
-  copied ticket: the same ticket presented from another client still authenticates until it expires.
-  Cookie expiry, the Data Protection key ring, and cross-instance semantics are unchanged.
-- ServiceMantle implements no concrete account, password, OIDC, or product identity provider, and
-  defines no universal credential schema.
-- The 64 KiB limit is ServiceMantle's admission envelope only. The consumer adapter must still parse
-  its own media type and schema strictly.
-- One login budget covers reading the raw body and the adapter call together and is not reset
-  between them. A login whose budget is spent while the body is still arriving answers the fixed
-  unavailable result and never calls the adapter.
-- The login budget bounds waiting on a cooperative adapter and a cooperative body stream. It is not
-  a hard wall-clock bound: an adapter, provider, or request stream that ignores its cancellation
-  token cannot be forcibly terminated.
-- The envelope covers the raw body bytes this endpoint reads and holds. It is not a promise about
-  the bytes a client sent on the wire, the number of connections, process memory, the exact size of
-  every allocation, or zeroing credential memory. A body an upstream component already consumed, a
-  stream or reader a component retained before the handler ran, a pre-parsed form, and same-process
-  code that bypasses `Request.Body` and the body pipe feature are outside the adapter's supported
-  surface.
-- A request the server or a proxy rejects before it reaches the handler, or one whose response has
-  already started, is not rewritten into the fixed `400` or `503`.
-- ServiceMantle's negative credential guarantee covers its own parsers, fixed responses, projections,
-  and diagnostics. It does not cover a consumer accessor, provider, or identity system, third-party
-  request logging, or raw request capture.
-- The rollback covers `Set-Cookie` values a synchronous or asynchronous sign-in appended or replaced
-  in a writable response header collection before it threw. It does not repair a response that has
-  already started, undo a ticket copied elsewhere, revoke an external `ITicketStore` side effect, or
-  compensate for an adapter, which must not write to the response at all.
-- It does not defend against same-process code that bypasses the response headers, modifies the
-  response concurrently, or schedules its own callback to issue a ticket after the failure. For a
-  header collection that refuses or discards the restore, the fixed `503` is not promised: that
-  response is aborted instead.
-- Cookies present before the sign-in are kept. A normal sliding renewal of an earlier session that
-  was already scheduled is not this login's ticket; the cookie handler suppresses that renewal for a
-  request it was asked to sign in.
-- `X-ServiceMantle-Request` and the default `SameSite=Strict` cookie are a limited browser CSRF
-  mitigation, not a CORS, TLS, origin, or proxy policy.
+- 登出是本地的、无状态的。它不添加任何服务端吊销权限，也无法使一个已复制的 ticket 失效：同
+  一 ticket 从另一个客户端出示时，在过期之前仍然可以认证。cookie 过期、Data Protection 密钥环
+  以及跨实例语义均保持不变。
+- ServiceMantle 不实现任何具体的账户、密码、OIDC 或产品身份 provider，也不定义通用的凭据
+  schema。
+- 64 KiB 限制只是 ServiceMantle 的准入信封。消费方 adapter 仍必须严格解析自己的媒体类型与
+  schema。
+- 一个登录预算同时覆盖读取原始请求体和 adapter 调用，且不会在两者之间重置。预算在请求体仍在
+  到达时耗尽的登录会应答固定的 unavailable 结果，绝不调用 adapter。
+- 登录预算约束的是对协作式 adapter 与协作式请求体流的等待。它不是一个硬性的墙钟时间上界：忽
+  略取消 token 的 adapter、provider 或请求流无法被强制终止。
+- 信封覆盖的是本 endpoint 读取并持有的原始请求体字节。它不是对客户端在线路上实际发送的字节
+  数、连接数、进程内存、每个分配的精确大小或凭据内存清零的承诺。上游组件已消费的请求体、某
+  个组件在处理器运行前保留的流或读取器、已预先解析的表单，以及绕过 `Request.Body` 与 body
+  pipe 特性的同进程代码，都在 adapter 的支持范围之外。
+- 在到达处理器之前就被服务器或代理拒绝的请求，或响应已经开始的请求，不会被改写为固定的
+  `400` 或 `503`。
+- ServiceMantle 的凭据不回显保证覆盖其自身的解析器、固定响应、投影与诊断。它不覆盖消费方的
+  访问器、provider 或身份系统、第三方请求日志，也不覆盖原始请求捕获。
+- 回滚覆盖同步或异步登录在抛出异常之前于可写响应 Header 集合中追加或替换的 `Set-Cookie`
+  值。它不修复已经开始的响应、不撤销复制到别处的 ticket、不吊销外部 `ITicketStore` 的副作用，
+  也不补偿 adapter——adapter 本来就不应写响应。
+- 它不防御绕过响应 Header 的同进程代码、并发修改响应的代码，或在失败之后调度自己的回调来签
+  发 ticket 的代码。对于拒绝或丢弃恢复操作的 Header 集合，固定的 `503` 不被承诺：该响应会被
+  改为中止。
+- 登录之前已存在的 cookie 会被保留。更早会话中已排定的正常滑动续期不属于本次登录的 ticket；
+  对于被要求登录的请求，cookie 处理器会抑制该续期。
+- `X-ServiceMantle-Request` 与默认的 `SameSite=Strict` cookie 是有限的浏览器 CSRF 缓解措施，
+  不是 CORS、TLS、来源或代理策略。
