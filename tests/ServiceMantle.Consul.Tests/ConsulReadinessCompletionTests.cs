@@ -6,9 +6,11 @@ using Xunit;
 namespace ServiceMantle.Consul.Tests;
 
 /// <summary>
-/// Drives the completion checkpoints of one readiness sample: a budget exhausted by the decision
-/// call, by the scope disposal, or together with any decision or failure must never publish Ready.
-/// Uses the shared fake clock and fixture seams with this file's own decision source.
+/// Drives the completion checkpoints of one readiness sample: a budget exhausted by the scope
+/// creation, the source resolution, the decision call, or the scope disposal - or together with
+/// any decision or failure - must never publish Ready, and a stopping lifecycle outranks an
+/// expired budget without recording anything. Uses the shared fake clock and fixture seams with
+/// this file's own decision source.
 /// </summary>
 public sealed class ConsulReadinessCompletionTests
 {
@@ -160,15 +162,55 @@ public sealed class ConsulReadinessCompletionTests
     }
 
     [Fact]
+    public async Task Ready_returned_after_the_scope_creation_exhausted_the_budget_is_rejected()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.ScopeFactory.AdvanceOnCreate = Rig.Budget;
+        await rig.StartAsync();
+        await rig.WaitSampleSettledAsync();
+        await rig.WaitTerminalDiagnosticRecordedAsync();
+
+        Assert.Equal(0, rig.Client.Registers);
+        Assert.Equal(ConsulLifecycleState.NotReady, rig.Lifecycle.State);
+        var diagnostic = Assert.Single(rig.Observer.Diagnostics);
+        Assert.Equal(ConsulLifecycleDiagnostics.ReadinessTimeout, diagnostic.Classification);
+    }
+
+    [Fact]
+    public async Task Ready_returned_after_the_source_resolution_exhausted_the_budget_is_rejected()
+    {
+        await using var rig = await Rig.CreateAsync(source => source.AdvanceOnResolve = Rig.Budget);
+        await rig.StartAsync();
+        await rig.WaitSampleSettledAsync();
+        await rig.WaitTerminalDiagnosticRecordedAsync();
+
+        Assert.Equal(0, rig.Client.Registers);
+        Assert.Equal(ConsulLifecycleState.NotReady, rig.Lifecycle.State);
+        var diagnostic = Assert.Single(rig.Observer.Diagnostics);
+        Assert.Equal(ConsulLifecycleDiagnostics.ReadinessTimeout, diagnostic.Classification);
+    }
+
+    [Fact]
     public async Task A_stopping_lifecycle_outranks_the_expired_budget_and_records_nothing()
     {
-        await using var rig = await Rig.CreateAsync(source => source.Hang = true);
+        await using var rig = await Rig.CreateAsync(source => source.HoldTheDecisionCall = true);
         await rig.StartAsync();
         await ConsulLifecycleHarness.WaitAsync(
             () => rig.Source.Calls >= 1,
             "the sampler never entered the decision call");
-        await rig.StopAsync();
+        var stop = rig.StopAsync();
+        // The lifetime must already be cancelled when the budget expires, so the completed sample
+        // reaches the checkpoint with both facts true and only their priority decides the outcome.
+        await ConsulLifecycleHarness.WaitAsync(
+            () => rig.Source.LastToken.IsCancellationRequested,
+            "the stop never cancelled the lifetime before the budget expired");
+        rig.Time.Advance(Rig.Budget);
+        rig.Source.ReleaseTheDecisionCall();
+        await stop;
 
+        // Stop returned only after the in-flight scope settled: the sample was awaited, not
+        // abandoned, and the stopping lifecycle recorded nothing despite the expired budget.
+        Assert.Equal(1, rig.Source.Disposals);
         Assert.Equal(0, rig.Client.Registers);
         Assert.Empty(rig.Client.Operations);
         Assert.Empty(rig.Observer.Diagnostics);
@@ -188,6 +230,7 @@ public sealed class ConsulReadinessCompletionTests
             ConsulFixture fixture,
             ConsulRegistrationLifecycle lifecycle,
             CompletingDecisionSource source,
+            AdvancingScopeFactory scopeFactory,
             ConsulLifecycleHarness.ScriptedClient client,
             ManualTimeProvider time,
             ConsulLifecycleObserver observer)
@@ -195,6 +238,7 @@ public sealed class ConsulReadinessCompletionTests
             Fixture = fixture;
             Lifecycle = lifecycle;
             Source = source;
+            ScopeFactory = scopeFactory;
             Client = client;
             Time = time;
             Observer = observer;
@@ -205,6 +249,8 @@ public sealed class ConsulReadinessCompletionTests
         internal ConsulRegistrationLifecycle Lifecycle { get; }
 
         internal CompletingDecisionSource Source { get; }
+
+        internal AdvancingScopeFactory ScopeFactory { get; }
 
         internal ConsulLifecycleHarness.ScriptedClient Client { get; }
 
@@ -220,7 +266,17 @@ public sealed class ConsulReadinessCompletionTests
             configure?.Invoke(source);
             var client = new ConsulLifecycleHarness.ScriptedClient();
             var fixture = new ConsulFixture(configureServices: services =>
-                services.AddScoped<IServiceReadinessDecisionSource>(_ => source));
+                services.AddScoped<IServiceReadinessDecisionSource>(_ =>
+                {
+                    // The scoped factory delegate runs while the sample resolves the source, so an
+                    // advance armed here exhausts the budget on the resolution seam.
+                    if (source.AdvanceOnResolve is { } delta)
+                    {
+                        time.Advance(delta);
+                    }
+
+                    return source;
+                }));
             fixture.ClientFactory.CreateClient = _ => client;
             await fixture.ActivateAsync(ConsulFixture.Enabled());
 
@@ -230,13 +286,16 @@ public sealed class ConsulReadinessCompletionTests
                 ReadinessCallBudget = Budget
             };
             var observer = new ConsulLifecycleObserver();
+            var scopeFactory = new AdvancingScopeFactory(
+                fixture.Services.GetRequiredService<IServiceScopeFactory>(),
+                time);
             var lifecycle = new ConsulRegistrationLifecycle(
                 fixture.Provider,
-                fixture.Services.GetRequiredService<IServiceScopeFactory>(),
+                scopeFactory,
                 options.Validate(),
                 time,
                 observer);
-            return new Rig(fixture, lifecycle, source, client, time, observer);
+            return new Rig(fixture, lifecycle, source, scopeFactory, client, time, observer);
         }
 
         internal Task StartAsync() => Lifecycle.StartAsync(CancellationToken.None);
@@ -266,12 +325,15 @@ public sealed class ConsulReadinessCompletionTests
     }
 
     /// <summary>
-    /// A scoped readiness decision source that can advance the fake clock inside the decision call
-    /// or its own asynchronous disposal, return any decision, fail, or hang on the sampler token.
+    /// A scoped readiness decision source that can advance the fake clock inside the decision call,
+    /// its own asynchronous disposal, or its scoped resolution, return any decision, fail, or hold
+    /// the decision call on the test's own gate until the test releases it.
     /// </summary>
     private sealed class CompletingDecisionSource(
         ManualTimeProvider time) : IServiceReadinessDecisionSource, IAsyncDisposable
     {
+        private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         internal ServiceReadinessDecision? Decision { get; set; } = ConsulLifecycleHarness.Ready();
 
         internal Exception? Failure { get; set; }
@@ -282,19 +344,35 @@ public sealed class ConsulReadinessCompletionTests
 
         internal TimeSpan? AdvanceOnDispose { get; set; }
 
-        internal bool Hang { get; set; }
+        /// <summary>
+        /// Advanced by the scoped registration delegate while the sample resolves this source, so a
+        /// test can exhaust the budget on the resolution seam.
+        /// </summary>
+        internal TimeSpan? AdvanceOnResolve { get; set; }
+
+        /// <summary>
+        /// Set to hold the decision call on this source's own gate. The hold deliberately ignores
+        /// the sampler token: the lifecycle must settle the scope, not abandon it.
+        /// </summary>
+        internal bool HoldTheDecisionCall { get; set; }
+
+        /// <summary>The sampler-linked token observed by the latest decision call.</summary>
+        internal CancellationToken LastToken { get; private set; }
 
         internal int Calls { get; private set; }
 
         internal int Disposals { get; private set; }
 
+        internal void ReleaseTheDecisionCall() => release.TrySetResult();
+
         public async ValueTask<ServiceReadinessDecision> GetDecisionAsync(
             CancellationToken cancellationToken = default)
         {
             Calls++;
-            if (Hang)
+            LastToken = cancellationToken;
+            if (HoldTheDecisionCall)
             {
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+                await release.Task.ConfigureAwait(false);
             }
 
             if (AdvanceOnCall is { } delta)
@@ -324,6 +402,26 @@ public sealed class ConsulReadinessCompletionTests
             }
 
             return ValueTask.CompletedTask;
+        }
+    }
+
+    /// <summary>
+    /// Delegates scope creation to the container's own factory and can advance the fake clock on
+    /// the way in, so a test exhausts the budget while the sample is still creating its scope.
+    /// </summary>
+    private sealed class AdvancingScopeFactory(IServiceScopeFactory inner, ManualTimeProvider time)
+        : IServiceScopeFactory
+    {
+        internal TimeSpan? AdvanceOnCreate { get; set; }
+
+        public IServiceScope CreateScope()
+        {
+            if (AdvanceOnCreate is { } delta)
+            {
+                time.Advance(delta);
+            }
+
+            return inner.CreateScope();
         }
     }
 }

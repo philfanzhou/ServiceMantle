@@ -50,11 +50,15 @@ scope 异步释放完成**，才在完成检查点上按固定优先级裁决：
 
 - 决策调用内耗尽预算后返回 Ready：0 次注册、`NotReady` 状态、恰一条 `readiness_timeout`。
 - 决策先返回 Ready、scope 异步释放再耗尽预算：同样拒绝，覆盖“释放路径”seam。
+- scope 创建期间（包装的 scope factory 内推进时钟）与 source 解析期间（scoped 注册委托内推进时钟）
+  耗尽预算后返回 Ready：同样拒绝，覆盖“创建/解析”seam。
 - 有限矩阵：Ready / NotReady / null / 普通异常 / 内部取消伴随到期，全部 `readiness_timeout` 且
   诊断不含合成秘密 canary；每次采样恰一条终结诊断。
 - 未到期对照：正常 Ready 注册、正常 NotReady 无诊断无操作、释放失败与普通失败仍是
   `readiness_unavailable`。
 - 已注册后下一次采样超时按既有 NotReady 路径注销同一 registration id。
-- 停止与预算同时到达：不发布新期望、不注册、不记录任何采样诊断。
+- 停止与预算同时到达：用例将决策调用挂起在自有 gate 上（忽略采样 token），停止使 lifetime 取消、
+  推进 fake time 使预算到期后再放行调用；断言 stop 返回前 scope 已释放未被遗弃、不发布新期望、
+  不注册、不记录任何采样诊断。
 
 既有生命周期测试（正常 source、失败、停止、注册/注销不重叠）继续成立。
