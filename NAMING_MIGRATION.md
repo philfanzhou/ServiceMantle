@@ -103,6 +103,7 @@ namespace 跨越两个程序集。
 | `ServiceMantle.Database.Sqlite.ServiceMantleSqlitePackage` | `ServiceMantle.Database.Sqlite.SqlitePackage` |
 | `ServiceMantle.OpenTelemetry.ServiceMantleOpenTelemetryOptions` | `ServiceMantle.OpenTelemetry.OpenTelemetryOptions` |
 | `ServiceMantle.OpenTelemetry.ServiceMantleMetrics` | `ServiceMantle.OpenTelemetry.ServiceMetrics` |
+| `ServiceMantle.OpenTelemetry.ServiceMetrics` | `ServiceMantle.Diagnostics.ServiceMetrics` |
 | `ServiceMantle.OpenTelemetry.Otlp.IServiceMantleOtlpAuthenticationHeaderResolver` | `ServiceMantle.OpenTelemetry.Otlp.IOtlpAuthenticationHeaderResolver` |
 | `ServiceMantle.OpenTelemetry.Otlp.IOtlpAuthenticationHeaderResolver` | `ServiceMantle.Diagnostics.IRemoteTelemetryAuthenticationResolver` |
 | `ServiceMantle.OpenTelemetry.Otlp.ServiceMantleOtlpAuthenticationHeader` | `ServiceMantle.OpenTelemetry.Otlp.OtlpAuthenticationHeader` |

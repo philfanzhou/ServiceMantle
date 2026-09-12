@@ -3,15 +3,17 @@
 // ServiceMantle.OpenTelemetry.Prometheus as separate packages.
 //
 // It also proves the provider-neutral contract boundary: implementing and registering the remote
-// telemetry authentication resolver requires no provider-named using at all. The resolver
-// contracts live in the core package's ServiceMantle.Diagnostics namespace, the registration
-// entry lives in Microsoft.Extensions.DependencyInjection, and the OTLP settings are shaped
-// through a target-typed lambda, so this file deliberately contains no
-// using ServiceMantle.OpenTelemetry.Otlp. The OTLP configuration types themselves remain
-// provider-specific; this file asserts nothing about naming them.
+// telemetry authentication resolver, resolving ServiceMetrics, and publishing an installation
+// phase require no provider-named using at all. The resolver contracts and ServiceMetrics live in
+// the core package's ServiceMantle.Diagnostics namespace, and the registration entries live in
+// Microsoft.Extensions.DependencyInjection, so this file deliberately contains neither
+// using ServiceMantle.OpenTelemetry nor using ServiceMantle.OpenTelemetry.Otlp. The OTLP
+// configuration types themselves remain provider-specific; this file asserts nothing about
+// naming them, and the OTLP settings are shaped through a target-typed lambda.
 using Microsoft.AspNetCore.Authorization;
 using ServiceMantle;
 using ServiceMantle.Diagnostics;
+using ServiceMantle.Installation;
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-consumer");
 try
@@ -31,6 +33,7 @@ try
         bootstrapFilePath: Path.Combine(bootstrapDirectory.FullName, "bootstrap.json"),
         serviceVersion: "1.0.0");
 
+    serviceMantle.AddServiceMantleMetrics();
     serviceMantle.AddOpenTelemetryInstrumentation();
     serviceMantle.AddOpenTelemetryOtlpExporter(options =>
     {
@@ -50,11 +53,15 @@ try
     application.MapServiceMantlePrometheusEndpoint();
 
     await application.StartAsync();
+    // The type is named unqualified through ServiceMantle.Diagnostics only; that this compiles
+    // and resolves is the assertion, the phase value is incidental.
+    var metrics = application.Services.GetRequiredService<ServiceMetrics>();
+    metrics.SetPhase(ServiceStartupPhase.Completed);
     Console.WriteLine(
-        "ServiceMantle.OpenTelemetry consumer started; instrumentation, OTLP, and Prometheus all " +
-        "resolved from one package reference, and the trace exporter resolved its authentication " +
-        $"header through {typeof(IRemoteTelemetryAuthenticationResolver).FullName} without any " +
-        "provider-named using.");
+        "ServiceMantle.OpenTelemetry consumer started; instrumentation, fixed metrics, OTLP, and " +
+        "Prometheus all resolved from one package reference. The trace exporter resolved its " +
+        $"authentication header through {typeof(IRemoteTelemetryAuthenticationResolver).FullName}, " +
+        $"and {typeof(ServiceMetrics).FullName} resolved without any provider-named using.");
     await application.StopAsync();
 }
 finally

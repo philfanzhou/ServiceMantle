@@ -105,6 +105,8 @@ try
     Report<SensitiveHeaderRegistry>();
     Report<SecurityResponseHeadersMetadata>();
     Report<OpenTelemetryOptions>();
+    // ServiceMetrics is named unqualified through ServiceMantle.Diagnostics, next to the provider
+    // namespace that only OpenTelemetryOptions still requires.
     Report<ServiceMetrics>();
     Report<OtlpOptions>();
     Report<OtlpTraceOptions>();
