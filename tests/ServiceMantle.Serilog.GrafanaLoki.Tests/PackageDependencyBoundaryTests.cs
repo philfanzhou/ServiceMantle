@@ -79,7 +79,9 @@ public sealed class PackageDependencyBoundaryTests
     // Merging the sink into ServiceMantle.Serilog removes the dependency isolation that used to keep
     // the Loki driver out of a host that never asked for it. Referencing the package, and even
     // enabling the console pipeline, must therefore still register nothing Loki-owned and leave the
-    // sink factory on the local console implementation.
+    // sink factory on the local console implementation. RemoteLogDeliveryDiagnostics now ships in
+    // the core Logging namespace, so the namespace-based ownership check below cannot reach it and
+    // it is asserted by service type instead.
     [Fact]
     public void Enabling_only_the_console_pipeline_registers_no_loki_service()
     {
@@ -88,6 +90,7 @@ public sealed class PackageDependencyBoundaryTests
 
         Assert.DoesNotContain(builder.Services, descriptor =>
             descriptor.ServiceType == typeof(GrafanaLokiRegistration) ||
+            descriptor.ServiceType == typeof(RemoteLogDeliveryDiagnostics) ||
             IsLokiOwned(descriptor.ImplementationType));
 
         var sinkFactory = builder.Services.Single(descriptor =>
