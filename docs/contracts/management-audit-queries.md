@@ -42,6 +42,37 @@ HTTP 解析失败与 `audit.query_*` 查询失败返回固定的管理 invalid-r
 `{"errorCode":"management.audit.unavailable"}`。调用方取消仍然是调用方取消，不产生成功或错误
 body。
 
+## 请求取消优先级
+
+查询依赖（包括 scoped 查询服务的 DI 解析）正常或异常落定时，已经观察到的 `RequestAborted`
+优先于普通响应映射，也优先于原样传播依赖自己的取消。此时 endpoint 以新建的
+`OperationCanceledException` 结束：恰好携带原 `RequestAborted`，固定英文消息
+`The management audit query request was cancelled by the caller.`，无 `InnerException`，
+不复用底层异常，不泄露其 canary 或合成秘密。
+
+| 查询依赖的落定方式 | `RequestAborted` 已取消 | 交付 |
+| --- | --- | --- |
+| 返回正常页 | 是 | 调用方 `OperationCanceledException` |
+| 返回 null | 是 | 调用方 `OperationCanceledException` |
+| 抛 `audit.query_*`（否则 400） | 是 | 调用方 `OperationCanceledException` |
+| 抛 `audit.entity_invalid`（否则 503） | 是 | 调用方 `OperationCanceledException` |
+| 抛普通异常（否则 503） | 是 | 调用方 `OperationCanceledException` |
+| 抛内部 OCE：外来 token、合成 message/inner（否则 503） | 是 | 调用方 `OperationCanceledException`，携带 `RequestAborted`，无 inner |
+| DI query factory 取消并抛异常 | 是 | 调用方 `OperationCanceledException` |
+| 上述任意情况 | 否 | 原有限映射（200/400/503），保持不变 |
+
+预取消的请求不解析查询服务、不执行查询；至多一次查询，不重试、不保存。未取消时有限响应与
+查询输入、权限和安全 Header 行为不变；两个并发请求只取消一个时，另一请求的结果与关联 ID
+不受影响。取消的异常同步抛出与异步任务落定遵循同一优先级。
+
+## 不承诺的内容
+
+- **检查点之后的窗口。** 保证覆盖依赖完成后的取消观察点；不承诺返回检查点之后才发生的取消
+  仍能拦截，也不修改已开始的响应。
+- **不配合的查询。** 不强制终止忽略 token 的查询实现，不对数据库扫描或查询时长设限。
+- **秘密边界。** 不对恶意自定义结果集合的任意枚举副作用、第三方日志或进程内存作秘密保证；
+  仍按现有封闭投影处理受支持的审计结果。
+
 该 endpoint 保留核心查询的普通 keyset 语义。游标是绑定到查询的不透明续传值，不是签名的授权
 token、重放防御或数据库快照。总数可能在请求之间变化，剩余排序区间中被回填的记录可能出现在更后
 的页上。输入边界不对数据库扫描、provider 缓冲、进程分配或查询时长施加绝对上界。输出安全覆盖审
