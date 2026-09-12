@@ -23,6 +23,7 @@ using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.AspNetCore.PhaseGate;
 using ServiceMantle.AspNetCore.RateLimiting;
 using ServiceMantle.Database.Sqlite;
+using ServiceMantle.Diagnostics;
 using ServiceMantle.Logging;
 using ServiceMantle.OpenTelemetry;
 using ServiceMantle.OpenTelemetry.Otlp;
@@ -103,6 +104,8 @@ try
     Report<SensitiveHeaderRegistry>();
     Report<SecurityResponseHeadersMetadata>();
     Report<OpenTelemetryOptions>();
+    // ServiceMetrics is named unqualified through ServiceMantle.Diagnostics, next to the provider
+    // namespace that only OpenTelemetryOptions still requires.
     Report<ServiceMetrics>();
     Report<OtlpOptions>();
     Report<OtlpTraceOptions>();

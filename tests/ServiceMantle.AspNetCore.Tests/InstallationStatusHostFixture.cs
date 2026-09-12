@@ -267,10 +267,13 @@ internal sealed class InstallationStatusHostFixture : IAsyncDisposable
         internal TaskCompletionSource Entered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        internal CancellationToken ObservedToken { get; private set; }
+
         public async ValueTask<ServiceHealthSnapshot> GetSnapshotAsync(
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref calls);
+            ObservedToken = cancellationToken;
             Entered.TrySetResult();
             if (Gate is { } gate)
             {

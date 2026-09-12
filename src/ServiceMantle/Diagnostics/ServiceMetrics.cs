@@ -1,7 +1,7 @@
 using System.Diagnostics.Metrics;
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.OpenTelemetry;
+namespace ServiceMantle.Diagnostics;
 
 /// <summary>Publishes fixed service information and the last explicitly observed installation phase.</summary>
 /// <remarks>

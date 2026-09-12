@@ -185,6 +185,9 @@ public sealed class InstallationStatusTests
 
         await AssertUnavailableAsync(response);
         Assert.Equal(1, source.Calls);
+        // The budget expiry notified the token the source received before the linked source was
+        // released, so the blocked read ends even when the deadline race is lost.
+        Assert.True(source.ObservedToken.IsCancellationRequested);
     }
 
     [Fact]
