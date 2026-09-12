@@ -22,8 +22,8 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
 {
     private const string WorkspaceMigration = "20260910000000_InitialReferencePostgreSqlWorkspace";
     private const string InstallationMigration = "20260912000000_AddReferencePostgreSqlInstallation";
-    private const string FutureMigration = "20260911000000_FutureReferenceStep";
-    private const string LaterMigration = "20260913000000_LaterReferenceStep";
+    private const string FutureMigration = "20260913000000_FutureReferenceStep";
+    private const string LaterMigration = "20260914000000_LaterReferenceStep";
     private const string HistoryTable = "__EFMigrationsHistory";
     private const string WorkspaceTable = "reference_workspaces";
     private const string InstallationTable = "service_installations";
