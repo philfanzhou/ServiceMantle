@@ -54,6 +54,13 @@ Prometheus exposition 是格式标准。换掉 OTel SDK，OTLP 仍在；换掉 S
 模板语法就没了。同理 `Meter`/`ActivitySource` 是 BCL，OTel SDK 只是其 listener，
 `ServiceMantle.OpenTelemetry` 指的是「OTel SDK 绑定」，名副其实。
 
+但「namespace 可接受」不等于「住在这里的每个类型都免迁」。判据看的是**契约**，不是
+namespace 拼写：协议名让 `OtlpOptions` / `OtlpProtocol` 这类**配置契约**留在 `.Otlp`
+名正言顺（B 类），却不豁免住在同一 namespace 的**中立扩展点**。一个消费方必须实现、
+契约里没有任何协议特有成分的中立 resolver，即便住在协议命名的 `.Otlp` 下仍是 A 类——
+`IOtlpAuthenticationHeaderResolver` 与 `.GrafanaLoki` 下的 `ILokiAuthorizationHeaderResolver`
+同型（见下 A 类清单）。
+
 ## 分类结论
 
 ### A 类清单（迁移目标）
@@ -61,6 +68,7 @@ Prometheus exposition 是格式标准。换掉 OTel SDK，OTLP 仍在；换掉 S
 | 现状 | 消费方为何点名 | 目标归属 |
 | --- | --- | --- |
 | `ServiceMantle.OpenTelemetry.ServiceMetrics` | resolve 后调 `SetPhase()` | `ServiceMantle.Diagnostics` |
+| `ServiceMantle.OpenTelemetry.Otlp.IOtlpAuthenticationHeaderResolver` / `OtlpAuthenticationHeader` | **必须实现**才能用带认证的 OTLP 导出 | `ServiceMantle.Diagnostics` |
 | `ServiceMantle.Serilog.GrafanaLoki.ILokiAuthorizationHeaderResolver` | **必须实现**才能用带认证的远程 sink | `ServiceMantle.Logging` |
 | `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiDiagnostics` | resolve 后读投递失败计数 | `ServiceMantle.Logging` |
 | `ServiceMantle.Consul.IConsulClient` / `IConsulClientFactory` | 替换传输时实现 | `ServiceMantle.Discovery` |
@@ -68,12 +76,14 @@ Prometheus exposition 是格式标准。换掉 OTel SDK，OTLP 仍在；换掉 S
 
 `ServiceMetrics` 只使用 `System.Diagnostics.Metrics.Meter`；该程序集位于
 `Microsoft.NETCore.App.Ref/10.0.11/ref/net10.0`，属共享框架，移入核心包
-**不新增任何 `PackageReference`**。`ILokiAuthorizationHeaderResolver` 与
-`GrafanaLokiDiagnostics` 同理（接口与 POCO）。
+**不新增任何 `PackageReference`**。`ILokiAuthorizationHeaderResolver`、
+`GrafanaLokiDiagnostics`、`IOtlpAuthenticationHeaderResolver` 与 `OtlpAuthenticationHeader`
+同理（接口与 POCO）。
 
 `eng/tests/consumers/serilog/Program.cs:3` 的 `using ServiceMantle.Serilog.GrafanaLoki;`
 和 `eng/tests/consumers/composed/Program.cs` 的 `Report<ServiceMetrics>()` 是仓库自身
-已经记录在案的泄漏证据。
+已经记录在案的泄漏证据。`IOtlpAuthenticationHeaderResolver` 当前尚无消费项目实现，泄漏
+形状由判据直接推出：任何要做带认证 OTLP 导出的消费方都得实现它，从而被钉在 `.Otlp`。
 
 ### B 类清单（保持不动）
 
@@ -124,7 +134,7 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 ## 明确不包含与不保证
 
 - 保证：A 类类型迁移后，消费方源码中不再需要 provider 命名的 `using` 即可实现自定义
-  registrar、实现远程日志授权解析、以及发布安装阶段指标。
+  registrar、实现远程日志授权解析、实现远程遥测认证解析、以及发布安装阶段指标。
 - 不保证：不保证「换任意底层库零改动」。L2 的 `Add*()` 与 `PackageReference` 必须改。
   不保证 B 类类型在换实现后语义等价。不保证 `IServiceRegistrar` 覆盖心跳续租、
   namespace/group、或平台代劳注册的模型。
@@ -139,8 +149,8 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 3. `eng/tests/consumers` 目前有 aspnetcore / composed / opentelemetry / serilog，**没有
    consul**。AGENTS.md 要求消费项目覆盖本次改名涉及的每个包，须补齐。
 4. 判据须落成 CI 可挡的断言，而不只是文档里的一句话：新增一个消费项目，实现自定义
-   registrar + 远程日志授权解析 + 读安装阶段指标，断言其编译不需要任何 provider 命名的
-   `using`。
+   registrar + 远程日志授权解析 + 远程遥测认证解析 + 读安装阶段指标，断言其编译不需要
+   任何 provider 命名的 `using`。
 5. 成本随消费方采用面扩大而上升。当前 #27 将可选 Consul 列为 P2；本 ADR 不改变排期，
    但把「越晚做越贵」这一点显式记录下来，由维护者决定是否提前。
 
@@ -152,11 +162,14 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 | --- | --- | --- | --- |
 | [#433](https://github.com/philfanzhou/ServiceMantle/issues/433) | L02 | `ServiceMetrics` 迁入核心包 `ServiceMantle.Diagnostics` | #432 |
 | [#434](https://github.com/philfanzhou/ServiceMantle/issues/434) | L02 | 远程日志投递中立契约迁入 `ServiceMantle.Logging` | #432 |
+| [#442](https://github.com/philfanzhou/ServiceMantle/issues/442) | L02 | 远程遥测投递中立契约迁入 `ServiceMantle.Diagnostics` | #432 |
 | [#435](https://github.com/philfanzhou/ServiceMantle/issues/435) | L02 | 服务注册中立契约迁入 `ServiceMantle.Discovery` | #432 |
 | [#438](https://github.com/philfanzhou/ServiceMantle/issues/438) | L02 | `SerilogOptions` 级别与 scope 选项改用 MEL 词汇 | #432 |
 | [#436](https://github.com/philfanzhou/ServiceMantle/issues/436) | L03 | discovery 设置键中立化与迁移路径 | #435 |
-| [#437](https://github.com/philfanzhou/ServiceMantle/issues/437) | L04 | 中立性消费验证项目与 CI 断言 | #433 #434 #435 #436 |
+| [#437](https://github.com/philfanzhou/ServiceMantle/issues/437) | L04 | 中立性消费验证项目与 CI 断言 | #433 #434 #435 #436 #442 |
 
 #436 与 #435 分开，是因为设置键是外部契约而非类型改名（`CONTRIBUTING.md` §6），需要自带
 迁移路径。#437 是把判据落成 CI 会挡的断言，否则本 ADR 只是文档里的一句话。
 #438 是盘点 #434 时发现的既有债务，与类型归属无关，按邻近债务规则独立成 issue。
+#442 是 #434 的遥测侧同型：分类盘点时发现 `IOtlpAuthenticationHeaderResolver` 与 Loki 的
+授权 resolver 形状一致，补入 A 类清单并独立成 issue，避免漏掉遥测侧扩展点。
