@@ -2,11 +2,12 @@
 // that used to require ServiceMantle.Serilog.GrafanaLoki as a separate package.
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using ServiceMantle.Serilog.GrafanaLoki;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddSingleton<ILokiAuthorizationHeaderResolver, ConsumerResolver>();
-builder.AddServiceMantleSerilog(options => options.MinimumLevel = "Information");
+builder.AddServiceMantleSerilog(options => options.MinimumLevel = LogLevel.Information);
 builder.AddServiceMantleGrafanaLoki(options =>
 {
     options.Enabled = true;

@@ -2085,8 +2085,8 @@ var builder = Host.CreateApplicationBuilder(args);
 
 builder.AddServiceMantleSerilog(options =>
 {
-    options.MinimumLevel = "Information";
-    options.EnricherNames = ["FromLogContext"];
+    options.MinimumLevel = LogLevel.Information;
+    options.IncludeScopes = true;
     options.FlushTimeout = TimeSpan.FromSeconds(2);
 });
 ```
