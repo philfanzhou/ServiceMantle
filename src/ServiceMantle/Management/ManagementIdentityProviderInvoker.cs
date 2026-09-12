@@ -16,27 +16,35 @@ public static class ManagementIdentityProviderInvoker
     /// <param name="cancellationToken">The caller cancellation token.</param>
     /// <returns>The provider result, or a failed result carrying only a safe error code.</returns>
     /// <remarks>
-    /// An <see cref="OperationCanceledException"/> propagates only when
-    /// <paramref name="cancellationToken"/> has itself requested cancellation. A provider that
-    /// cancels on its own, returns <see langword="null"/>, or throws anything else yields
-    /// <see cref="WellKnownManagementIdentityErrorCodes.ProviderFailed"/>; no original exception or
-    /// inner exception is retained.
+    /// A provider is not called when <paramref name="cancellationToken"/> already requests
+    /// cancellation. When the caller token requests cancellation at the entry point, at the point
+    /// where the provider call settles, or when any provider exception arrives, the invocation
+    /// ends in a new <see cref="OperationCanceledException"/> carrying the caller token, a fixed
+    /// message, and no inner exception, instead of the provider outcome. A provider that cancels
+    /// on its own, returns <see langword="null"/>, or throws anything else while the caller has
+    /// not cancelled yields <see cref="WellKnownManagementIdentityErrorCodes.ProviderFailed"/>;
+    /// no original exception or inner exception is retained.
     /// </remarks>
+    /// <exception cref="OperationCanceledException">The caller requested cancellation.</exception>
     public static async ValueTask<ManagementIdentityResult> InvokeAsync(
         IManagementIdentityProvider provider,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(provider);
+        cancellationToken.ThrowIfCancellationRequested();
 
         try
         {
-            return await provider.GetIdentityAsync(cancellationToken).ConfigureAwait(false)
-                ?? ManagementIdentityResult.Failed(
-                    WellKnownManagementIdentityErrorCodes.ProviderFailed);
+            var result = await provider.GetIdentityAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result ?? ManagementIdentityResult.Failed(
+                WellKnownManagementIdentityErrorCodes.ProviderFailed);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
-            throw;
+            throw new OperationCanceledException(
+                "The management identity call was cancelled by the caller.",
+                cancellationToken);
         }
         catch (Exception)
         {
