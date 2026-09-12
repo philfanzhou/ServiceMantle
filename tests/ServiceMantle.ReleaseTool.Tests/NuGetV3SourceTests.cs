@@ -135,6 +135,30 @@ public sealed class NuGetV3SourceTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Uploads_satisfy_the_NuGet_protocol_gate_without_affecting_reads(bool symbols)
+    {
+        var handler = new StubHandler(Index) { RequirePushProtocol = true };
+        var endpoint = symbols ? SymbolAddress : PublishAddress;
+        handler.Respond(endpoint, HttpStatusCode.Created);
+        handler.Respond($"{BaseAddress}servicemantle/0.1.0/servicemantle.0.1.0.nupkg", HttpStatusCode.NotFound);
+        var source = Create(handler);
+        var extension = symbols ? "snupkg" : "nupkg";
+
+        var response = await source.PushAsync(
+            WriteArtifact($"ServiceMantle.0.1.0.{extension}"), symbols,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(PushStatus.Succeeded, response.Status);
+        Assert.Equal([endpoint], handler.PushTargets);
+        Assert.Equal([ApiKey], handler.PushCredentials);
+        Assert.Equal(FeedLookup.Missing, (await source.TryGetPackageAsync(
+            "ServiceMantle", "0.1.0", TestContext.Current.CancellationToken)).Lookup);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, "Failed")]
     [InlineData(HttpStatusCode.Unauthorized, "Unauthorized")]
     [InlineData(HttpStatusCode.Forbidden, "Unauthorized")]
     [InlineData(HttpStatusCode.Conflict, "AlreadyPresent")]
@@ -320,6 +344,8 @@ public sealed class NuGetV3SourceTests : IDisposable
 
         internal int IndexReads { get; private set; }
 
+        internal bool RequirePushProtocol { get; init; }
+
         /// <summary>A request that never answers, so only the timeout or the caller can end it.</summary>
         internal bool Stall { get; set; }
 
@@ -334,6 +360,12 @@ public sealed class NuGetV3SourceTests : IDisposable
             CancellationToken cancellationToken)
         {
             var address = request.RequestUri!.ToString();
+            if (request.Method == HttpMethod.Get)
+            {
+                Assert.False(request.Headers.Contains("X-NuGet-ApiKey"));
+                Assert.False(request.Headers.Contains("X-NuGet-Protocol-Version"));
+            }
+
             if (address == SourceUrl)
             {
                 IndexReads++;
@@ -353,6 +385,16 @@ public sealed class NuGetV3SourceTests : IDisposable
                 PushCredentials.Add(request.Headers.TryGetValues("X-NuGet-ApiKey", out var values)
                     ? values.Single()
                     : null);
+                if (RequirePushProtocol)
+                {
+                    Assert.False(request.Headers.Contains("X-NuGet-Client-Version"));
+                    // NuGet.org rejects uploads without the third-party protocol declaration.
+                    if (!request.Headers.TryGetValues("X-NuGet-Protocol-Version", out var versions) ||
+                        !versions.SequenceEqual(["4.1.0"]))
+                    {
+                        return new HttpResponseMessage(HttpStatusCode.BadRequest);
+                    }
+                }
             }
 
             if (Stall)
