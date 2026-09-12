@@ -23,6 +23,7 @@ using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.AspNetCore.PhaseGate;
 using ServiceMantle.AspNetCore.RateLimiting;
 using ServiceMantle.Database.Sqlite;
+using ServiceMantle.Logging;
 using ServiceMantle.OpenTelemetry;
 using ServiceMantle.OpenTelemetry.Otlp;
 using ServiceMantle.OpenTelemetry.Prometheus;
@@ -41,6 +42,11 @@ try
 
     builder.AddServiceMantleSerilog(options => options.MinimumLevel = "Information");
     builder.AddServiceMantleGrafanaLoki(options => options.Enabled = false);
+
+    // The remote log authorization resolver is the provider-neutral contract: it is implemented
+    // and registered entirely through ServiceMantle.Logging and
+    // Microsoft.Extensions.DependencyInjection, next to every framework namespace in scope.
+    builder.Services.AddSingleton<IRemoteLogAuthorizationResolver, ConsumerAuthorizationResolver>();
 
     ServiceMantleBuilder serviceMantle = builder.Services.AddServiceMantle(
         ServiceId.Parse("package-consumer"),
@@ -152,3 +158,10 @@ static void Report<T>() => Console.WriteLine($"Resolved {typeof(T).FullName}.");
 
 // Static classes and open generics cannot be type arguments, so they are named through typeof.
 static void ReportType(Type type) => Console.WriteLine($"Resolved {type.FullName}.");
+
+// The neutral remote log authorization resolver contract from ServiceMantle.Logging: nothing in
+// its declaration or registration names a provider or a backend product.
+sealed class ConsumerAuthorizationResolver : IRemoteLogAuthorizationResolver
+{
+    public string? ResolveAuthorizationHeader(string name) => "Bearer package-consumer-placeholder";
+}

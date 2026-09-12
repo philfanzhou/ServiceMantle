@@ -28,7 +28,7 @@ public sealed class GrafanaLokiTests
         var transport = new RecordingHandler();
         var handlerFactory = new StaticHandlerFactory(transport);
         var builder = Host.CreateApplicationBuilder();
-        builder.Services.AddSingleton<ILokiAuthorizationHeaderResolver>(resolver);
+        builder.Services.AddSingleton<IRemoteLogAuthorizationResolver>(resolver);
         builder.Services.Replace(ServiceDescriptor.Singleton<ILokiHttpMessageHandlerFactory>(
             handlerFactory));
         builder.AddServiceMantleGrafanaLoki();
@@ -62,7 +62,7 @@ public sealed class GrafanaLokiTests
     public async Task Enabled_registration_requires_the_base_ServiceMantle_Serilog_pipeline()
     {
         var builder = Host.CreateApplicationBuilder();
-        builder.Services.AddSingleton<ILokiAuthorizationHeaderResolver>(
+        builder.Services.AddSingleton<IRemoteLogAuthorizationResolver>(
             new RecordingResolver(AuthorizationHeader));
         builder.AddServiceMantleGrafanaLoki(Enable);
         using var host = builder.Build();
@@ -169,7 +169,7 @@ public sealed class GrafanaLokiTests
         await accepted.StopAsync(TestContext.Current.CancellationToken);
     }
 
-    public static TheoryData<ILokiAuthorizationHeaderResolver?, string> InvalidResolvers => new()
+    public static TheoryData<IRemoteLogAuthorizationResolver?, string> InvalidResolvers => new()
     {
         { null, WellKnownGrafanaLokiErrorCodes.AuthorizationResolverMissing },
         { new RecordingResolver(null), WellKnownGrafanaLokiErrorCodes.AuthorizationValueInvalid },
@@ -180,7 +180,7 @@ public sealed class GrafanaLokiTests
     [Theory]
     [MemberData(nameof(InvalidResolvers))]
     public async Task Missing_or_invalid_authorization_fails_safely_at_startup(
-        ILokiAuthorizationHeaderResolver? resolver,
+        IRemoteLogAuthorizationResolver? resolver,
         string expectedErrorCode)
     {
         var builder = CreateBuilder(new RecordingHandler(), resolver);
@@ -208,7 +208,7 @@ public sealed class GrafanaLokiTests
         using (var duplicate = duplicateBuilder.Build())
         {
             await duplicate.StartAsync(TestContext.Current.CancellationToken);
-            Assert.Single(duplicate.Services.GetServices<GrafanaLokiDiagnostics>());
+            Assert.Single(duplicate.Services.GetServices<RemoteLogDeliveryDiagnostics>());
             await duplicate.StopAsync(TestContext.Current.CancellationToken);
         }
 
@@ -232,7 +232,7 @@ public sealed class GrafanaLokiTests
         var builder = Host.CreateApplicationBuilder();
         builder.AddServiceMantleSerilog(options => options.FlushTimeout = TimeSpan.FromSeconds(5));
         var resolver = new RecordingResolver(AuthorizationHeader);
-        builder.Services.AddSingleton<ILokiAuthorizationHeaderResolver>(resolver);
+        builder.Services.AddSingleton<IRemoteLogAuthorizationResolver>(resolver);
         builder.AddServiceMantleGrafanaLoki(options =>
         {
             Enable(options);
@@ -293,7 +293,7 @@ public sealed class GrafanaLokiTests
             await host.StartAsync(TestContext.Current.CancellationToken);
             host.Services.GetRequiredService<ILogger<GrafanaLokiTests>>()
                 .LogError("transport failure {Password}", eventSecret);
-            var diagnostics = host.Services.GetRequiredService<GrafanaLokiDiagnostics>();
+            var diagnostics = host.Services.GetRequiredService<RemoteLogDeliveryDiagnostics>();
             await WaitUntilAsync(() => diagnostics.FailedBatchCount > 0, TestContext.Current.CancellationToken);
 
             Assert.Equal(
@@ -339,7 +339,7 @@ public sealed class GrafanaLokiTests
 
         handler.Release.TrySetResult();
         await host.StopAsync(TestContext.Current.CancellationToken);
-        var diagnostics = host.Services.GetRequiredService<GrafanaLokiDiagnostics>();
+        var diagnostics = host.Services.GetRequiredService<RemoteLogDeliveryDiagnostics>();
 
         Assert.InRange(handler.RequestCount, 1, 102);
         Assert.True(handler.RequestCount < emitted);
@@ -370,7 +370,7 @@ public sealed class GrafanaLokiTests
             await host.StartAsync(TestContext.Current.CancellationToken);
             host.Services.GetRequiredService<ILogger<GrafanaLokiTests>>()
                 .LogError("failed event {Password}", eventSecret);
-            var diagnostics = host.Services.GetRequiredService<GrafanaLokiDiagnostics>();
+            var diagnostics = host.Services.GetRequiredService<RemoteLogDeliveryDiagnostics>();
             await WaitUntilAsync(() => diagnostics.FailedBatchCount > 0, TestContext.Current.CancellationToken);
 
             await host.StopAsync(TestContext.Current.CancellationToken);
@@ -415,7 +415,7 @@ public sealed class GrafanaLokiTests
         handler.Release.TrySetResult();
         await stopTask;
 
-        var diagnostics = host.Services.GetRequiredService<GrafanaLokiDiagnostics>();
+        var diagnostics = host.Services.GetRequiredService<RemoteLogDeliveryDiagnostics>();
         Assert.Equal(0, diagnostics.DrainTimeoutCount);
         Assert.True(handler.Completed);
     }
@@ -444,7 +444,7 @@ public sealed class GrafanaLokiTests
             await timeoutHost.StopAsync(TestContext.Current.CancellationToken);
 
             stopwatch.Stop();
-            var diagnostics = timeoutHost.Services.GetRequiredService<GrafanaLokiDiagnostics>();
+            var diagnostics = timeoutHost.Services.GetRequiredService<RemoteLogDeliveryDiagnostics>();
             Assert.Equal(1, diagnostics.DrainTimeoutCount);
             Assert.True(timeoutHandler.Cancelled);
             Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2));
@@ -473,7 +473,7 @@ public sealed class GrafanaLokiTests
 
         await lifecycle.StopAsync(cancellation.Token);
 
-        var cancelDiagnostics = cancelHost.Services.GetRequiredService<GrafanaLokiDiagnostics>();
+        var cancelDiagnostics = cancelHost.Services.GetRequiredService<RemoteLogDeliveryDiagnostics>();
         Assert.Equal(1, cancelDiagnostics.DrainCancellationCount);
         Assert.True(cancelHandler.Cancelled);
         await cancelHost.StopAsync(TestContext.Current.CancellationToken);
@@ -519,7 +519,7 @@ public sealed class GrafanaLokiTests
             TimeSpan.FromSeconds(2),
             TestContext.Current.CancellationToken);
 
-        var diagnostics = host.Services.GetRequiredService<GrafanaLokiDiagnostics>();
+        var diagnostics = host.Services.GetRequiredService<RemoteLogDeliveryDiagnostics>();
         Assert.Equal(cancelFirstAttempt ? 1 : 0, diagnostics.DrainCancellationCount);
         Assert.Equal(cancelFirstAttempt ? 0 : 1, diagnostics.DrainTimeoutCount);
         Assert.True(
@@ -535,7 +535,7 @@ public sealed class GrafanaLokiTests
     {
         var handler = new IgnoringCancellationHandler(HttpStatusCode.NoContent);
         var builder = Host.CreateApplicationBuilder();
-        builder.Services.AddSingleton<ILokiAuthorizationHeaderResolver>(
+        builder.Services.AddSingleton<IRemoteLogAuthorizationResolver>(
             new RecordingResolver(AuthorizationHeader));
         builder.Services.Replace(ServiceDescriptor.Singleton<ILokiHttpMessageHandlerFactory>(
             new StaticHandlerFactory(handler)));
@@ -581,7 +581,7 @@ public sealed class GrafanaLokiTests
             TestContext.Current.CancellationToken);
         stopwatch.Stop();
 
-        var diagnostics = host.Services.GetRequiredService<GrafanaLokiDiagnostics>();
+        var diagnostics = host.Services.GetRequiredService<RemoteLogDeliveryDiagnostics>();
         Assert.Same(stopTask, completed);
         Assert.True(
             stopwatch.Elapsed < TimeSpan.FromMilliseconds(750),
@@ -592,7 +592,7 @@ public sealed class GrafanaLokiTests
 
     private static HostApplicationBuilder CreateBuilder(
         HttpMessageHandler handler,
-        ILokiAuthorizationHeaderResolver? resolver)
+        IRemoteLogAuthorizationResolver? resolver)
     {
         var builder = Host.CreateApplicationBuilder();
         builder.AddServiceMantleSerilog(options => options.FlushTimeout = TimeSpan.FromSeconds(5));
@@ -632,7 +632,7 @@ public sealed class GrafanaLokiTests
             .Sum(stream => stream.GetProperty("values").GetArrayLength());
     }
 
-    private sealed class RecordingResolver(string? value) : ILokiAuthorizationHeaderResolver
+    private sealed class RecordingResolver(string? value) : IRemoteLogAuthorizationResolver
     {
         private int invocationCount;
         private string? lastName;
@@ -649,7 +649,7 @@ public sealed class GrafanaLokiTests
         }
     }
 
-    private sealed class ThrowingResolver(string secret) : ILokiAuthorizationHeaderResolver
+    private sealed class ThrowingResolver(string secret) : IRemoteLogAuthorizationResolver
     {
         public string? ResolveAuthorizationHeader(string name) => throw new InvalidOperationException(secret);
     }

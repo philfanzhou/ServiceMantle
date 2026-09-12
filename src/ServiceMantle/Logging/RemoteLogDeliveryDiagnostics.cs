@@ -1,7 +1,7 @@
-namespace ServiceMantle.Serilog.GrafanaLoki;
+namespace ServiceMantle.Logging;
 
-/// <summary>Exposes content-free counters for bounded Loki delivery diagnostics.</summary>
-public sealed class GrafanaLokiDiagnostics
+/// <summary>Exposes content-free counters for bounded remote log delivery diagnostics.</summary>
+public sealed class RemoteLogDeliveryDiagnostics
 {
     private long failedBatchCount;
     private long droppedEventCount;
@@ -9,7 +9,7 @@ public sealed class GrafanaLokiDiagnostics
     private long drainCancellationCount;
     private string? lastErrorCode;
 
-    /// <summary>Gets the number of failed batch attempts reported by Serilog.</summary>
+    /// <summary>Gets the number of failed batch attempts reported by the sink.</summary>
     public long FailedBatchCount => Interlocked.Read(ref failedBatchCount);
 
     /// <summary>Gets the number of accepted events not acknowledged by a successful post before shutdown.</summary>
@@ -42,21 +42,21 @@ public sealed class GrafanaLokiDiagnostics
         }
     }
 
-    internal void RecordDrainTimeout()
+    internal void RecordDrainTimeout(string errorCode)
     {
         Interlocked.Increment(ref drainTimeoutCount);
-        Volatile.Write(ref lastErrorCode, WellKnownGrafanaLokiErrorCodes.ShutdownDrainTimedOut);
+        Volatile.Write(ref lastErrorCode, errorCode);
     }
 
-    internal void RecordDrainCancellation()
+    internal void RecordDrainCancellation(string errorCode)
     {
         Interlocked.Increment(ref drainCancellationCount);
-        Volatile.Write(ref lastErrorCode, WellKnownGrafanaLokiErrorCodes.ShutdownDrainCancelled);
+        Volatile.Write(ref lastErrorCode, errorCode);
     }
 
     /// <summary>Returns only bounded counters and stable classifications.</summary>
     public override string ToString() =>
-        $"GrafanaLokiDiagnostics(FailedBatchCount={FailedBatchCount}, " +
+        $"RemoteLogDeliveryDiagnostics(FailedBatchCount={FailedBatchCount}, " +
         $"DroppedEventCount={DroppedEventCount}, DrainTimeoutCount={DrainTimeoutCount}, " +
         $"DrainCancellationCount={DrainCancellationCount}, LastErrorCode={LastErrorCode ?? "none"})";
 }

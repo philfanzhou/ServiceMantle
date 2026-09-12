@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Xml.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using ServiceMantle.Logging;
 using ServiceMantle.Serilog;
 using Xunit;
 
@@ -16,9 +17,7 @@ public sealed class PackageDependencyBoundaryTests
                  {
                      typeof(GrafanaLokiOptions),
                      typeof(GrafanaLokiDefaults),
-                     typeof(GrafanaLokiDiagnostics),
                      typeof(WellKnownGrafanaLokiErrorCodes),
-                     typeof(ILokiAuthorizationHeaderResolver),
                  })
         {
             Assert.Equal("ServiceMantle.Serilog", type.Assembly.GetName().Name);
@@ -29,6 +28,23 @@ public sealed class PackageDependencyBoundaryTests
             "ServiceMantle.Serilog",
             typeof(global::Microsoft.Extensions.Hosting.ServiceMantleGrafanaLokiHostApplicationBuilderExtensions)
                 .Assembly.GetName().Name);
+    }
+
+    // The remote log delivery contracts are provider-neutral: they live in the core package's
+    // ServiceMantle.Logging namespace so a consumer can implement the authorization resolver and
+    // read the delivery counters without any provider-named using.
+    [Fact]
+    public void Remote_log_delivery_contracts_ship_in_the_core_assembly()
+    {
+        foreach (var type in new[]
+                 {
+                     typeof(IRemoteLogAuthorizationResolver),
+                     typeof(RemoteLogDeliveryDiagnostics),
+                 })
+        {
+            Assert.Equal("ServiceMantle", type.Assembly.GetName().Name);
+            Assert.Equal("ServiceMantle.Logging", type.Namespace);
+        }
     }
 
     // The provider-agnostic core is the boundary that survives the merge: it must reach neither the

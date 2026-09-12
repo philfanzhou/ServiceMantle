@@ -124,8 +124,10 @@ namespace 跨越两个程序集。
 | `ServiceMantle.Serilog.ServiceMantleSerilogPackage` | `ServiceMantle.Serilog.SerilogPackage` |
 | `ServiceMantle.Serilog.GrafanaLoki.ServiceMantleGrafanaLokiDefaults` | `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiDefaults` |
 | `ServiceMantle.Serilog.GrafanaLoki.ServiceMantleGrafanaLokiDiagnostics` | `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiDiagnostics` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiDiagnostics` | `ServiceMantle.Logging.RemoteLogDeliveryDiagnostics` |
 | `ServiceMantle.Serilog.GrafanaLoki.ServiceMantleGrafanaLokiOptions` | `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiOptions` |
 | `ServiceMantle.Serilog.GrafanaLoki.IServiceMantleLokiAuthorizationHeaderResolver` | `ServiceMantle.Serilog.GrafanaLoki.ILokiAuthorizationHeaderResolver` |
+| `ServiceMantle.Serilog.GrafanaLoki.ILokiAuthorizationHeaderResolver` | `ServiceMantle.Logging.IRemoteLogAuthorizationResolver` |
 | `ServiceMantle.Serilog.GrafanaLoki.WellKnownServiceMantleGrafanaLokiErrorCodes` | `ServiceMantle.Serilog.GrafanaLoki.WellKnownGrafanaLokiErrorCodes` |
 
 ## 内部类型映射
