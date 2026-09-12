@@ -169,9 +169,11 @@ serviceMantle.AddOpenTelemetryOtlpExporter(options =>
 });
 ```
 
-When authentication is configured, register an
-`IOtlpAuthenticationHeaderResolver`. Its non-secret lookup name is stored in options;
-the header value is resolved only for an enabled exporter and passed through the official
+When authentication is configured, register an `IRemoteTelemetryAuthenticationResolver` (core
+`ServiceMantle.Diagnostics`; no provider-named using is required to implement it). Its
+`TryResolve` receives the non-secret lookup name stored in options and returns a
+`RemoteTelemetryAuthenticationHeader` carrying the HTTP header name and value. The header value
+is resolved only for an enabled exporter and passed through the official
 `OtlpExporterOptions.Headers` entry. ServiceMantle exceptions and option diagnostics do not include
 the header value or URI user-info/query components.
 
