@@ -1,88 +1,84 @@
-# Releasing ServiceMantle
+# 发布 ServiceMantle
 
-Every package in `eng/packages.json` is published together, at one version, from one tag. There is
-no per-package release and no manual push.
+`eng/packages.json` 中的每个包一起发布，使用同一个版本、来自同一个 tag。没有按包单独发布，
+也没有手动推送。
 
-## Cutting a release
+## 切一次发布
 
-1. Make sure the commit you want to release is already on `main`. A tag anywhere else is refused.
-2. Tag that commit and push the tag:
+1. 确认你要发布的 commit 已经在 `main` 上。指向其他任何位置的 tag 会被拒绝。
+2. 给该 commit 打 tag 并推送：
 
    ```bash
    git tag v0.1.0-rc.1 <commit-on-main>
    git push origin v0.1.0-rc.1
    ```
 
-3. Watch the **Package release** workflow. On success every registered package and its symbol
-   package are on NuGet.org at the tagged version, and a consumer project has restored that version
-   back from NuGet.org.
+3. 关注 **Package release** workflow。成功后，每个已注册的包及其符号包都以 tag 对应的版本
+   出现在 NuGet.org 上，并且一个消费项目已经从 NuGet.org 还原回该版本。
 
-Pushes to `main` run the same verification and produce the same artifacts, but publish nothing. They
-are versioned `0.0.0-edge.<run>.<attempt>` and exist only as workflow artifacts.
+推送到 `main` 会运行相同的验证并产生相同的产物，但不发布任何东西。它们的版本号是
+`0.0.0-edge.<run>.<attempt>`，只作为 workflow artifact 存在。
 
-## Version rules
+## 版本规则
 
-The version is the tag with the leading `v` removed. `v0.1.0` publishes `0.1.0`; `v0.1.0-rc.1`
-publishes the prerelease `0.1.0-rc.1`. NuGet treats any version with a prerelease label as a
-prerelease, so nothing else is needed to mark one.
+版本号是去掉前导 `v` 的 tag。`v0.1.0` 发布 `0.1.0`；`v0.1.0-rc.1` 发布预发布版本
+`0.1.0-rc.1`。NuGet 把任何带预发布标签的版本视为预发布，因此不需要额外做任何标记。
 
-A tag is refused unless the version:
+除非版本满足以下条件，否则 tag 会被拒绝：
 
-- parses as a NuGet version;
-- carries no build metadata (no `+`);
-- is already in NuGet's normalized form.
+- 能解析为 NuGet 版本；
+- 不携带 build metadata（没有 `+`）；
+- 已经是 NuGet 的规范化形式。
 
-The last rule is why `v1.2`, `v01.0.0`, and `v1.0.0.0` are rejected instead of being published as
-`1.2.0` or `1.0.0`. A version NuGet rewrites no longer matches the tag consumers were told to pin.
-Build metadata is rejected because NuGet drops it, so `v1.0.0+a` and `v1.0.0+b` would collide on one
-package slot.
+最后一条规则就是 `v1.2`、`v01.0.0` 和 `v1.0.0.0` 被拒绝、而不是以 `1.2.0` 或 `1.0.0` 发布的
+原因。被 NuGet 改写过的版本不再与告知消费方固定的 tag 一致。build metadata 被拒绝是因为
+NuGet 会丢弃它，`v1.0.0+a` 和 `v1.0.0+b` 会碰撞同一个包槽位。
 
-The rule lives in `eng/ServiceMantle.ReleaseTool` (`resolve-version`) and is unit tested there. The
-workflow calls it rather than repeating it.
+该规则位于 `eng/ServiceMantle.ReleaseTool`（`resolve-version`）并在那里有单元测试。workflow
+调用它，而不是重复实现它。
 
-## What has to pass before anything is published
+## 发布前必须通过什么
 
-The publishing job cannot start until all of these have succeeded:
+以下全部成功之前，发布 job 无法开始：
 
-| Gate | What it proves |
+| 关卡 | 它证明了什么 |
 | --- | --- |
-| Tag ancestry check | The tag points at a commit contained in `main`. |
-| `resolve-version` | The tag names a version NuGet will store unchanged. |
-| `verify` (the full CI workflow) | The source builds and every registered test project passes. |
-| `bootstrap-credential-existence` | The Windows-only Bootstrap existence evidence is in. |
-| `publish` | Every package packed and passed `verify`: exact artifact set, IDs, versions, license, repository commit, dependency set, framework references, and matching internal versions. |
+| Tag ancestry check | tag 指向包含在 `main` 中的 commit。 |
+| `resolve-version` | tag 命名的版本 NuGet 会原样存储。 |
+| `verify`（完整 CI workflow） | 源码可构建且每个已注册的测试项目通过。 |
+| `bootstrap-credential-existence` | 仅 Windows 的 Bootstrap 存在性证据已就位。 |
+| `publish` | 每个包都已打包并通过 `verify`：精确的产物集合、ID、版本、license、repository commit、依赖集合、框架引用以及匹配的内部版本。 |
 
-A failure or a cancellation in any of them leaves the publishing job unrun. The job has no
-`always()` or `failure()` condition that could override that.
+其中任何一项失败或被取消，发布 job 都不会运行。该 job 没有任何 `always()` 或 `failure()`
+条件可以推翻这一点。
 
-The packages pushed are the artifacts downloaded from the `publish` job, not a fresh build, so what
-reaches NuGet.org is byte-for-byte what those gates inspected.
+推送的包是从 `publish` job 下载的 artifact，不是重新构建的，因此到达 NuGet.org 的内容与这些
+关卡检查过的内容逐字节一致。
 
-## Failures and reruns
+## 失败与重跑
 
-A multi-package push is not a transaction. If a run is interrupted partway, NuGet.org holds some of
-the set and not the rest. That is expected, and rerunning the same tag is the fix.
+多包推送不是事务。如果一次运行中途被打断，NuGet.org 上会有集合中的一部分而没有其余部分。
+这是预期行为，修复方式是重跑同一个 tag。
 
-On a rerun, each package that is already on the feed at that version is inspected: the published
-package's ID, version, and `repository/@commit` are compared against the release being published.
+重跑时，feed 上已存在该版本的每个包都会被检查：已发布包的 ID、版本和 `repository/@commit`
+与正在发布的这次发布进行比对。
 
-- **Same commit** - an earlier run of this same release pushed it. It is skipped as
-  `already present`; its symbols are still attempted to repair a previous symbol upload failure.
-- **Different commit, or no commit metadata** - that version belongs to something else. The package
-  fails and nothing is overwritten.
+- **相同 commit** - 本次发布的早前运行已推送过它。它被跳过并标记为 `already present`；
+  其符号包仍会尝试推送，以修复此前的符号上传失败。
+- **不同 commit，或没有 commit 元数据** - 该版本属于其他东西。这个包失败，任何内容都不会被
+  覆盖。
 
-A push conflict (HTTP 409) also requires that origin check. If the feed has not indexed the package
-yet, the run fails explicitly; retry later after it becomes readable.
+推送冲突（HTTP 409）同样需要那次来源检查。如果 feed 尚未索引该包，运行会显式失败；等它可读
+之后稍后重试。
 
-The run's closing summary lists every package under `published`, `already present`, or `failed`,
-each with its ID and version, so a partial result is visible rather than reported as success. Any
-failure - a rejected credential, an HTTP error, a missing artifact - exits non-zero.
+运行的结束摘要把每个包列在 `published`、`already present` 或 `failed` 之下，各带 ID 与版本，
+因此部分成功的结果是可见的，而不会被报告为成功。任何失败——凭据被拒、HTTP 错误、产物缺失——
+都以非零退出。
 
-Published versions are never deleted or replaced. If a released version is wrong, release a new
-version.
+已发布的版本绝不删除或替换。如果发布的版本有错，发布一个新版本。
 
-To rehearse without pushing, run the command with `--dry-run`: it performs every check and every
-feed comparison and pushes nothing.
+要在不推送的情况下演练，给命令加 `--dry-run`：它执行每一项检查和每一次 feed 比对，但不推送
+任何内容。
 
 ```bash
 dotnet run --project eng/ServiceMantle.ReleaseTool -- publish \
@@ -93,43 +89,38 @@ dotnet run --project eng/ServiceMantle.ReleaseTool -- publish \
   --dry-run
 ```
 
-## Post-publish verification
+## 发布后验证
 
-After a successful push the workflow restores the published version from NuGet.org into a NuGet
-cache that has never held a ServiceMantle package, builds a minimal ASP.NET Core consumer against
-it, and starts it. Nothing on the runner can make a broken or missing package look installable.
+推送成功后，workflow 从 NuGet.org 把已发布版本还原进一个从未存放过 ServiceMantle 包的 NuGet
+缓存，针对它构建一个最小 ASP.NET Core 消费项目并启动它。runner 上的任何东西都无法让一个损坏
+或缺失的包看起来可以安装。
 
-A push becomes restorable some time after the feed accepts it, so the first attempts are expected to
-fail. The budget is finite - ten attempts, thirty seconds apart - and exhausting it fails the run
-rather than waiting indefinitely.
+推送在 feed 接受之后过一段时间才变得可还原，因此最初的几次尝试预期会失败。预算是有限的——
+十次尝试、间隔三十秒——耗尽预算会使运行失败，而不是无限期等待。
 
-## Credentials
+## 凭据
 
-Publishing uses NuGet.org Trusted Publishing. The publishing job exchanges its GitHub OIDC token for
-a short-lived NuGet.org API key, so this repository stores no long-lived publishing secret.
+发布使用 NuGet.org Trusted Publishing。发布 job 用它的 GitHub OIDC token 换取一个短寿命的
+NuGet.org API key，因此本仓库不存储任何长寿命的发布秘密。
 
-`id-token: write` is granted to that one job and nowhere else. Every other job, and every job in the
-pull-request CI workflow, runs with `contents: read`.
+`id-token: write` 只授予那一个 job，别处都没有。其他每个 job，以及 pull-request CI workflow
+中的每个 job，都以 `contents: read` 运行。
 
-The short-lived key is passed to the release tool through an environment variable and travels to the
-feed in an `X-NuGet-ApiKey` header, so it never appears in a process argument list. Everything the
-publish command prints passes through a redactor keyed on that value.
+短寿命的 key 通过环境变量传给 release tool，并在 `X-NuGet-ApiKey` header 中送往 feed，因此它
+绝不出现在进程参数列表里。publish 命令打印的所有内容都会经过一个以该值为键的 redactor。
 
-## One-time NuGet.org configuration
+## 一次性的 NuGet.org 配置
 
-These are account-side settings. They cannot be made from this repository, and publishing fails
-until they exist:
+这些是账户侧的设置。它们无法从本仓库完成，且在它们存在之前发布会失败：
 
-1. A NuGet.org account that owns, or reserves, every package ID in `eng/packages.json`. As of this
-   writing none of the `ServiceMantle*` IDs are registered on NuGet.org, so the ID prefix
-   `ServiceMantle.*` should be reserved before the first release to keep it.
-2. A Trusted Publishing policy on that account for each package, or for the reserved prefix, bound
-   to:
+1. 一个 NuGet.org 账户，拥有（或预留）`eng/packages.json` 中的每一个包 ID。截至本文撰写时，
+   NuGet.org 上没有注册任何 `ServiceMantle*` ID，因此应在首次发布前预留 ID 前缀
+   `ServiceMantle.*` 以保住它。
+2. 该账户上针对每个包（或针对预留前缀）的 Trusted Publishing 策略，绑定到：
    - repository owner `philfanzhou`
    - repository `ServiceMantle`
    - workflow file `release.yml`
    - environment `nuget.org`
-3. A repository variable `NUGET_USER` holding that NuGet.org username. The login action passes it to
-   the token exchange.
-4. A GitHub environment named `nuget.org`. Add required reviewers to it if a release should need a
-   human approval before it publishes.
+3. 一个仓库变量 `NUGET_USER`，存放该 NuGet.org 用户名。登录 action 会把它传给 token 交换。
+4. 一个名为 `nuget.org` 的 GitHub environment。如果发布前需要人工批准，给它添加必需的
+   reviewer。

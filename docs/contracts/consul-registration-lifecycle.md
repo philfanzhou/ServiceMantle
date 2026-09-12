@@ -1,23 +1,19 @@
-# Consul registration lifecycle decision (#290)
+# Consul 注册生命周期决策（#290）
 
-Status: implemented by #49. This document remains the normative state, completion, and stop matrix;
-the implementation lives in `ServiceMantle.Consul`.
+状态：已由 #49 实现。本文档仍是规范性的状态、完成与停止矩阵；实现位于 `ServiceMantle.Consul`。
 
-## Decision
+## 决策
 
-The Consul lifecycle consumes one provider-independent
-`IServiceReadinessDecisionSource` from the core `ServiceMantle.Health` namespace. A decision contains
-the exact immutable `ServiceHealthSnapshot` used by the evaluation, the final Ready value after the
-base matrix and ordered readiness contributors, and only a bounded safe error code when not Ready.
-Issue #321 owns that new public contract and changes the ASP.NET Core health endpoints to consume its
-default adapter. Issue #49 is blocked by #321.
+Consul 生命周期消费来自核心 `ServiceMantle.Health` 命名空间的一个与 provider 无关的
+`IServiceReadinessDecisionSource`。一个决策包含评估所使用的精确不可变 `ServiceHealthSnapshot`、
+经过基础矩阵和有序 readiness contributor 之后的最终 Ready 值，以及仅在未 Ready 时的一个有界安全
+错误码。Issue #321 拥有这个新的公开契约，并把 ASP.NET Core 健康 endpoint 改为消费其默认 adapter。
+Issue #49 被 #321 阻塞。
 
-This is the only readiness input to the lifecycle. `ServiceMantle.Consul` does not reference
-ASP.NET Core, issue an HTTP request to `/health/ready`, repeat the readiness algorithm, or accept an
-independently supplied Boolean. A health endpoint request never starts or drives registration. The
-consumer registers the same decision source for the HTTP health surface and the optional Consul
-lifecycle; separate calls may sample different moments, but they use one source and one evaluation
-contract.
+这是生命周期唯一的 readiness 输入。`ServiceMantle.Consul` 不引用 ASP.NET Core、不向
+`/health/ready` 发出 HTTP 请求、不重复 readiness 算法，也不接受独立提供的布尔值。健康 endpoint
+请求绝不会启动或驱动注册。消费方为 HTTP 健康 surface 和可选的 Consul 生命周期注册同一个决策
+来源；不同的调用可能采样到不同时刻，但它们使用同一个来源和同一套评估契约。
 
 ```text
 consumer-owned base health state + registered contributors
@@ -34,255 +30,222 @@ consumer-owned base health state + registered contributors
                               snapshot-bound Consul session
 ```
 
-The lifecycle is one hosted controller. Only its owner loop mutates state and starts Consul
-operations. A single non-overlapping readiness sampler may publish decisions to that loop. The
-sampler never performs Consul work, and all remote completions are returned to the owner loop. At
-most one register or deregister operation is active for an instance.
+生命周期是一个托管 controller。只有其 owner 循环变更状态并发起 Consul 操作。一个单一的、不重叠的
+readiness 采样器可以向该循环发布决策。采样器绝不执行 Consul 工作，所有远程完成都会返回给 owner
+循环。一个实例在任一时刻至多有一个注册或注销操作处于活动状态。
 
-## Startup and configuration ownership
+## 启动与配置归属
 
-`StartAsync` checks its caller token, calls `ConsulClientProvider.CreateClient()` exactly once, and
-checks the caller token again before starting the controller:
+`StartAsync` 检查其调用方 token，恰好调用一次 `ConsulClientProvider.CreateClient()`，并在启动
+controller 之前再次检查调用方 token：
 
-| Provider outcome | Startup outcome | Owned resources |
+| Provider 结果 | 启动结果 | 拥有的资源 |
 | --- | --- | --- |
-| `null` | Enter terminal `Disabled`; return successfully | No client, timer, sampler, or background loop |
-| Session | Enter `NotReady` with remote presence `Absent`; start one sampler and owner loop | The lifecycle exclusively owns the session until stop |
-| `SnapshotUnavailable` or `InvalidConfiguration` | Fail startup with the existing safe exception | No background work; dispose a session if one was produced |
-| `ClientCreationFailed` | Fail startup with the existing safe exception; do not retry | No background work |
-| Caller cancellation before or during startup | Propagate an `OperationCanceledException` carrying the original token | Dispose any session created before cancellation was observed |
+| `null` | 进入终态 `Disabled`；成功返回 | 没有 client、timer、采样器或后台循环 |
+| Session | 以远程存在性 `Absent` 进入 `NotReady`；启动一个采样器和 owner 循环 | 生命周期独占该 session 直至停止 |
+| `SnapshotUnavailable` 或 `InvalidConfiguration` | 以既有的安全异常使启动失败 | 无后台工作；若已产生 session 则将其处置 |
+| `ClientCreationFailed` | 以既有的安全异常使启动失败；不重试 | 无后台工作 |
+| 启动之前或期间的调用方取消 | 传播携带原始 token 的 `OperationCanceledException` | 处置在观察到取消之前创建的任何 session |
 
-The session captures one active setting snapshot and its version. All `consul.*` definitions are
-restart-bound. Later active snapshot versions are not watched, rebound, or reconciled. A changed
-endpoint, token, registration, disabled flag, or health URL takes effect only after a consumer-owned
-process restart. The lifecycle does not call `CreateClient()` again.
+session 捕获一个活动设置快照及其版本。所有 `consul.*` 定义都绑定到重启。之后更新的活动快照版本
+不会被监视、重新绑定或调和。endpoint、token、注册、disabled 标志或健康 URL 的变更只有在消费方
+自行重启进程后才生效。生命周期不会再次调用 `CreateClient()`。
 
-The same session and registration ID are used for register retries, cleanup deregistration, and stop.
-The lifecycle calls `Dispose()` once after the final remote operation settles or after the cooperative
-shutdown budget expires. A disposal failure becomes a safe diagnostic and is not retried. Disposal
-does not imply deregistration.
+注册重试、清理注销和停止使用同一个 session 和注册 ID。生命周期在最终远程操作落定之后，或在协作
+关闭预算耗尽之后，调用一次 `Dispose()`。处置失败会成为一条安全诊断，且不重试。处置不意味着注销。
 
-## State model
+## 状态模型
 
-The finite control state is paired with a conservative remote-presence observation:
+有限控制状态与一个保守的远程存在性观察配对：
 
-| State | Meaning | Allowed remote presence |
+| 状态 | 含义 | 允许的远程存在性 |
 | --- | --- | --- |
-| `Disabled` | The captured configuration is disabled; terminal until restart | `Absent` |
-| `NotReady` | Enabled, latest decision is not Ready, and no operation is active | `Absent` or `Unknown` |
-| `Registering` | One register operation is active | `Absent` or `Unknown` |
-| `Registered` | A register operation returned `Success` while the latest desire is present | `Present` |
-| `Deregistering` | One deregister operation is active | `Present` or `Unknown` |
-| `Backoff` | No remote operation is active; an intent-specific retry delay is active | `Unknown`, or `Absent` for register retry |
-| `Stopping` | Stop has priority; no new register may start | `Absent`, `Present`, or `Unknown` |
+| `Disabled` | 捕获的配置被禁用；直到重启前都是终态 | `Absent` |
+| `NotReady` | 已启用，最新决策不是 Ready，且没有操作处于活动状态 | `Absent` 或 `Unknown` |
+| `Registering` | 有一个注册操作处于活动状态 | `Absent` 或 `Unknown` |
+| `Registered` | 在最新期望为存在时，一个注册操作返回了 `Success` | `Present` |
+| `Deregistering` | 有一个注销操作处于活动状态 | `Present` 或 `Unknown` |
+| `Backoff` | 没有远程操作处于活动状态；一个按意图区分的重试延迟处于活动状态 | `Unknown`，注册重试时为 `Absent` |
+| `Stopping` | 停止具有优先权；不得开始新的注册 | `Absent`、`Present` 或 `Unknown` |
 
-`Absent` means no successful registration has occurred since startup, or the latest completed
-deregister returned `Success`. `Present` requires a completed register `Success` not followed by a
-completed deregister `Success`. `Unknown` means a timeout, cancellation, `Rejected`, `Unavailable`,
-undefined result, or incomplete operation may have had a remote side effect. In particular, register
-timeout never means “not registered.”
+`Absent` 意味着自启动以来没有发生过成功的注册，或者最近一次完成的注销返回了 `Success`。`Present`
+要求一次完成的注册 `Success` 之后没有跟随一次完成的注销 `Success`。`Unknown` 意味着超时、取消、
+`Rejected`、`Unavailable`、未定义结果或未完成的操作可能已产生远程副作用。特别地，注册超时绝不
+意味着"未注册"。
 
-The desired presence is derived only from the latest readiness event: Ready means `Present`; not
-Ready, readiness failure, and stopping mean `Absent`. State, desired presence, remote presence,
-attempt number, operation generation, and session ownership are changed only by the owner loop.
+期望存在性仅由最新的 readiness 事件推导：Ready 意味着 `Present`；未 Ready、readiness 失败和停止
+意味着 `Absent`。状态、期望存在性、远程存在性、尝试次数、操作代次和 session 归属只能由 owner
+循环改变。
 
-## Timing and retry policy
+## 计时与重试策略
 
-Issue #49 introduces one validated lifecycle options object with these exact defaults and inclusive
-ranges:
+Issue #49 引入一个经过校验的生命周期选项对象，具有以下精确默认值和闭区间范围：
 
-| Option | Default | Minimum | Maximum | Purpose |
+| 选项 | 默认值 | 最小值 | 最大值 | 用途 |
 | --- | ---: | ---: | ---: | --- |
-| Readiness poll interval | 1 s | 100 ms | 30 s | Delay between completed readiness samples |
-| Readiness call budget | 10 s | 100 ms | 60 s | Outer budget for one decision-source call |
-| Consul operation budget | 10 s | 100 ms | 30 s | Budget passed to and awaited for one register/deregister call |
-| Initial retry delay | 250 ms | 50 ms | 5 s | First transport retry delay |
-| Maximum retry delay | 5 s | Initial delay | 30 s | Exponential delay ceiling |
-| Shutdown total budget | 15 s | 1 s | 60 s | Total cooperative cleanup time after stop begins |
+| readiness 轮询间隔 | 1 s | 100 ms | 30 s | 两次完成的 readiness 采样之间的延迟 |
+| readiness 调用预算 | 10 s | 100 ms | 60 s | 一次决策来源调用的外层预算 |
+| Consul 操作预算 | 10 s | 100 ms | 30 s | 传给一次注册/注销调用并等待其完成的预算 |
+| 初始重试延迟 | 250 ms | 50 ms | 5 s | 第一次传输重试延迟 |
+| 最大重试延迟 | 5 s | 初始延迟 | 30 s | 指数延迟上限 |
+| 关闭总预算 | 15 s | 1 s | 60 s | 停止开始后的协作清理总时长 |
 
-Invalid, non-finite, conflicting, or out-of-range values fail host startup before a readiness sampler,
-timer, or remote operation starts. Durations use `TimeProvider`; tests use fake time. Retry delay is
-`min(maximum, initial * 2^failureCount)` with overflow-safe saturation. There is no jitter. A
-successful operation or a change in desired presence resets the failure count.
+无效、非有限、冲突或超出范围的值会在 readiness 采样器、timer 或远程操作启动之前使主机启动失败。
+时长使用 `TimeProvider`；测试使用 fake time。重试延迟为
+`min(maximum, initial * 2^failureCount)`，并带溢出安全的饱和。没有 jitter。一次成功的操作或期望
+存在性的变化会重置失败计数。
 
-Readiness failures are sampled again after the fixed poll interval and do not use transport backoff.
-Register and deregister `Rejected`, `Unavailable`, undefined results, and internal timeouts use the
-exponential transport backoff. Retries continue while the corresponding desire remains current, so
-the number of attempts over an arbitrarily long process lifetime is deliberately not capped. What is
-bounded is one operation, every delay, concurrency, and shutdown work. There is no guarantee of an
-eventual successful registration or a maximum recovery time.
+readiness 失败在固定的轮询间隔后再次采样，不使用传输退避。注册和注销的 `Rejected`、
+`Unavailable`、未定义结果和内部超时使用指数传输退避。只要相应期望仍是最新的，重试就会继续，因此
+在任意长的进程生命周期内的尝试次数被刻意不设上限。有界的是单次操作、每次延迟、并发和关闭工作。
+不保证最终注册成功，也不保证最大恢复时间。
 
-The existing default HTTP client retains its own 10-second timeout. The lifecycle operation budget
-is an additional ownership bound and is also applied to replacement clients.
+既有的默认 HTTP client 保留其自身的 10 秒超时。生命周期操作预算是一个额外的归属上界，同样适用于
+替换 client。
 
-The shutdown total budget and the Consul operation budget run on the same timeline but end different
-things. The shutdown budget starts when stop begins, before the owner loop is woken, and it bounds
-the cleanup deregistration: the time an already in-flight operation spends settling is deducted from
-what the cleanup has left, and a cleanup retry delay is cut short by the remaining budget rather than
-restarted with a fresh one. It does not shorten the operation that is already in flight, whose own
-cancellation deadline stays the Consul operation budget; an operation that already ran for part of
-that budget settles within whatever is left of it, which is a tighter bound than a full one. For a
-cooperative client and decision source, the resulting bound on one stop is therefore
-`max(Consul operation budget, shutdown total budget)`, not the shutdown budget alone: the legal
-combination `Consul operation budget = 30 s` with `shutdown total budget = 1 s` can take about 30
-seconds. That model is a cooperative bound, not exact scheduling time and not a wall-clock bound over
-arbitrary cleanup code.
+关闭总预算和 Consul 操作预算运行在同一条时间线上，但结束的东西不同。关闭预算在停止开始时、owner
+循环被唤醒之前启动，它约束清理注销：一个已在途的操作落定所花的时间会从清理的剩余时间中扣除，
+且清理重试延迟会被剩余预算截断，而不是用全新的预算重新开始。它不会缩短已在途的操作，该操作自身
+的取消期限仍是 Consul 操作预算；一个已经运行了该预算一部分的操作会在其余时间内落定，这比完整
+预算是更紧的上界。因此，对于协作的 client 和决策来源，一次停止的结果上界是
+`max(Consul operation budget, shutdown total budget)`，而不是仅关闭预算：合法组合
+`Consul operation budget = 30 s` 与 `shutdown total budget = 1 s` 可能花费约 30 秒。该模型是协作
+上界，不是精确的调度时间，也不是对任意清理代码的墙钟上界。
 
-## Transition matrix
+## 转换矩阵
 
-The tables below are normative. “Latest desire” includes any readiness event queued while an
-operation was active.
+下表是规范性的。"最新期望"包括在某个操作处于活动状态期间排队的任何 readiness 事件。
 
-### Readiness and steady states
+### readiness 与稳定状态
 
-| Current state | Event | Action and next state |
+| 当前状态 | 事件 | 动作与下一状态 |
 | --- | --- | --- |
-| `Disabled` | Any readiness or stop event | Ignore readiness; stop is already complete; remain `Disabled` |
-| `NotReady/Absent` | Not Ready, source exception, null/invalid decision, or internal readiness timeout | No remote call; remain `NotReady/Absent` with a safe readiness-unavailable diagnostic |
-| `NotReady/Absent` | Ready | Start one register with a new generation; enter `Registering` |
-| `NotReady/Unknown` | Not Ready | Start cleanup deregistration; enter `Deregistering` |
-| `NotReady/Unknown` | Ready | Start idempotent register for the same registration ID; enter `Registering` |
-| `Registered/Present` | Ready | No remote call; remain `Registered` |
-| `Registered/Present` | Not Ready or readiness failure | Start deregistration immediately; enter `Deregistering` |
-| Register `Backoff` | Ready | When the delay completes, start one register; enter `Registering` |
-| Register `Backoff` | Not Ready | Cancel the delay; deregister if presence is `Unknown`, otherwise enter `NotReady/Absent` |
-| Deregister `Backoff` | Not Ready | When the delay completes, start one deregister; enter `Deregistering` |
-| Deregister `Backoff` | Ready | Cancel the delay; start register for the same ID; enter `Registering` |
+| `Disabled` | 任何 readiness 或停止事件 | 忽略 readiness；停止已经完成；保持 `Disabled` |
+| `NotReady/Absent` | 未 Ready、来源异常、null/无效决策或内部 readiness 超时 | 无远程调用；保持 `NotReady/Absent`，附带一条安全的 readiness 不可用诊断 |
+| `NotReady/Absent` | Ready | 以新代次开始一次注册；进入 `Registering` |
+| `NotReady/Unknown` | 未 Ready | 开始清理注销；进入 `Deregistering` |
+| `NotReady/Unknown` | Ready | 为同一注册 ID 开始幂等注册；进入 `Registering` |
+| `Registered/Present` | Ready | 无远程调用；保持 `Registered` |
+| `Registered/Present` | 未 Ready 或 readiness 失败 | 立即开始注销；进入 `Deregistering` |
+| 注册 `Backoff` | Ready | 延迟完成时开始一次注册；进入 `Registering` |
+| 注册 `Backoff` | 未 Ready | 取消延迟；若存在性为 `Unknown` 则注销，否则进入 `NotReady/Absent` |
+| 注销 `Backoff` | 未 Ready | 延迟完成时开始一次注销；进入 `Deregistering` |
+| 注销 `Backoff` | Ready | 取消延迟；为同一 ID 开始注册；进入 `Registering` |
 
-The readiness sampler is fail-closed. A source exception, internally cancelled call, internal timeout,
-null decision, or invalid/undefined decision is a not-Ready event. Caller cancellation of
-`StartAsync` or `StopAsync` is not converted into this event; it retains its original token.
+readiness 采样器是失败关闭的。来源异常、内部取消的调用、内部超时、null 决策或无效/未定义决策都
+是一个未 Ready 事件。调用方对 `StartAsync` 或 `StopAsync` 的取消不会被转换为该事件；它保留其原始
+token。
 
-### Register completion
+### 注册完成
 
-| Result | Latest desire | Presence and next state |
+| 结果 | 最新期望 | 存在性与下一状态 |
 | --- | --- | --- |
-| `Success` | Present | `Present`; enter `Registered`; reset backoff |
-| `Success` | Absent | `Present`; immediately start deregister; never expose `Registered` as the settled state |
-| `Rejected`, `Unavailable`, or undefined | Present | `Unknown`; enter register `Backoff` |
-| `Rejected`, `Unavailable`, or undefined | Absent | `Unknown`; immediately start cleanup deregister |
-| Internal operation timeout/cancellation | Present | Request cancellation, wait for cooperative settlement, then `Unknown` and register `Backoff` |
-| Internal operation timeout/cancellation | Absent | Request cancellation, wait for cooperative settlement, then `Unknown` and cleanup deregister |
-| Caller stop | Any | Apply the stopping rules below; never start another register |
+| `Success` | 存在 | `Present`；进入 `Registered`；重置退避 |
+| `Success` | 不存在 | `Present`；立即开始注销；绝不把 `Registered` 暴露为落定状态 |
+| `Rejected`、`Unavailable` 或未定义 | 存在 | `Unknown`；进入注册 `Backoff` |
+| `Rejected`、`Unavailable` 或未定义 | 不存在 | `Unknown`；立即开始清理注销 |
+| 内部操作超时/取消 | 存在 | 请求取消，等待协作落定，然后 `Unknown` 并进入注册 `Backoff` |
+| 内部操作超时/取消 | 不存在 | 请求取消，等待协作落定，然后 `Unknown` 并开始清理注销 |
+| 调用方停止 | 任意 | 应用下文的停止规则；绝不再开始另一次注册 |
 
-### Deregister completion
+### 注销完成
 
-| Result | Latest desire | Presence and next state |
+| 结果 | 最新期望 | 存在性与下一状态 |
 | --- | --- | --- |
-| `Success` | Absent | `Absent`; enter `NotReady`, or finish `Stopping` |
-| `Success` | Present | `Absent`; immediately start register |
-| `Rejected`, `Unavailable`, or undefined | Absent | `Unknown`; enter deregister `Backoff` |
-| `Rejected`, `Unavailable`, or undefined | Present | `Unknown`; start register only after deregister has settled |
-| Internal operation timeout/cancellation | Any | Request cancellation, wait for cooperative settlement, retain `Unknown`, then follow latest desire |
-| Caller stop | Any | Continue cleanup under the remaining shutdown budget |
+| `Success` | 不存在 | `Absent`；进入 `NotReady`，或完成 `Stopping` |
+| `Success` | 存在 | `Absent`；立即开始注册 |
+| `Rejected`、`Unavailable` 或未定义 | 不存在 | `Unknown`；进入注销 `Backoff` |
+| `Rejected`、`Unavailable` 或未定义 | 存在 | `Unknown`；只在注销落定之后才开始注册 |
+| 内部操作超时/取消 | 任意 | 请求取消，等待协作落定，保留 `Unknown`，然后遵循最新期望 |
+| 调用方停止 | 任意 | 在剩余关闭预算内继续清理 |
 
-A Ready flip during deregistration never starts an overlapping register. The deregister must settle;
-then registration re-establishes the desired record. A not-Ready flip during register requests
-cancellation of that attempt, but the controller waits for it to settle before deregistering. This
-ordering prevents a late deregister from deleting a newer registration and prevents a late register
-from escaping cleanup.
+注销期间的 Ready 翻转绝不会开始一次重叠的注册。注销必须先落定；随后注册会重新建立期望的记录。
+注册期间的未 Ready 翻转会请求取消该次尝试，但 controller 会等待其落定后再注销。这个顺序防止迟到
+的注销删除更新的注册，也防止迟到的注册逃脱清理。
 
-Each operation and readiness sample has a monotonically increasing generation. A completion whose
-generation is no longer the active generation cannot directly select `Registered` or `NotReady`.
-The owner records only its conservative presence implication and applies the latest desired state.
-Events delivered after stopping has completed are ignored.
+每个操作和 readiness 采样都有一个单调递增的代次。代次不再是活动代次的完成结果不能直接选择
+`Registered` 或 `NotReady`。owner 只记录其保守的存在性含义，并应用最新的期望状态。停止完成之后
+送达的事件会被忽略。
 
-## Stop matrix
+## 停止矩阵
 
-Stop cancels the sampler and every backoff delay first. It establishes desired presence `Absent` and
-starts the shutdown total budget. No new register operation may start after this point.
+停止首先取消采样器和每个退避延迟。它把期望存在性设为 `Absent` 并启动关闭总预算。此后不得开始
+新的注册操作。
 
-| State when stop begins | Shutdown action |
+| 停止开始时的状态 | 关闭动作 |
 | --- | --- |
-| `NotReady/Absent` | Dispose the session; complete stop |
-| `Registered/Present` | Start deregister and retry within the remaining shutdown budget |
-| `Backoff` with `Present` or `Unknown` | Cancel delay; start deregister within the remaining budget |
-| `Registering` | Cancel register, await settlement, then deregister because presence may be `Present` or `Unknown` |
-| `Deregistering` | Await the current attempt under its own operation budget; retry only while shutdown budget remains |
-| `NotReady/Unknown` | Attempt deregistration within the remaining budget |
+| `NotReady/Absent` | 处置 session；完成停止 |
+| `Registered/Present` | 在剩余关闭预算内开始注销并重试 |
+| `Backoff` 且存在性为 `Present` 或 `Unknown` | 取消延迟；在剩余预算内开始注销 |
+| `Registering` | 取消注册，等待落定，然后注销，因为存在性可能为 `Present` 或 `Unknown` |
+| `Deregistering` | 在其自身操作预算下等待当前尝试；只在关闭预算仍有剩余时重试 |
+| `NotReady/Unknown` | 在剩余预算内尝试注销 |
 
-If deregistration succeeds, the lifecycle disposes the session and completes. If the internal
-shutdown budget expires, it stops creating operations, emits a safe `shutdown_timeout`
-classification, disposes only after any cooperative in-flight operation has settled, and completes
-without claiming remote absence. An expired shutdown budget therefore does not end an operation that
-was already in flight when stop began: that attempt settles on its own operation budget, so a stop
-can outlast the shutdown budget by up to one operation budget. If the `StopAsync` caller token cancels first, the original token is
-propagated and no new work starts; best-effort ownership cleanup follows the same non-overlap rule.
+如果注销成功，生命周期处置 session 并完成。如果内部关闭预算耗尽，它停止创建操作，发出一条安全的
+`shutdown_timeout` 分类，只在任何协作的在途操作落定之后才处置，并且在不声称远程不存在的情况下
+完成。因此，关闭预算耗尽不会结束停止开始时已在途的操作：该次尝试按其自身操作预算落定，所以一次
+停止最多可以超出关闭预算一个操作预算的时间。如果 `StopAsync` 调用方 token 先取消，则传播原始
+token 且不开始新工作；尽力而为的归属清理遵循同样的不重叠规则。
 
-## Failure and diagnostic classification
+## 失败与诊断分类
 
-Diagnostics are finite classifications and metadata only: control state, attempt count, captured
-snapshot version, operation kind, and safe result category. They never contain the ACL token,
-registration body, endpoint, health URL, address, service name, registration ID, raw exception, or
-response body.
+诊断仅是有限的分类和元数据：控制状态、尝试计数、捕获的快照版本、操作种类和安全的结果类别。它们
+绝不包含 ACL token、注册 body、endpoint、健康 URL、地址、服务名、注册 ID、原始异常或响应 body。
 
-| Input | Classification and behavior |
+| 输入 | 分类与行为 |
 | --- | --- |
-| Readiness source failure, null/invalid result, or internal cancellation | `readiness_unavailable`; desire becomes absent |
-| Readiness call budget expires | `readiness_timeout`; desire becomes absent |
-| Register `Rejected` | `register_rejected`; presence `Unknown`; retry if still Ready |
-| Register `Unavailable`, undefined result, or internal cancellation | `register_unavailable`; presence `Unknown`; retry if still Ready |
-| Register operation budget expires | `register_timeout`; presence `Unknown`; preserve non-overlap |
-| Deregister `Rejected` | `deregister_rejected`; presence `Unknown`; retry according to latest desire |
-| Deregister `Unavailable`, undefined result, or internal cancellation | `deregister_unavailable`; presence `Unknown`; retry according to latest desire |
-| Deregister operation budget expires | `deregister_timeout`; presence `Unknown`; preserve non-overlap |
-| Shutdown total budget expires | `shutdown_timeout`; do not claim absence |
-| Session disposal throws | `session_disposal_failed`; do not retry or claim that disposal deregistered |
+| readiness 来源失败、null/无效结果或内部取消 | `readiness_unavailable`；期望变为不存在 |
+| readiness 调用预算耗尽 | `readiness_timeout`；期望变为不存在 |
+| 注册 `Rejected` | `register_rejected`；存在性 `Unknown`；若仍为 Ready 则重试 |
+| 注册 `Unavailable`、未定义结果或内部取消 | `register_unavailable`；存在性 `Unknown`；若仍为 Ready 则重试 |
+| 注册操作预算耗尽 | `register_timeout`；存在性 `Unknown`；保持不重叠 |
+| 注销 `Rejected` | `deregister_rejected`；存在性 `Unknown`；按最新期望重试 |
+| 注销 `Unavailable`、未定义结果或内部取消 | `deregister_unavailable`；存在性 `Unknown`；按最新期望重试 |
+| 注销操作预算耗尽 | `deregister_timeout`；存在性 `Unknown`；保持不重叠 |
+| 关闭总预算耗尽 | `shutdown_timeout`；不声称不存在 |
+| session 处置抛出异常 | `session_disposal_failed`；不重试，也不声称处置完成了注销 |
 
-The existing `ConsulClientSession` already converts replacement-client exceptions, internal
-cancellation, and undefined enums to `Unavailable`, while propagating cancellation of the token it
-was given. The lifecycle distinguishes its own timeout token from `StartAsync`/`StopAsync` caller
-tokens before selecting a classification.
+既有的 `ConsulClientSession` 已经把替换 client 异常、内部取消和未定义枚举转换为 `Unavailable`，
+同时传播其所持 token 的取消。生命周期在选择分类之前会区分自身的超时 token 与
+`StartAsync`/`StopAsync` 调用方 token。
 
-Synchronous `IConsulClientFactory.Create()` and `IDisposable.Dispose()` cannot be forcibly cancelled.
-A replacement `IConsulClient` may also ignore cancellation. ServiceMantle does not promise a hard
-wall-clock bound for such non-cooperative code. It never starts an overlapping remote operation or
-disposes a client concurrently with its unfinished operation merely to manufacture a timeout.
+同步的 `IConsulClientFactory.Create()` 和 `IDisposable.Dispose()` 无法被强制取消。替换的
+`IConsulClient` 也可能忽略取消。ServiceMantle 不为这类不协作的代码承诺硬性墙钟上界。它绝不会仅仅
+为了制造超时而开始重叠的远程操作，或在 client 的操作尚未完成时并发处置它。
 
-## Required verification for #49
+## #49 的必需验证
 
-All lifecycle tests use a fake `TimeProvider`, scripted readiness decisions, a scripted session, and
-operation barriers. The minimum matrix is:
+所有生命周期测试使用 fake `TimeProvider`、脚本化的 readiness 决策、脚本化的 session 和操作屏障。
+最小矩阵为：
 
-- disabled startup proves zero client resolution, sampler, timer, loop, and remote calls;
-- every base non-Ready matrix value and every contributor rejection/failure proves zero register;
-- Ready registers once, repeated Ready does not duplicate it, and a later not-Ready decision
-  deregisters the same ID;
-- barriers flip readiness during register and deregister and prove no overlapping remote calls,
-  latest-desire handling, and stale-generation handling;
-- each finite transport result, exception, internal cancellation, undefined enum, and timeout proves
-  the presence classification, exact retry delay, saturation at the maximum, and safe diagnostics;
-- stop is exercised from every state, including backoff and both in-flight operations; it proves the
-  shutdown total budget, caller-token precedence, successful cleanup, and unknown-presence outcome;
-- session creation, startup caller cancellation, disposal failure, and a non-cooperative replacement
-  client prove the documented ownership boundary;
-- concurrent lifecycle notifications remain serialized, with a recorded maximum of one active
-  Consul operation;
-- captured snapshot version and session remain fixed after a newer active setting snapshot appears;
-  no hot-reload behavior is asserted;
-- all exception, result, diagnostic, serialization, and `ToString()` projections are checked against
-  a sentinel token.
+- 禁用启动证明零 client 解析、采样器、timer、循环和远程调用；
+- 每个基础非 Ready 矩阵值和每个 contributor 拒绝/失败证明零注册；
+- Ready 注册一次，重复 Ready 不会重复注册，之后的未 Ready 决策注销同一 ID；
+- 屏障在注册和注销期间翻转 readiness，并证明没有重叠的远程调用、最新期望处理和过期代次处理；
+- 每个有限的传输结果、异常、内部取消、未定义枚举和超时证明存在性分类、精确重试延迟、在最大值处
+  饱和以及安全诊断；
+- 从每个状态执行停止，包括 backoff 和两种在途操作；它证明关闭总预算、调用方 token 优先、成功清理
+  和未知存在性结果；
+- session 创建、启动调用方取消、处置失败和不协作的替换 client 证明文档化的归属边界；
+- 并发的生命周期通知保持串行化，记录的活动 Consul 操作最多为一个；
+- 在更新的活动设置快照出现之后，捕获的快照版本和 session 保持固定；不断言任何热重载行为；
+- 所有异常、结果、诊断、序列化和 `ToString()` 投影都对照一个哨兵 token 检查。
 
-Existing single-call transport tests remain the evidence for HTTP method, path, body, token header,
-redirect behavior, and the default 10-second client timeout. Lifecycle tests do not claim validation
-against a real Consul cluster.
+既有的单次调用传输测试仍是 HTTP 方法、路径、body、token Header、重定向行为和默认 10 秒 client
+超时的证据。生命周期测试不声称针对真实 Consul 集群做过验证。
 
-## Explicit non-guarantees
+## 明确的非保证
 
-- A successful agent response does not guarantee propagation to every catalog or DNS reader.
-- A successful deregistration does not prove that all business traffic has drained.
-- Process termination, machine failure, network partition, an unknown remote outcome, or a
-  non-cooperative replacement client cannot be rolled back or forcibly completed.
-- Total retry attempts over the process lifetime and recovery time are not bounded. Per-call,
-  per-delay, concurrency, and cooperative shutdown budgets are bounded as specified above.
-- The shutdown total budget is not a hard wall-clock bound on `StopAsync`. With a cooperative client
-  and decision source the bound is `max(Consul operation budget, shutdown total budget)`; a client,
-  factory, scope disposal, or `Dispose` that ignores cancellation has no time bound at all, and none
-  of them is abandoned or overlapped to buy one.
-- There is no configuration hot reload, cross-instance coordination, idempotency key beyond the
-  stable Consul registration ID, or compensation for an unknown result.
-- The lifecycle does not turn readiness contributors into schedulers and does not trigger setup,
-  migration, database creation, configuration refresh, or business writes.
-- Token secrecy covers ServiceMantle-owned diagnostics and projections. It does not cover deliberate
-  access by a custom factory, external HTTP instrumentation, a debugger, process memory, or Consul
-  agent logs.
+- agent 响应成功不保证已传播到每个 catalog 或 DNS 读取方。
+- 注销成功不证明所有业务流量已经排空。
+- 进程终止、机器故障、网络分区、未知的远程结果或不协作的替换 client 无法被回滚或强制完成。
+- 进程生命周期内的总重试尝试次数和恢复时间没有上界。单次调用、单次延迟、并发和协作关闭预算按上文
+  规定是有界的。
+- 关闭总预算不是 `StopAsync` 的硬性墙钟上界。对于协作的 client 和决策来源，上界是
+  `max(Consul operation budget, shutdown total budget)`；忽略取消的 client、factory、scope 处置或
+  `Dispose` 完全没有时间上界，且它们中任何一个都不会为了换取上界而被抛弃或重叠执行。
+- 没有配置热重载、跨实例协调、超出稳定 Consul 注册 ID 之外的幂等键，或对未知结果的补偿。
+- 生命周期不会把 readiness contributor 变成调度器，也不会触发 setup、migration、数据库创建、配置
+  刷新或业务写入。
+- token 保密覆盖 ServiceMantle 拥有的诊断和投影。它不覆盖自定义 factory、外部 HTTP instrumentation、
+  调试器、进程内存或 Consul agent 日志的蓄意访问。

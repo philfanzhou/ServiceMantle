@@ -1,47 +1,46 @@
-# Database Migration Orchestration
+# 数据库迁移编排
 
-This document summarizes the implementation of Provider-agnostic database migration orchestration with optional multi-instance migration lock support in ServiceMantle.
+本文档总结 ServiceMantle 中与 provider 无关的数据库迁移编排实现，以及可选的多实例迁移锁支持。
 
-## Core Architecture
+## 核心架构
 
-### Provider-Agnostic Core (`ServiceMantle.Migration`)
+### 与 provider 无关的核心（`ServiceMantle.Migration`）
 
-The core package defines the contract and orchestration logic without any database driver dependencies.
+核心包在不引入任何数据库驱动依赖的情况下定义契约与编排逻辑。
 
-**Key Types:**
+**关键类型：**
 
-1. **`IDatabaseMigrationExecutor`** - Extension point for consuming services
-   - `InspectAsync()` - Observe current database state (Empty, CurrentVersionCompatible, PendingMigration, VersionTooNew, InspectionFailed). It is read-only; the consuming service owns what it reads and what it refuses
-   - `ExecuteAsync()` - Run the consuming service's migration workflow. The orchestrator calls it **at most once per orchestration**, and only when the inspection under authority returned `Empty` or `PendingMigration`. A `CurrentVersionCompatible` target skips it entirely, so an orchestration that succeeds without calling the executor is the normal outcome for an already-current database
+1. **`IDatabaseMigrationExecutor`** - 消费服务的扩展点
+   - `InspectAsync()` - 观察当前数据库状态（Empty、CurrentVersionCompatible、PendingMigration、VersionTooNew、InspectionFailed）。它是只读的；读取什么、拒绝什么由消费服务自己决定
+   - `ExecuteAsync()` - 运行消费服务自己的迁移工作流。编排器**每次编排至多调用它一次**，且只有在持权检查返回 `Empty` 或 `PendingMigration` 时才调用。`CurrentVersionCompatible` 的目标会完全跳过它，因此对已经是最新版本的数据库，编排成功而未调用 executor 是正常结果
 
-2. **`IDatabaseMigrationLock`** - Acquired lock lease
-   - Extends `IAsyncDisposable` for RAII semantics
-   - Holds the lock for its lifetime
-   - Exposes a permanent `LeaseLost` cancellation signal when the provider detects lost authority
+2. **`IDatabaseMigrationLock`** - 已获取的锁租约
+   - 扩展 `IAsyncDisposable` 以获得 RAII 语义
+   - 在其生命周期内持有锁
+   - 当 provider 检测到权限丢失时，暴露一个永久的 `LeaseLost` 取消信号
 
-3. **`IDatabaseMigrationLockProvider`** - Provider SPI for lock capabilities
-   - `ProviderId` property to match bootstrap provider ID
-   - `AcquireAsync()` - Acquire lock with timeout and cancellation support
+3. **`IDatabaseMigrationLockProvider`** - 锁能力的 provider SPI
+   - `ProviderId` 属性用于匹配 bootstrap provider ID
+   - `AcquireAsync()` - 获取锁，支持超时与取消
 
-4. **`DatabaseMigrationLockProviderRegistry`** - Case-insensitive lookup
-   - Accumulates lock providers at startup
-   - Rejects duplicate registrations
-   - Takes the shared `DatabaseProviderIdResolver` snapshot so that registration keys and lookup
-     keys are canonicalized identically, and a bootstrap provider alias finds the lock provider
-     registered under the canonical id. Resolving an alias never implies lock capability: an
-     unregistered capability still returns `migration.lock_not_supported`.
+4. **`DatabaseMigrationLockProviderRegistry`** - 不区分大小写的查找
+   - 在启动时累积锁 provider
+   - 拒绝重复注册
+   - 接收共享的 `DatabaseProviderIdResolver` 快照，使注册键与查找键以完全相同的方式规范化，
+     bootstrap provider 别名能找到以规范 id 注册的锁 provider。解析别名绝不意味着具备锁能力：
+     未注册的能力仍返回 `migration.lock_not_supported`。
 
-5. **`DatabaseMigrationOrchestrator`** - The orchestration engine
-   - Implements the authority flow described below
-   - Produces `MigrationExecutionResult` with safe error codes
+5. **`DatabaseMigrationOrchestrator`** - 编排引擎
+   - 实现下文描述的持权流程
+   - 产生带安全错误码的 `MigrationExecutionResult`
 
-6. **`MigrationExecutionResult`** - Safe, immutable result
-   - `Succeeded` - Whether migration succeeded
-   - `ErrorCode` - Well-known safe error code (if failed)
-   - `ErrorMessage` - Safe message without secrets
-   - `ExecutorWasCalled` - Whether the executor was invoked
+6. **`MigrationExecutionResult`** - 安全的不可变结果
+   - `Succeeded` - 迁移是否成功
+   - `ErrorCode` - 众所周知的安全错误码（失败时）
+   - `ErrorMessage` - 不含秘密的安全消息
+   - `ExecutorWasCalled` - executor 是否被调用
 
-7. **`WellKnownMigrationErrorCodes`** - Standard error codes
+7. **`WellKnownMigrationErrorCodes`** - 标准错误码
    - `migration.lock_not_supported`
    - `migration.lock_timeout`
    - `migration.lock_failed`
@@ -50,295 +49,290 @@ The core package defines the contract and orchestration logic without any databa
    - `migration.execution_failed`
    - `migration.final_state_invalid`
 
-8. **`DatabaseMigrationLockException`** - Safe lock failure exception
-   - `ErrorCode` property for structured error handling
-   - No connection strings or secrets in messages
+8. **`DatabaseMigrationLockException`** - 安全的锁失败异常
+   - `ErrorCode` 属性用于结构化错误处理
+   - 消息中不含连接字符串或秘密
 
-### PostgreSQL Provider (`ServiceMantle.Database.PostgreSql.Migration`)
+### PostgreSQL Provider（`ServiceMantle.Database.PostgreSql.Migration`）
 
-**`PostgreSqlMigrationLockProvider`** implements `IDatabaseMigrationLockProvider`:
+**`PostgreSqlMigrationLockProvider`** 实现 `IDatabaseMigrationLockProvider`：
 
-1. **Lock Key Derivation** (`ServiceIdToLockKeyDeriver`)
-   - Uses SHA-256 hash of `"ServiceMantle.Migration." + serviceId.Value`
-   - Reads first 8 bytes as signed 64-bit integer (big-endian)
-   - Deterministic and stable across processes, machines, and restarts
-   - Not dependent on `.GetHashCode()`
+1. **锁键推导**（`ServiceIdToLockKeyDeriver`）
+   - 使用 `"ServiceMantle.Migration." + serviceId.Value` 的 SHA-256 哈希
+   - 读取前 8 个字节作为有符号 64 位整数（大端序）
+   - 跨进程、跨机器、跨重启确定且稳定
+   - 不依赖 `.GetHashCode()`
 
-2. **Lock Acquisition** with bounded polling:
-   - Opens a dedicated Npgsql connection with timeout
-   - Uses `pg_try_advisory_lock()` for non-blocking acquisition
-   - Polls with 100ms intervals until lock acquired or deadline exceeded
-   - Respects both the caller's timeout and cancellation token
-   - Cancellation takes precedence over timeout
+2. **有界轮询的锁获取**：
+   - 打开一条带超时的专用 Npgsql 连接
+   - 使用 `pg_try_advisory_lock()` 进行非阻塞获取
+   - 以 100ms 间隔轮询，直到获得锁或超过截止时间
+   - 同时尊重调用方的超时与取消 token
+   - 取消优先于超时
 
-3. **Lock Lease** (`PostgreSqlMigrationLock`):
-   - Holds an open connection for the lock lifetime
-   - Probes the dedicated connection every 250ms with a one-second command timeout
-   - Signals detected session loss within a conservative five-second running-process bound
-   - On `DisposeAsync()`:
-     - Attempts explicit `pg_advisory_unlock()` if connection is open
-     - Closes connection (session lock released by PostgreSQL)
-     - Suppresses any errors to avoid masking primary exceptions
+3. **锁租约**（`PostgreSqlMigrationLock`）：
+   - 在锁的生命周期内保持一条打开的连接
+   - 每 250ms 以一秒命令超时探测该专用连接
+   - 在保守的五秒运行进程上界内发出检测到的会话丢失信号
+   - 在 `DisposeAsync()` 时：
+     - 若连接仍打开，尝试显式 `pg_advisory_unlock()`
+     - 关闭连接（会话锁由 PostgreSQL 释放）
+     - 抑制任何错误，避免掩盖主异常
 
-### Oracle Provider (`ServiceMantle.Database.Oracle.Migration`)
+### Oracle Provider（`ServiceMantle.Database.Oracle.Migration`）
 
-**`OracleMigrationLockProvider`** implements `IDatabaseMigrationLockProvider`:
+**`OracleMigrationLockProvider`** 实现 `IDatabaseMigrationLockProvider`：
 
-1. It derives `ServiceMantle.Migration.` plus the full lowercase SHA-256 digest of the normalized
-   `ServiceId`, avoiding the collision-prone caller-assigned numeric lock-ID range.
-2. It opens a dedicated target-user session with pooling and ambient enlistment disabled, validates
-   the supported runtime topology, allocates the handle with
-   `DBMS_LOCK.ALLOCATE_UNIQUE_AUTONOMOUS`, and requests `X_MODE` using the remaining bounded timeout
-   and `release_on_commit => FALSE`.
-3. A missing direct `EXECUTE ON SYS.DBMS_LOCK` grant maps to `migration.lock_not_supported`;
-   `REQUEST` code 1 maps to `migration.lock_timeout`; codes 2 through 5 and other operational
-   failures map to `migration.lock_failed`; caller cancellation remains `OperationCanceledException`.
-4. The acquired lease probes its dedicated session every 250 milliseconds with a one-second command
-   timeout and uses the provider-neutral `LeaseLost` signal. Disposal explicitly calls
-   `DBMS_LOCK.RELEASE` and then closes the unpooled session.
+1. 它以 `ServiceMantle.Migration.` 加上规范化 `ServiceId` 的完整小写 SHA-256 摘要来派生锁标识，
+   避开由调用方分配、容易冲突的数字 lock-ID 范围。
+2. 它打开一条禁用连接池与环境事务加入的专用目标用户会话，校验受支持的运行时拓扑，用
+   `DBMS_LOCK.ALLOCATE_UNIQUE_AUTONOMOUS` 分配句柄，并在剩余的有界超时内以
+   `release_on_commit => FALSE` 请求 `X_MODE`。
+3. 缺少直接的 `EXECUTE ON SYS.DBMS_LOCK` 授权映射为 `migration.lock_not_supported`；
+   `REQUEST` 返回码 1 映射为 `migration.lock_timeout`；返回码 2 到 5 及其他运行失败映射为
+   `migration.lock_failed`；调用方取消仍然是 `OperationCanceledException`。
+4. 获得的租约每 250 毫秒以一秒命令超时探测其专用会话，并使用与 provider 无关的 `LeaseLost`
+   信号。释放时显式调用 `DBMS_LOCK.RELEASE`，然后关闭这条非池化会话。
 
-## Orchestration Flow
+## 编排流程
 
-**The authority flow is:**
+**持权流程为：**
 
-1. **Parameter validation** - Check cancellation immediately
-2. **Lock resolution** - Find and acquire provider-specific lock
-   - Fail closed if no lock provider registered (security boundary)
-   - Fail closed on timeout or cancellation
-3. **Authority inspection** - Re-check state under the lock while monitoring `LeaseLost`
-4. **Decision tree**:
-   - If `CurrentVersionCompatible` → Skip execution, return success
-   - If `VersionTooNew` → Fail closed, do not execute
-   - If `InspectionFailed` → Fail closed, do not execute
-   - If `Empty` or `PendingMigration` → Call the executor once, and only in this branch
-5. **Authority re-inspection** - Check state after execution under the same monitored lease
-   - Success only if final state is `CurrentVersionCompatible`
-6. **Lock release** - Always in finally block, errors suppressed
+1. **参数校验** - 立即检查取消
+2. **锁解析** - 查找并获取 provider 特定的锁
+   - 未注册锁 provider 时失败关闭（安全边界）
+   - 超时或取消时失败关闭
+3. **持权检查** - 在锁内重新检查状态，同时监视 `LeaseLost`
+4. **决策树**：
+   - 若 `CurrentVersionCompatible` → 跳过执行，返回成功
+   - 若 `VersionTooNew` → 失败关闭，不执行
+   - 若 `InspectionFailed` → 失败关闭，不执行
+   - 若 `Empty` 或 `PendingMigration` → 调用 executor 一次，且只在此分支调用
+5. **持权复查** - 在同一受监视租约下检查执行后的状态
+   - 只有最终状态为 `CurrentVersionCompatible` 才算成功
+6. **锁释放** - 始终在 finally 块中，错误被抑制
 
-`ExecuteAsync` is therefore called at most once per orchestration, and not at all when the target is
-already compatible or when the observation fails closed. It is not "exactly once" in any global
-sense: repeating an orchestration against a target that still needs migration calls it again.
+因此 `ExecuteAsync` 每次编排至多被调用一次；当目标已兼容或观察失败关闭时完全不调用。
+它在任何全局意义上都不是「恰好一次」：对一个仍需要迁移的目标重复编排会再次调用它。
 
-Every executor call receives a token linked to caller cancellation and `LeaseLost`. The orchestrator
-checks caller cancellation first before and after every stage, so a caller-cancellation/lease-loss
-race remains `OperationCanceledException`. Lease loss maps to `migration.lock_failed`, records whether
-execution had started, and prevents a not-yet-started next stage. Executors must observe the supplied
-token promptly; loss detection cannot roll back side effects already committed by an executor.
+每次 executor 调用都收到一个链接了调用方取消与 `LeaseLost` 的 token。编排器在每个阶段前后都先
+检查调用方取消，因此调用方取消与租约丢失的竞争仍表现为 `OperationCanceledException`。租约丢失
+映射为 `migration.lock_failed`，记录执行是否已开始，并阻止尚未开始的下一阶段。executor 必须及时
+观察传入的 token；丢失检测无法回滚 executor 已提交的副作用。
 
-### The two `OrchestrateMigrationAsync` overloads
+### 两个 `OrchestrateMigrationAsync` 重载
 
-`DatabaseMigrationOrchestrator` exposes two overloads, and neither degrades into the other.
+`DatabaseMigrationOrchestrator` 暴露两个重载，二者都不会退化为对方。
 
-- **`(serviceId, bootstrap, lockAcquireTimeout, cancellationToken)`** always requires a real
-  distributed lease. A missing lock provider is not a reason to continue: it fails closed with
-  `migration.lock_not_supported`. This overload never consults a deployment declaration.
-- **`(serviceId, bootstrap, deploymentMode, lockAcquireTimeout, cancellationToken)`** validates the
-  consumer-supplied `DatabaseDeploymentMode` against the declared capabilities first. `MultiInstance`
-  runs exactly the flow above, real lease included. `SingleInstance` instead resolves the provider's
-  canonical target identity and serializes calls for that provider/target **within this process**;
-  it constructs no `IDatabaseMigrationLock`. `Unspecified`, an undefined mode, a provider with no
-  declared capability, or `SingleInstance`-only capability asked for `MultiInstance` all fail closed
-  with `migration.lock_not_supported`. This overload requires the three-argument constructor that
-  takes a `DatabaseDeploymentCapabilityRegistry`; used with the two-argument constructor it fails
-  closed as well.
+- **`(serviceId, bootstrap, lockAcquireTimeout, cancellationToken)`** 始终要求真实的分布式租约。
+  缺少锁 provider 不是继续执行的理由：它以 `migration.lock_not_supported` 失败关闭。
+  该重载绝不查阅部署声明。
+- **`(serviceId, bootstrap, deploymentMode, lockAcquireTimeout, cancellationToken)`** 先用声明的
+  能力校验消费方提供的 `DatabaseDeploymentMode`。`MultiInstance` 执行的正是上述流程，包含真实
+  租约。`SingleInstance` 则解析 provider 的规范目标标识，并**在本进程内**串行化同一
+  provider/目标的调用；它不构造任何 `IDatabaseMigrationLock`。`Unspecified`、未定义的模式、
+  没有声明能力的 provider，或只声明 `SingleInstance` 能力却要求 `MultiInstance`，都以
+  `migration.lock_not_supported` 失败关闭。该重载要求使用接收
+  `DatabaseDeploymentCapabilityRegistry` 的三参数构造函数；与两参数构造函数一起使用时同样
+  失败关闭。
 
-An absent lock provider never causes an automatic fall back to `SingleInstance`. The mode is a
-consumer decision, not something inferred from the registered providers or from the connection
-string - see
-[Explicit database deployment mode](README.md#explicit-database-deployment-mode) in `README.md`.
-Process-local serialization is not a cross-process lock and is not proof of deployment topology: two
-processes both configured as `SingleInstance` are neither detected nor coordinated.
+锁 provider 缺失绝不会自动回退到 `SingleInstance`。模式是消费方的决定，不能从已注册的
+provider 或连接字符串推断——见 `README.md` 中的
+[Explicit database deployment mode](README.md#explicit-database-deployment-mode)。
+进程内串行化不是跨进程锁，也不能证明部署拓扑：两个都配置为 `SingleInstance` 的进程既不会被
+检测到，也不会被协调。
 
-## Multi-Instance Behavior
+## 多实例行为
 
-When two instances attempt migration to the same database:
+当两个实例尝试对同一数据库执行迁移时：
 
-1. **Instance A** acquires the lock first
-2. **Instance B** waits during lock acquisition (polling with timeout)
-3. **Instance A** inspects, sees `PendingMigration`, calls executor, re-inspects, succeeds
-4. **Instance A** releases the lock in finally block
-5. **Instance B** finally acquires the lock
-6. **Instance B** inspects, sees `CurrentVersionCompatible` (due to Instance A's work)
-7. **Instance B** skips execution and returns success
-8. **Instance B** releases the lock
+1. **实例 A** 先获得锁
+2. **实例 B** 在锁获取期间等待（带超时轮询）
+3. **实例 A** 检查，看到 `PendingMigration`，调用 executor，复查，成功
+4. **实例 A** 在 finally 块中释放锁
+5. **实例 B** 最终获得锁
+6. **实例 B** 检查，看到 `CurrentVersionCompatible`（因为实例 A 的工作）
+7. **实例 B** 跳过执行并返回成功
+8. **实例 B** 释放锁
 
-Both instances report success, but only Instance A executed migrations. No duplicate execution or silent failures.
+两个实例都报告成功，但只有实例 A 执行了迁移。没有重复执行，也没有静默失败。
 
-## Security Boundaries
+## 安全边界
 
-### Error Codes
+### 错误码
 
-All migration failures produce safe, well-known error codes that:
-- Do not expose connection strings, passwords, or internal details
-- Can be logged and displayed safely
-- Are usable for structured error handling in consuming services
+所有迁移失败都产生安全的、众所周知的错误码，它们：
+- 不暴露连接字符串、密码或内部细节
+- 可以安全地记录和展示
+- 可供消费服务做结构化错误处理
 
-### Exception Messages
+### 异常消息
 
-`DatabaseMigrationLockException` and `MigrationExecutionResult` messages:
-- Never contain connection strings or authentication details
-- Classify errors by `ErrorCode` only
-- Provider exceptions are caught and re-wrapped with safe classification
+`DatabaseMigrationLockException` 与 `MigrationExecutionResult` 的消息：
+- 绝不包含连接字符串或认证细节
+- 只按 `ErrorCode` 分类错误
+- provider 异常会被捕获并以安全分类重新包装
 
-### Lock Secrets
+### 锁秘密
 
-The lock key is:
-- Derived deterministically from ServiceId
-- Never logged or exposed
-- The same across all invocations of the same ServiceId
-- Different for different ServiceIds (no cross-service contention)
+锁键：
+- 由 ServiceId 确定性派生
+- 绝不记录或暴露
+- 同一 ServiceId 的所有调用中保持一致
+- 不同 ServiceId 之间互不相同（没有跨服务竞争）
 
-## Testing and Validation Status
+## 测试与验证状态
 
-The unit and in-memory concurrency tests run in the normal solution suite. The real PostgreSQL
-Testcontainers suite requires Docker; it can be enabled locally and is exercised by GitHub Actions
-on every pull request and before release (see `.github/workflows/ci.yml`). Run
-`dotnet test --solution ServiceMantle.slnx` for current pass/fail/skip counts rather than relying on
-numbers recorded here, since counts drift as tests are added.
+单元与内存并发测试在常规解决方案套件中运行。真实 PostgreSQL Testcontainers 套件需要 Docker；
+它可以在本地启用，并由 GitHub Actions 在每个 pull request 和发布前执行（见
+`.github/workflows/ci.yml`）。当前的通过/失败/跳过数量请运行
+`dotnet test --solution ServiceMantle.slnx` 获取，而不要依赖此处记录的数字，因为数量会随测试
+增加而漂移。
 
-### Unit and in-memory tests (verified locally)
+### 单元与内存测试（已在本地验证）
 
-**`ServiceMantle.Tests.Migration`:**
-- `DatabaseMigrationOrchestratorTests` - Core orchestration logic, covering:
-  - Current-version skip, empty/pending-migration execution, version-too-new fail-closed
-  - Initial inspection failure, execution failure, final-state validation failure
-  - Cancellation before start and cancellation during execution (both leave the lease released exactly once)
-  - Lock timeout, lock-not-supported, and null-lease fail-closed paths
-  - Lease release count for every success and failure path (via `FakeMigrationLockProvider.LeaseDisposeCount`)
-  - Double-instance scenario with shared in-memory state (only one instance executes)
-  - Lease loss during initial inspection, execution, and final inspection
-  - Caller cancellation priority when it races with lease loss
-- `DatabaseMigrationLockProviderRegistryTests` - registry lookup, case-insensitivity, duplicate/null rejection
-- `ProviderIdCanonicalizationTests` - alias-to-canonical resolution across persistence, provider dispatch, target preparation, and lock lookup
+**`ServiceMantle.Tests.Migration`：**
+- `DatabaseMigrationOrchestratorTests` - 核心编排逻辑，覆盖：
+  - 当前版本跳过、空库/待迁移执行、版本过新失败关闭
+  - 初始检查失败、执行失败、最终状态校验失败
+  - 开始前取消与执行中取消（两者都使租约恰好释放一次）
+  - 锁超时、锁不支持与空租约的失败关闭路径
+  - 每条成功与失败路径的租约释放计数（通过 `FakeMigrationLockProvider.LeaseDisposeCount`）
+  - 共享内存状态的双实例场景（只有一个实例执行）
+  - 初始检查、执行与最终检查期间的租约丢失
+  - 调用方取消与租约丢失竞争时的取消优先级
+- `DatabaseMigrationLockProviderRegistryTests` - 注册表查找、大小写不敏感、重复/空值拒绝
+- `ProviderIdCanonicalizationTests` - 跨持久化、provider 分发、目标准备与锁查找的别名到规范 id 解析
 
-**`ServiceMantle.Database.PostgreSql.Tests.Migration`:**
-- `ServiceIdToLockKeyDeriverTests` - lock key derivation is deterministic, differs per ServiceId, matches fixed SHA-256 vectors, and rejects null input
+**`ServiceMantle.Database.PostgreSql.Tests.Migration`：**
+- `ServiceIdToLockKeyDeriverTests` - 锁键推导确定性、按 ServiceId 区分、匹配固定 SHA-256 向量、拒绝空输入
 
-**`ServiceMantle.Database.Oracle.Tests.Migration`:**
-- `OracleMigrationLockProviderTests` - full-digest fixed vectors, target-session isolation, timeout
-  and caller cancellation precedence, every `REQUEST` return-code mapping, missing direct privilege,
-  safe failures, explicit release, cleanup, and lease-loss signalling
+**`ServiceMantle.Database.Oracle.Tests.Migration`：**
+- `OracleMigrationLockProviderTests` - 完整摘要固定向量、目标会话隔离、超时与调用方取消优先级、
+  每个 `REQUEST` 返回码映射、缺少直接权限、安全失败、显式释放、清理与租约丢失信号
 
-### Real PostgreSQL tests (Testcontainers, require Docker, run in GitHub Actions CI)
+### 真实 PostgreSQL 测试（Testcontainers，需要 Docker，在 GitHub Actions CI 中运行）
 
-**`PostgreSqlMigrationLockConcurrencyTests`** is enabled via environment variable:
+**`PostgreSqlMigrationLockConcurrencyTests`** 通过环境变量启用：
 
 ```bash
 RUN_SERVICEMANTLE_POSTGRES_TESTS=true dotnet test --project tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj
 ```
 
-Optional image override:
+可选的镜像覆盖：
 ```bash
 SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true dotnet test --solution ServiceMantle.slnx
 ```
 
-**Advisory lock tests against a real PostgreSQL container:**
-- Same ServiceId uses same lock key; different ServiceIds use different keys
-- Second instance blocks on acquisition and only proceeds after the first releases
-- Different ServiceIds do not contend: `Lock_DifferentServiceIds_DontCompete` holds service-a's lease open and acquires service-b's lease with a short bounded timeout — if the two ServiceIds incorrectly mapped to the same advisory lock key, this acquisition would time out and fail the test deterministically
-- Lock acquisition respects timeout and fails safely with `LockTimeout`
-- Cancellation during polling throws (`OperationCanceledException` or `TaskCanceledException`)
-- Lock release allows re-acquisition
-- No secrets (passwords, connection strings) in exception messages
-- Deterministic `pg_terminate_backend` of the holding session during execution, proving that the
-  orchestrator returns `migration.lock_failed` within the five-second detection bound and does not
-  begin final inspection
+**针对真实 PostgreSQL 容器的 advisory lock 测试：**
+- 相同 ServiceId 使用相同锁键；不同 ServiceId 使用不同锁键
+- 第二个实例在获取时阻塞，只有在第一个释放后才继续
+- 不同 ServiceId 之间不竞争：`Lock_DifferentServiceIds_DontCompete` 保持 service-a 的租约打开，
+  并以一个短的有界超时获取 service-b 的租约——如果两个 ServiceId 被错误地映射到同一个 advisory
+  lock 键，这次获取会超时并确定性地使测试失败
+- 锁获取尊重超时，并以 `LockTimeout` 安全失败
+- 轮询期间取消会抛出（`OperationCanceledException` 或 `TaskCanceledException`）
+- 锁释放后允许重新获取
+- 异常消息中没有秘密（密码、连接字符串）
+- 执行期间对持有会话确定性地 `pg_terminate_backend`，证明编排器在五秒检测上界内返回
+  `migration.lock_failed` 且不开始最终检查
 
-**End-to-end orchestration test against a real PostgreSQL container:**
-- `OrchestratorDoubleInstance_OnlyOneExecutes_ViaAdvisoryLock` runs two orchestrator instances concurrently against the same ServiceId and a real `test_migration_state` table. A shared gate (`TaskCompletionSource`, `RunContinuationsAsynchronously`) holds the winning executor inside `ExecuteAsync` — with the advisory lock still held, verified by a bounded probe acquisition that must time out — until the second orchestrator's own acquisition attempt has started. Both executors share the same gate, so if the advisory lock failed to provide mutual exclusion, both would reach `ExecuteAsync` and, once released, race to increment `execution_count` concurrently. The test asserts both orchestrators succeed, exactly one reports `ExecutorWasCalled`, `execution_count` is exactly 1, and the final state is `current` — making the assertions fail deterministically if locking is broken, rather than passing by timing coincidence.
+**针对真实 PostgreSQL 容器的端到端编排测试：**
+- `OrchestratorDoubleInstance_OnlyOneExecutes_ViaAdvisoryLock` 让两个编排器实例针对同一 ServiceId
+  和真实的 `test_migration_state` 表并发运行。一个共享门（`TaskCompletionSource`，
+  `RunContinuationsAsynchronously`）把胜出的 executor 保持在 `ExecuteAsync` 内部——此时 advisory
+  lock 仍被持有，由一次必须超时的有界探测获取来验证——直到第二个编排器自己的获取尝试已经开始。
+  两个 executor 共享同一个门，因此如果 advisory lock 未能提供互斥，二者都会到达 `ExecuteAsync`，
+  并在门放行后并发竞争递增 `execution_count`。测试断言两个编排器都成功、恰好一个报告
+  `ExecutorWasCalled`、`execution_count` 恰好为 1、最终状态为 `current`——使锁失效时断言确定性
+  失败，而不是靠时序巧合通过。
 
-**Test infrastructure:**
-- Testcontainers PostgreSQL (image configurable via `SERVICEMANTLE_POSTGRES_IMAGE`, default `postgres:15-alpine`) with automatic lifecycle management
-- Real test database with a migration-state table created and dropped per orchestration test
-- Real `PostgreSqlMigrationLockProvider` using PostgreSQL advisory locks (no fake/in-memory locking in these tests)
-- Real `DatabaseMigrationOrchestrator` orchestrating both instances
+**测试基础设施：**
+- Testcontainers PostgreSQL（镜像可通过 `SERVICEMANTLE_POSTGRES_IMAGE` 配置，默认
+  `postgres:15-alpine`），自动生命周期管理
+- 真实测试数据库，每次编排测试创建并删除一张迁移状态表
+- 真实的 `PostgreSqlMigrationLockProvider`，使用 PostgreSQL advisory lock（这些测试中没有
+  fake/内存锁）
+- 真实的 `DatabaseMigrationOrchestrator` 编排两个实例
 
-### Real Oracle tests (pinned FREEPDB1, require the shared Oracle environment)
+### 真实 Oracle 测试（固定 FREEPDB1，需要共享 Oracle 环境）
 
-`OracleMigrationLockRealDatabaseTests` uses the hard-fail environment registered in
-`eng/packages.json`. It proves same-service exclusion, different-service independence,
-release/reacquire and unpooled connection cleanup, bounded timeout, caller cancellation, direct
-package-permission denial, termination before acquisition, deterministic termination during initial
-inspection/execution/final inspection, and two-orchestrator lock-held recheck with exactly one real
-state update. CI and ReleaseTool require the environment, fail on missing variables, skips, zero
-discovered tests, container or connection failure, and use the ADR-pinned Oracle Database Free image.
+`OracleMigrationLockRealDatabaseTests` 使用在 `eng/packages.json` 中登记的硬失败环境。它证明
+同服务互斥、不同服务独立、释放/重获取与非池化连接清理、有界超时、调用方取消、直接的包权限
+拒绝、获取前终止、初始检查/执行/最终检查期间的确定性终止，以及双编排器持锁复查且恰好一次真实
+状态更新。CI 与 ReleaseTool 要求该环境，在变量缺失、跳过、发现零个测试、容器或连接失败时失败，
+并使用 ADR 固定的 Oracle Database Free 镜像。
 
-## Limitations and Future Work
+## 局限与后续工作
 
-### Current Scope (Implemented)
+### 当前范围（已实现）
 
-- Migration lock providers for five database products, each documented with its own key derivation,
-  acquisition, lease-probing and release semantics in `README.md`:
-  [PostgreSQL advisory lock](README.md#postgresql-advisory-lock),
-  [Oracle `DBMS_LOCK`](README.md#oracle-dbms_lock),
-  [MySQL named lock](README.md#mysql-named-lock),
-  [MariaDB named lock](README.md#mariadb-named-lock), and
+- 五种数据库产品的迁移锁 provider，各自的键推导、获取、租约探测与释放语义都在 `README.md`
+  中记录：
+  [PostgreSQL advisory lock](README.md#postgresql-advisory-lock)、
+  [Oracle `DBMS_LOCK`](README.md#oracle-dbms_lock)、
+  [MySQL named lock](README.md#mysql-named-lock)、
+  [MariaDB named lock](README.md#mariadb-named-lock) 与
   [SQL Server application lock](README.md#sql-server-application-lock)
-- Multi-instance safe orchestration
-- Explicit deployment-mode validation and process-local `SingleInstance` serialization
-- Deterministic lock key derivation
-- Timeout and cancellation support
-- Structured safe error handling
-- Comprehensive unit and concurrency tests
-- Lease-loss detection during all orchestration stages
+- 多实例安全编排
+- 显式部署模式校验与进程内 `SingleInstance` 串行化
+- 确定性锁键推导
+- 超时与取消支持
+- 结构化安全错误处理
+- 完整的单元与并发测试
+- 所有编排阶段中的租约丢失检测
 
-### Out of Scope (Not Implemented)
+### 范围之外（未实现）
 
-- A migration lock provider for SQLite. SQLite has **no cross-process migration lock** in this
-  repository. It participates only through the explicit `SingleInstance` deployment mode, which
-  serializes migrations inside one process and is not a claim of multi-instance support; asking for
-  `MultiInstance` on SQLite fails closed with `migration.lock_not_supported`
-- Database creation or target preparation (see the separate "Database target preparation" section in `README.md`, added independently of this migration orchestration work)
-- Configuration tables or audit tables
-- Setup code or management admin features
-- EF Core automatic migration execution
-- Break-glass/emergency unlock procedures
-- Fencing tokens or automatic rollback of executor side effects committed before lease loss
+- SQLite 的迁移锁 provider。SQLite 在本仓库中**没有跨进程迁移锁**。它只通过显式的
+  `SingleInstance` 部署模式参与，该模式在一个进程内串行化迁移，不构成多实例支持的主张；
+  对 SQLite 要求 `MultiInstance` 会以 `migration.lock_not_supported` 失败关闭
+- 数据库创建或目标准备（见 `README.md` 中独立的「Database target preparation」一节，它是独立于
+  本迁移编排工作加入的）
+- 配置表或审计表
+- Setup code 或管理端功能
+- EF Core 自动迁移执行
+- Break-glass/紧急解锁流程
+- fencing token，或对租约丢失前 executor 已提交副作用的自动回滚
 
-Delivered lock support is per product and per documented boundary. It is not a claim that every
-provider offers equivalent topology support, nor that any of them is production-ready for a given
-deployment.
+已交付的锁支持是按产品、按已记录边界而言的。它不主张每个 provider 提供等价的拓扑支持，
+也不主张其中任何一个对给定部署已达到生产可用。
 
-The five-second PostgreSQL bound assumes a running process with normally scheduled timers and a
-working Npgsql command-timeout mechanism. Process suspension, severe scheduler starvation, and a
-runtime or network stack that cannot deliver the configured timeout are explicit non-guarantees.
+PostgreSQL 的五秒上界假设进程正常运行、定时器正常调度、Npgsql 命令超时机制正常工作。进程挂起、
+严重的调度器饥饿，以及无法交付配置超时的运行时或网络栈，都是明确的不保证项。
 
-### Future Provider Support
+### 未来的 provider 支持
 
-When additional providers are needed:
-1. Implement `IDatabaseMigrationLockProvider` in provider package
-2. Register provider instance in `DatabaseMigrationLockProviderRegistry`
-3. Provider must support timeout and cancellation semantics
-4. Use deterministic lock key derivation aligned with PostgreSQL pattern
+需要更多 provider 时：
+1. 在 provider 包中实现 `IDatabaseMigrationLockProvider`
+2. 在 `DatabaseMigrationLockProviderRegistry` 中注册 provider 实例
+3. provider 必须支持超时与取消语义
+4. 使用与 PostgreSQL 模式一致的确定性锁键推导
 
-SQLite keeps the explicit single-instance route rather than a silent no-op lock: the consumer states
-`SingleInstance` and owns that deployment assumption. A no-op `IDatabaseMigrationLockProvider` that
-pretends to hold a lease must not be added.
+SQLite 保持显式的单实例路径，而不是静默的 no-op 锁：消费方声明 `SingleInstance` 并自己承担该
+部署假设。不得添加一个假装持有租约的 no-op `IDatabaseMigrationLockProvider`。
 
-## Integration Example
+## 集成示例
 
-This is a **composition** example. It shows how a consuming service hands its own executor to the
-orchestrator; it deliberately does not show how to write that executor.
+这是一个**组合**示例。它展示消费服务如何把自己的 executor 交给编排器；它刻意不展示如何编写
+那个 executor。
 
-Deciding whether an unknown database is safe to adopt is the consuming service's own problem, and it
-cannot be answered generically. In particular, "`GetPendingMigrations()` is empty" does not mean the
-target is compatible - a database holding a migration id this build has never heard of also reports
-no pending migrations - and "the business tables are empty" is not permission to take over a schema
-somebody else created. An executor must decide from evidence it can actually read, and refuse what
-it cannot classify.
+判断一个未知数据库是否可以安全接管是消费服务自己的问题，无法给出通用答案。特别地，
+「`GetPendingMigrations()` 为空」不意味着目标兼容——一个持有本构建从未听说过的迁移 id 的数据库
+同样报告没有待执行迁移——「业务表为空」也不是接管别人创建的 schema 的许可。executor 必须依据
+它真正能读到的证据做决定，并拒绝它无法分类的东西。
 
-`IDatabaseMigrationExecutor` is documented in
-[Database migration orchestration](README.md#database-migration-orchestration) in `README.md`:
-`InspectAsync` is read-only and returns one of the five finite `MigrationObservationState` values,
-`ExecuteAsync` runs the consuming service's own workflow, and both receive a token linked to caller
-cancellation and `LeaseLost` that they must observe promptly. Cancellation cannot roll back side
-effects the executor has already committed.
+`IDatabaseMigrationExecutor` 记录在 `README.md` 的
+[Database migration orchestration](README.md#database-migration-orchestration) 中：
+`InspectAsync` 是只读的，返回五个有限的 `MigrationObservationState` 值之一，
+`ExecuteAsync` 运行消费服务自己的工作流，二者都收到一个链接了调用方取消与 `LeaseLost` 的
+token，且必须及时观察它。取消无法回滚 executor 已经提交的副作用。
 
-For a worked example of a finite, conservative observation over a schema a service really owns, see
-the reference sample's consumer-owned SQLite executor,
-`samples/ServiceMantle.ReferenceService/Database/Sqlite/ReferenceSqliteMigrationExecutor.cs`, and
-[its acceptance notes](docs/testing/reference-sqlite-deployment.md). Its rules are specific to that
-sample's schema; they are an illustration, not a library algorithm to copy blindly.
+关于对服务真正拥有的 schema 做有限、保守观察的完整示例，见参考样例中消费方自有的 SQLite
+executor：
+`samples/ServiceMantle.ReferenceService/Database/Sqlite/ReferenceSqliteMigrationExecutor.cs`，
+以及[它的验收说明](docs/testing/reference-sqlite-deployment.md)。它的规则特定于该样例的
+schema；它们是示例，不是可以盲目照搬的库算法。
 
 ```csharp
 // 1. The consuming service supplies its own IDatabaseMigrationExecutor implementation.
@@ -375,53 +369,54 @@ logger.LogInformation(
     result.ExecutorWasCalled);
 ```
 
-To let a consumer state `SingleInstance` instead, use the deployment-aware constructor and overload
-described in [Explicit database deployment mode](README.md#explicit-database-deployment-mode).
+要让消费方改为声明 `SingleInstance`，请使用
+[Explicit database deployment mode](README.md#explicit-database-deployment-mode) 中描述的
+部署感知构造函数与重载。
 
-## Files Changed
+## 变更文件
 
-### Core Package
+### 核心包
 
-**New files:**
-- `src/ServiceMantle/Migration/IDatabaseMigrationExecutor.cs` - Extension point
-- `src/ServiceMantle/Migration/IDatabaseMigrationLock.cs` - Lock lease interface
-- `src/ServiceMantle/Migration/IDatabaseMigrationLockProvider.cs` - Lock provider SPI
-- `src/ServiceMantle/Migration/DatabaseMigrationLockProviderRegistry.cs` - Provider registry
-- `src/ServiceMantle/Migration/DatabaseMigrationOrchestrator.cs` - Orchestration engine
-- `src/ServiceMantle/Migration/MigrationExecutionResult.cs` - Safe result model
-- `src/ServiceMantle/Migration/DatabaseMigrationLockException.cs` - Safe exception
-- `src/ServiceMantle/Migration/WellKnownMigrationErrorCodes.cs` - Error code constants
+**新增文件：**
+- `src/ServiceMantle/Migration/IDatabaseMigrationExecutor.cs` - 扩展点
+- `src/ServiceMantle/Migration/IDatabaseMigrationLock.cs` - 锁租约接口
+- `src/ServiceMantle/Migration/IDatabaseMigrationLockProvider.cs` - 锁 provider SPI
+- `src/ServiceMantle/Migration/DatabaseMigrationLockProviderRegistry.cs` - provider 注册表
+- `src/ServiceMantle/Migration/DatabaseMigrationOrchestrator.cs` - 编排引擎
+- `src/ServiceMantle/Migration/MigrationExecutionResult.cs` - 安全结果模型
+- `src/ServiceMantle/Migration/DatabaseMigrationLockException.cs` - 安全异常
+- `src/ServiceMantle/Migration/WellKnownMigrationErrorCodes.cs` - 错误码常量
 
 ### PostgreSQL Provider
 
-**New files:**
+**新增文件：**
 - `src/ServiceMantle.Database.PostgreSql/Migration/PostgreSqlMigrationLockProvider.cs`
 - `src/ServiceMantle.Database.PostgreSql/Migration/PostgreSqlMigrationLock.cs`
 - `src/ServiceMantle.Database.PostgreSql/Migration/ServiceIdToLockKeyDeriver.cs`
 
-**Modified files:**
-- `src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj` - Updated description and tags
+**修改文件：**
+- `src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj` - 更新描述与标签
 
-### Core Tests
+### 核心测试
 
-**New files:**
+**新增文件：**
 - `tests/ServiceMantle.Tests/Migration/DatabaseMigrationOrchestratorTests.cs`
 - `tests/ServiceMantle.Tests/Migration/DatabaseMigrationLockProviderRegistryTests.cs`
-- `tests/ServiceMantle.Tests/Migration/FakeMigrationExecutor.cs` - Test double
-- `tests/ServiceMantle.Tests/Migration/FakeMigrationLockProvider.cs` - Test double
+- `tests/ServiceMantle.Tests/Migration/FakeMigrationExecutor.cs` - 测试替身
+- `tests/ServiceMantle.Tests/Migration/FakeMigrationLockProvider.cs` - 测试替身
 
-### PostgreSQL Tests
+### PostgreSQL 测试
 
-**New files:**
+**新增文件：**
 - `tests/ServiceMantle.Database.PostgreSql.Tests/Migration/ServiceIdToLockKeyDeriverTests.cs`
 - `tests/ServiceMantle.Database.PostgreSql.Tests/Migration/PostgreSqlMigrationLockConcurrencyTests.cs`
 
-**Modified files:**
-- `tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj` - Added Testcontainers
+**修改文件：**
+- `tests/ServiceMantle.Database.PostgreSql.Tests/ServiceMantle.Database.PostgreSql.Tests.csproj` - 加入 Testcontainers
 
-### Configuration and Documentation
+### 配置与文档
 
-**Modified files:**
-- `Directory.Packages.props` - Added Testcontainers packages
-- `README.md` - Added migration orchestration section
-- `MIGRATION_ORCHESTRATION.md` - This document
+**修改文件：**
+- `Directory.Packages.props` - 加入 Testcontainers 包
+- `README.md` - 新增迁移编排章节
+- `MIGRATION_ORCHESTRATION.md` - 本文档

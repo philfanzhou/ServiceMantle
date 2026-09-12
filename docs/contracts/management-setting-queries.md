@@ -1,16 +1,14 @@
-# Management setting query contract
+# Management 设置项查询契约
 
-`MapServiceMantleSettingQueries` adds two read-only endpoints to the protected management API v1
-group: `GET /settings/definitions` returns the registered setting catalog, and `GET /settings`
-returns the current value of every setting in one complete, successfully refreshed version. They are
-a thin HTTP adaptation of the existing provider-independent `ServiceSettingQueryService`: they add no
-store, no root-key source, no cache, and no write path.
+`MapServiceMantleSettingQueries` 向受保护的 management API v1 组添加两个只读 endpoint：
+`GET /settings/definitions` 返回已注册的设置项目录，`GET /settings` 在一个完整、刷新成功的
+版本中返回每个设置项的当前值。它们是既有的 provider 无关 `ServiceSettingQueryService` 的一层
+薄 HTTP 适配：不添加任何 store、root-key source、缓存或写入路径。
 
-This document describes the fixed projections, the bounded input, the single failure answer, and what
-is explicitly not covered. The surrounding baseline is described in
-[the protected management API v1 contract](management-api-v1.md).
+本文档描述固定的投影、有界输入、唯一的失败应答，以及明确不覆盖的内容。周边基线在
+[受保护的 management API v1 契约](management-api-v1.md) 中描述。
 
-## Wiring
+## 接线
 
 ```csharp
 builder.Services
@@ -34,46 +32,43 @@ var management = app.MapServiceMantleManagementApiV1();
 management.MapServiceMantleSettingQueries();
 ```
 
-The endpoints are opt-in. `AddServiceMantleManagementApiV1` and `MapServiceMantleManagementApiV1`
-never add them, so a host that does not call `MapServiceMantleSettingQueries` exposes nothing here.
-The consuming service owns the store or snapshot source, the definition catalog, and — whenever the
-catalog contains a sensitive setting — the root-key source; `AddServiceMantleSettingSnapshots` is the
-registration that binds them. A host that maps these endpoints without that capability, maps them
-more than once, or maps them onto any route group other than the one returned by
-`MapServiceMantleManagementApiV1` (including a nested group below it) fails before the host starts
-with a fixed message that never repeats a configured value.
+这些 endpoint 是选择性启用的。`AddServiceMantleManagementApiV1` 和
+`MapServiceMantleManagementApiV1` 从不添加它们，因此没有调用 `MapServiceMantleSettingQueries`
+的宿主在这里不会暴露任何内容。消费服务拥有 store 或快照源、定义目录，以及——只要目录中包含敏感
+设置项——root-key source；`AddServiceMantleSettingSnapshots` 就是把它们绑定在一起的注册。宿主
+若不具备该能力却映射这些 endpoint、把它们映射多次，或者把它们映射到
+`MapServiceMantleManagementApiV1` 返回的路由组之外的任何路由组（包括其下的嵌套组），都会在宿主
+启动前失败，且失败消息固定、绝不重复任何已配置的值。
 
-| Route | Default full path | Refreshes |
+| 路由 | 默认完整路径 | 刷新行为 |
 | --- | --- | --- |
-| `GET /settings/definitions` | `/management/v1/settings/definitions` | Never |
-| `GET /settings` | `/management/v1/settings` | Exactly once per request |
+| `GET /settings/definitions` | `/management/v1/settings/definitions` | 从不刷新 |
+| `GET /settings` | `/management/v1/settings` | 每个请求恰好刷新一次 |
 
-A custom versioned root moves both endpoints with the group. Neither endpoint accepts a write method,
-and neither exposes an update, Setup, audit or search surface.
+自定义版本化根会随路由组一起移动这两个 endpoint。两个 endpoint 都不接受写入方法，也都不暴露
+更新、Setup、审计或搜索面。
 
-## The `group` query
+## `group` 查询参数
 
-Both endpoints accept one optional query parameter, spelled exactly `group`.
+两个 endpoint 都接受一个可选查询参数，拼写必须完全为 `group`。
 
-| Rule | Value |
+| 规则 | 值 |
 | --- | --- |
-| Occurrences | At most one; a repeated `group` is rejected |
-| Other parameters | None. Any other query key is rejected, alone or alongside `group` |
-| Raw length | At most 128 characters |
-| Normalization | `Trim()` then `ToLowerInvariant()`; the result must be non-empty |
-| Syntax | `[a-z0-9][a-z0-9._-]*`, the same shape as a normalized setting key |
-| Match | `key == group`, or `key` starts with `group + "."` (ordinal) |
+| 出现次数 | 至多一次；重复的 `group` 会被拒绝 |
+| 其他参数 | 没有。任何其他查询键都会被拒绝，无论单独出现还是与 `group` 一起出现 |
+| 原始长度 | 至多 128 个字符 |
+| 规范化 | 先 `Trim()` 再 `ToLowerInvariant()`；结果必须非空 |
+| 语法 | `[a-z0-9][a-z0-9._-]*`，与规范化后的设置项键形状相同 |
+| 匹配 | `key == group`，或 `key` 以 `group + "."` 开头（ordinal 比较） |
 
-There is no group domain model and no group registry: the value is a filter over keys. An accepted
-group that matches nothing returns an empty collection — for current values, together with the
-version of the complete refresh that just succeeded. Rejected input answers the fixed management
-`400` result (`management.request.invalid`) and never echoes the value.
+不存在 group 领域模型，也没有 group 注册表：这个值只是对键的过滤器。一个被接受但没有匹配到任何
+键的 group 返回空集合——对当前值而言，同时附上刚刚成功完成的那次完整刷新的版本。被拒绝的输入
+应答固定的 management `400` 结果（`management.request.invalid`），并且从不回显该值。
 
-The filter shapes output only. It never reduces the work of the underlying load, decryption and
-validation, and it can never let an unknown key, a corrupt value, or any other failure of the
-complete snapshot answer `200` for a different group.
+过滤器只影响输出的形状。它绝不减少底层加载、解密和校验的工作量，也绝不可能让未知键、损坏值或
+完整快照的任何其他失败，为另一个 group 应答 `200`。
 
-## Definition response
+## 定义响应
 
 ```json
 {
@@ -90,15 +85,13 @@ complete snapshot answer `200` for a different group.
 }
 ```
 
-`200 application/json`. Each item carries exactly those six fields, in that order, and the items are
-sorted by key in ascending ordinal order. `valueType` is one of `string`, `number`, `boolean`,
-`json`.
+`200 application/json`。每一项恰好携带这六个字段、按此顺序，且各项按键以 ordinal 升序排序。
+`valueType` 是 `string`、`number`、`boolean`、`json` 之一。
 
-The catalog is projected from the safe definition projection the core query service already produces.
-The response contains no default value and no constraint object — only `hasDefault`. This request
-never refreshes the snapshot and therefore never touches the store, the root key, or the network.
+目录是从核心查询服务已经产出的安全定义投影投射而来。响应中不包含默认值，也不包含约束对象——
+只有 `hasDefault`。这个请求从不刷新快照，因此绝不触碰 store、root key 或网络。
 
-## Current-value response
+## 当前值响应
 
 ```json
 {
@@ -119,59 +112,49 @@ never refreshes the snapshot and therefore never touches the store, the root key
 }
 ```
 
-`200 application/json`. `version` is the int64 version of the one complete snapshot this request
-refreshed; every item comes from that same version. Each item carries exactly those nine fields, in
-that order, sorted by key in ascending ordinal order. `source` is one of `missing`, `default`,
-`persisted`. A `null` field is always written, never omitted.
+`200 application/json`。`version` 是本请求刷新的那一个完整快照的 int64 版本；每一项都来自
+同一版本。每一项恰好携带这九个字段、按此顺序，按键以 ordinal 升序排序。`source` 是 `missing`、
+`default`、`persisted` 之一。值为 `null` 的字段总是被写出，绝不省略。
 
-`value` is the existing invariant normalization of a non-sensitive value — an invariant decimal for
-`number`, `true`/`false` for `boolean`, canonical JSON text for `json` — and is `null` whenever the
-value is missing **or** the definition is marked sensitive. That holds for every sensitive value type,
-including sensitive `number`, `boolean` and `json`.
+`value` 是非敏感值按既有 invariant 规范化的结果——`number` 是 invariant 十进制数，`boolean`
+是 `true`/`false`，`json` 是规范 JSON 文本——并且只要值缺失**或**定义被标记为敏感，它就是
+`null`。这对每一种敏感值类型都成立，包括敏感的 `number`、`boolean` 和 `json`。
 
-## Rejections
+## 拒绝
 
-| Situation | Status | Body |
+| 情况 | 状态码 | 响应体 |
 | --- | --- | --- |
-| Invalid, repeated or unknown query input | 400 | Problem Details, `management.request.invalid` |
-| Any refresh failure of the complete snapshot | 503 | `{"errorCode":"management.settings.unavailable"}` |
-| Phase gate, session, permission and quota rejections | 503 / 401 / 403 / 429 | The management API v1 baseline, unchanged |
-| Unexpected unmapped exception | 500 | Problem Details, `http.internal_server_error` |
+| 无效、重复或未知的查询输入 | 400 | Problem Details，`management.request.invalid` |
+| 完整快照的任何刷新失败 | 503 | `{"errorCode":"management.settings.unavailable"}` |
+| 阶段门、会话、权限和配额拒绝 | 503 / 401 / 403 / 429 | management API v1 基线，保持不变 |
+| 未预期的未映射异常 | 500 | Problem Details，`http.internal_server_error` |
 
-The `503` body is closed. It covers every failure classification the existing loader produces —
-unknown or duplicate key, mixed or missing version, type mismatch, a sensitive value that is not in a
-supported envelope, corrupt ciphertext, a wrong or unavailable root key, a value or composite
-constraint failure, a storage error, and a stale or same-version conflicting snapshot — and it never
-reports which one, never names a key, and never answers a partial or previously activated value.
+`503` 响应体是封闭的。它覆盖既有加载器产生的每一种失败分类——未知或重复的键、混杂或缺失的
+版本、类型不匹配、不在受支持封装中的敏感值、损坏的密文、错误或不
+可用的 root key、值或复合约束失败、存储错误，以及过期或同版本冲突的快照——并且从不报告是哪一
+种，从不点名某个键，也从不应答部分值或先前已激活的值。
 
-Caller cancellation stays caller cancellation: an already cancelled request never refreshes, and a
-cancellation while another refresh holds the loader's lock, or during a cooperative read, surfaces as
-the caller's own cancellation rather than a `503` or a `500`. Answers carry the six mandatory security
-response headers and exactly one `x-correlation-id`, and are identical in Development and Production.
+调用方取消始终是调用方取消：已取消的请求从不刷新；在另一次刷新持有加载器锁期间的取消，或协作式
+读取过程中的取消，表现为调用方自己的取消，而不是 `503` 或 `500`。应答携带六个强制安全响应
+Header 和恰好一个 `x-correlation-id`，并且在 Development 和 Production 中完全一致。
 
-## Consumer responsibilities
+## 消费方职责
 
-- Mark every setting whose value is secret as sensitive. A value that is not marked sensitive is
-  readable by design, and this endpoint does not try to detect a secret inside it.
-- Own the store, the definition catalog, the root-key source, and the accuracy of the persisted
-  version. Keys, identity, version and a well-formed Correlation ID must stay publicly disclosable.
-- Own authorization beyond the group's `Admin` baseline, and own writes: this contract has no update
-  path.
+- 将每个值为机密的设置项标记为敏感。未标记为敏感的值在设计上就是可读的，这个 endpoint 不会
+  试图检测其中是否含有机密。
+- 拥有 store、定义目录、root-key source，以及持久化版本的准确性。键、身份、版本和格式良好的
+  Correlation ID 必须保持可公开披露。
+- 拥有超出路由组 `Admin` 基线的授权，并拥有写入：本契约没有更新路径。
 
-## Not included and not guaranteed
+## 不包含与不保证
 
-- No transactional update, Setup flow, audit query, default or constraint detail, paging, search,
-  cache or background refresh. Those are owned by their own tasks and are **not** delivered here.
-- The guarantee is that a value marked sensitive never reaches this response body, the fixed errors,
-  or this endpoint's own diagnostics; that the definition response carries no default and no
-  constraint object; and that a failed refresh answers no partial or previous value. It does not
-  cover replaced library services or policies, third-party logging, process memory, or anything after
-  the response has started.
-- Grouping affects output only. There is no bound on catalog size, value size, a blocking source, or
-  a synchronous validator, no additional internal query timeout, and only the cooperative cancellation
-  the source and loader already provide.
-- One response is one version; two requests may observe different versions. A refresh may activate
-  the process-local snapshot accessor, which is part of the existing query contract — no database is
-  written, no consumer unit of work is committed, and no cross-instance atomic publication is implied.
-- A phase change after the gate admitted the request does not retract it, and this contract carries no
-  cross-site write protection.
+- 没有事务性更新、Setup 流程、审计查询、默认值或约束细节、分页、搜索、缓存或后台刷新。这些由
+  各自的任务拥有，**不**在这里交付。
+- 保证是：标记为敏感的值绝不出现在此响应体、固定错误或这个 endpoint 自己的诊断中；定义响应不
+  携带默认值和约束对象；刷新失败时绝不应答部分值或先前的值。它不覆盖被替换的库服务或策略、
+  第三方日志、进程内存，或响应开始写出之后的任何事情。
+- 分组只影响输出。对目录大小、值大小、阻塞式 source 或同步校验器没有界限，没有额外的内部查询
+  超时，只有 source 和加载器已经提供的协作式取消。
+- 一个响应就是一个版本；两个请求可能观察到不同的版本。刷新可能激活进程本地的快照访问器，这是
+  既有查询契约的一部分——不写数据库、不提交消费方工作单元，也不隐含任何跨实例原子发布。
+- 阶段门放行请求之后的阶段变化不会撤回该请求，本契约也不携带任何跨站写入保护。
