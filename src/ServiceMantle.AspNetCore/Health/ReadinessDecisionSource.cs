@@ -15,9 +15,10 @@ namespace ServiceMantle.AspNetCore.Health;
 /// output outranks all of those: the read ends with an <see cref="OperationCanceledException"/>
 /// carrying the caller's own token rather than with a finite failure code, and that holds for an
 /// ordinary source failure and a <see cref="TimeoutException"/> just as it does for a completed
-/// snapshot. Caller cancellation is notified on the token the source received before the linked
-/// source is released. An internal timeout without a caller cancellation stays a timeout; the
-/// cancellation the caller may observe after this checkpoint is not covered.
+/// snapshot. Caller cancellation and budget expiry are both notified on the token the source
+/// received before the linked source is released. An internal timeout without a caller
+/// cancellation stays a timeout; the cancellation the caller may observe after this checkpoint is
+/// not covered.
 /// </remarks>
 internal sealed class ReadinessDecisionSource(
     IServiceProvider serviceProvider,
@@ -67,11 +68,11 @@ internal sealed class ReadinessDecisionSource(
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
-            return SnapshotFailure(linked, cancellationToken, ProbeTimeout);
+            return BudgetExpired(linked, cancellationToken);
         }
         catch (TimeoutException)
         {
-            return SnapshotFailure(linked, cancellationToken, ProbeTimeout);
+            return BudgetExpired(linked, cancellationToken);
         }
         catch
         {
@@ -133,6 +134,28 @@ internal sealed class ReadinessDecisionSource(
                 snapshot,
                 contribution.ErrorCode ??
                     WellKnownServiceReadinessContributorErrorCodes.ContributorFailed);
+    }
+
+    /// <summary>
+    /// The budget expiry exit: the snapshot source is notified on the token it received before the
+    /// linked source is released, whatever timer reached the deadline first, and a caller
+    /// cancellation that raced the budget still outranks the timeout classification.
+    /// </summary>
+    private static ServiceReadinessDecision BudgetExpired(
+        CancellationTokenSource linked,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            linked.Cancel();
+        }
+        catch (AggregateException)
+        {
+            // Cancellation callbacks that throw are outside the cooperative cancellation contract
+            // and must not replace the budget expiry result.
+        }
+
+        return SnapshotFailure(linked, cancellationToken, ProbeTimeout);
     }
 
     /// <summary>
