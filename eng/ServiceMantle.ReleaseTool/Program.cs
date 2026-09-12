@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using System.Xml;
 using System.Xml.Linq;
 
 namespace ServiceMantle.ReleaseTool;
@@ -647,20 +648,49 @@ internal static class ArtifactVerifier
         string commit)
     {
         var packagePath = Path.Combine(inputPath, $"{package.Id}.{version}.nupkg");
-        using var archive = ZipFile.OpenRead(packagePath);
-        var nuspecEntry = archive.Entries.SingleOrDefault(entry =>
-            entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase)) ??
+        using var archive = OpenPackageArchive(packagePath, out var entries);
+        var nuspecEntries = entries
+            .Where(entry => entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (nuspecEntries.Length != 1)
+        {
             throw new ReleaseToolException("A package artifact does not contain exactly one nuspec.");
-        using var stream = nuspecEntry.Open();
-        var nuspec = XDocument.Load(stream);
+        }
+
+        XDocument nuspec;
+        try
+        {
+            using var stream = nuspecEntries[0].Open();
+            nuspec = XDocument.Load(stream);
+        }
+        catch (XmlException)
+        {
+            throw new ReleaseToolException("A package artifact contains a nuspec that is not valid XML.");
+        }
+        catch (InvalidDataException)
+        {
+            throw new ReleaseToolException("A package artifact is not a readable zip archive.");
+        }
 
         RequireElementValue(nuspec, "id", package.Id);
         RequireElementValue(nuspec, "version", version);
         RequireElementValue(nuspec, "license", "MIT");
 
-        var repository = nuspec.Descendants().SingleOrDefault(element =>
-            element.Name.LocalName == "repository") ??
+        var repositories = nuspec
+            .Descendants()
+            .Where(element => element.Name.LocalName == "repository")
+            .ToArray();
+        if (repositories.Length == 0)
+        {
             throw new ReleaseToolException("A package is missing repository metadata.");
+        }
+
+        if (repositories.Length > 1)
+        {
+            throw new ReleaseToolException("A package contains duplicate repository metadata.");
+        }
+
+        var repository = repositories[0];
         if (!string.Equals((string?)repository.Attribute("type"), "git", StringComparison.Ordinal) ||
             !string.Equals(
                 (string?)repository.Attribute("url"),
@@ -713,10 +743,38 @@ internal static class ArtifactVerifier
         }
     }
 
+    /// <summary>
+    /// Opens a package archive and reads its entry list under the same classification. A read-mode
+    /// <see cref="ZipArchive"/> reads the end-of-central-directory record when it is constructed but
+    /// only reads the central directory when the entry list is first requested, so both reads have
+    /// to happen here for damage at either point to end as a controlled failure.
+    /// </summary>
+    private static ZipArchive OpenPackageArchive(
+        string packagePath,
+        out IReadOnlyList<ZipArchiveEntry> entries)
+    {
+        ZipArchive? archive = null;
+        try
+        {
+            archive = ZipFile.OpenRead(packagePath);
+            entries = archive.Entries;
+            return archive;
+        }
+        catch (InvalidDataException)
+        {
+            archive?.Dispose();
+            throw new ReleaseToolException("A package artifact is not a readable zip archive.");
+        }
+    }
+
     private static void RequireElementValue(XDocument document, string name, string expected)
     {
-        var value = document.Descendants().SingleOrDefault(element => element.Name.LocalName == name)?.Value;
-        if (!string.Equals(value, expected, StringComparison.Ordinal))
+        var matches = document
+            .Descendants()
+            .Where(element => element.Name.LocalName == name)
+            .ToArray();
+        if (matches.Length != 1 ||
+            !string.Equals(matches[0].Value, expected, StringComparison.Ordinal))
         {
             throw new ReleaseToolException($"A package contains incorrect {name} metadata.");
         }
