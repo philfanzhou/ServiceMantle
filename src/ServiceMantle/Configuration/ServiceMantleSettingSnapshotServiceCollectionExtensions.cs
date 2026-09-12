@@ -5,7 +5,7 @@ using ServiceMantle.Configuration;
 namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>Registers provider-independent typed service-setting snapshots.</summary>
-public static class ServiceSettingSnapshotServiceCollectionExtensions
+public static class ServiceMantleSettingSnapshotServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the immutable definition registry, snapshot source adapter, current accessor,

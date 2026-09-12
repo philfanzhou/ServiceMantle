@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.AspNetCore.Health;
@@ -22,6 +23,7 @@ using ServiceMantle.AspNetCore.Http;
 using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.AspNetCore.PhaseGate;
 using ServiceMantle.AspNetCore.RateLimiting;
+using ServiceMantle.Configuration;
 using ServiceMantle.Database.Sqlite;
 using ServiceMantle.Diagnostics;
 using ServiceMantle.Logging;
@@ -150,6 +152,15 @@ try
     ReportType(typeof(SqliteBootstrapDatabaseProvider));
     ReportType(typeof(SqliteDatabaseTargetPreparationProvider));
     ReportType(typeof(SqliteConnectionStringBuilder));
+
+    // The core snapshot registration entry kept the product prefix on its class name: it lives
+    // in a framework namespace, which carries no product information. Naming it unqualified with
+    // every framework namespace in scope is the collision check, and calling it statically on a
+    // separate collection proves the registration form without wiring an unconfigured setting
+    // store into the running host.
+    ReportType(typeof(ServiceMantleSettingSnapshotServiceCollectionExtensions));
+    _ = ServiceMantleSettingSnapshotServiceCollectionExtensions.AddServiceMantleSettingSnapshots(
+        new ServiceCollection());
 
     Console.WriteLine($"Correlation ID header: {ServiceHeaderNames.CorrelationId}.");
     Console.WriteLine($"Problem type prefix: {ProblemDetailsDefaults.TypeUriPrefix}.");
