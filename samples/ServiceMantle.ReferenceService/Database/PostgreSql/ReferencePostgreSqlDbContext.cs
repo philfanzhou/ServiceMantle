@@ -1,10 +1,11 @@
 using Microsoft.EntityFrameworkCore;
+using ServiceMantle.Persistence.EntityFrameworkCore;
 using ServiceMantle.ReferenceService.Data;
 
 namespace ServiceMantle.ReferenceService.Database.PostgreSql;
 
 /// <summary>
-/// The consumer-owned PostgreSQL context for the sample's workspace tables.
+/// The consumer-owned PostgreSQL context for the sample's workspace and installation tables.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,16 +16,21 @@ namespace ServiceMantle.ReferenceService.Database.PostgreSql;
 /// storage types instead.
 /// </para>
 /// <para>
-/// It maps only the workspace business table. Installation state, setup, configuration, and audit
-/// tables are not part of this context, and the schema it describes is never evidence that a service
-/// installation has been completed.
+/// Besides the workspace business table it maps the ServiceMantle installation table through the
+/// public EF Core persistence package's own mapping, so the storage types, lengths, defaults, and
+/// the version concurrency token stay owned by that package. Mapping the table is schema only: the
+/// schema it describes is never evidence that a service installation has been completed, and this
+/// context creates no installation rows on its own.
 /// </para>
 /// </remarks>
 public sealed class ReferencePostgreSqlDbContext(DbContextOptions<ReferencePostgreSqlDbContext> options)
-    : DbContext(options)
+    : DbContext(options), IServiceDbContext
 {
     /// <summary>The workspace table this sample owns.</summary>
     public DbSet<ReferenceWorkspace> Workspaces => Set<ReferenceWorkspace>();
+
+    /// <summary>The ServiceMantle installation table mapped by the persistence package.</summary>
+    public DbSet<ServiceInstallationEntity> ServiceInstallations => Set<ServiceInstallationEntity>();
 
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -39,5 +45,6 @@ public sealed class ReferencePostgreSqlDbContext(DbContextOptions<ReferencePostg
                 .HasMaxLength(120)
                 .HasColumnType("character varying(120)");
         });
+        modelBuilder.AddServiceMantleInstallation();
     }
 }
