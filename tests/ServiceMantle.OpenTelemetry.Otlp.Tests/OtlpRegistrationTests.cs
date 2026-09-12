@@ -13,6 +13,7 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using ServiceMantle.AspNetCore;
+using ServiceMantle.Diagnostics;
 using ServiceMantle.OpenTelemetry.Otlp;
 using Xunit;
 
@@ -28,7 +29,7 @@ public sealed class OtlpRegistrationTests
     {
         var (builder, serviceMantle) = CreateHostBuilder();
         var resolver = new RecordingResolver();
-        builder.Services.AddSingleton<IOtlpAuthenticationHeaderResolver>(resolver);
+        builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(resolver);
         serviceMantle.AddOpenTelemetryOtlpExporter(options =>
         {
             options.Traces.AuthenticationHeaderName = "trace-secret";
@@ -154,7 +155,7 @@ public sealed class OtlpRegistrationTests
     {
         const string secret = "resolver-internal-token-secret";
         var (builder, serviceMantle) = CreateHostBuilder();
-        builder.Services.AddSingleton<IOtlpAuthenticationHeaderResolver>(
+        builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
             new RecordingResolver(failure: new InvalidOperationException(secret)));
         serviceMantle.AddOpenTelemetryOtlpExporter(options =>
         {
@@ -177,9 +178,9 @@ public sealed class OtlpRegistrationTests
     {
         const string token = "Bearer header-token-secret";
         var resolver = new RecordingResolver(
-            header: new OtlpAuthenticationHeader("Authorization", token));
+            header: new RemoteTelemetryAuthenticationHeader("Authorization", token));
         var (builder, serviceMantle) = CreateHostBuilder();
-        builder.Services.AddSingleton<IOtlpAuthenticationHeaderResolver>(resolver);
+        builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(resolver);
         serviceMantle.AddOpenTelemetryOtlpExporter(options =>
         {
             options.Traces.Enabled = true;
@@ -214,8 +215,8 @@ public sealed class OtlpRegistrationTests
         const string unsafeName = "Authorization\r\nX-Leak";
         const string secret = "header-value-secret";
         var (builder, serviceMantle) = CreateHostBuilder();
-        builder.Services.AddSingleton<IOtlpAuthenticationHeaderResolver>(
-            new RecordingResolver(new OtlpAuthenticationHeader(unsafeName, secret)));
+        builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
+            new RecordingResolver(new RemoteTelemetryAuthenticationHeader(unsafeName, secret)));
         serviceMantle.AddOpenTelemetryOtlpExporter(options =>
         {
             EnableTrace(options, "https://collector.example:4317/");
@@ -263,9 +264,9 @@ public sealed class OtlpRegistrationTests
     public async Task Caller_cancellation_before_startup_validation_does_not_resolve_authentication()
     {
         var resolver = new RecordingResolver(
-            header: new OtlpAuthenticationHeader("Authorization", "cancel-secret"));
+            header: new RemoteTelemetryAuthenticationHeader("Authorization", "cancel-secret"));
         var (builder, serviceMantle) = CreateHostBuilder();
-        builder.Services.AddSingleton<IOtlpAuthenticationHeaderResolver>(resolver);
+        builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(resolver);
         serviceMantle.AddOpenTelemetryOtlpExporter(options =>
         {
             EnableTrace(options, "https://collector.example:4317/");
@@ -287,8 +288,8 @@ public sealed class OtlpRegistrationTests
         await using var collector = await LoopbackCollector.StartAsync(HttpProtocols.Http1);
         const string token = "Bearer collector-token-secret";
         var (builder, serviceMantle) = CreateHostBuilder();
-        builder.Services.AddSingleton<IOtlpAuthenticationHeaderResolver>(
-            new RecordingResolver(new OtlpAuthenticationHeader("Authorization", token)));
+        builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
+            new RecordingResolver(new RemoteTelemetryAuthenticationHeader("Authorization", token)));
         builder.Services.AddOpenTelemetry().WithTracing(tracing => tracing.AddSource(TraceSourceName));
         serviceMantle.AddOpenTelemetryOtlpExporter(options =>
         {
@@ -395,8 +396,8 @@ public sealed class OtlpRegistrationTests
         const string token = "Bearer failed-export-token-secret";
         var unavailablePort = ReserveUnusedPort();
         var (builder, serviceMantle) = CreateHostBuilder();
-        builder.Services.AddSingleton<IOtlpAuthenticationHeaderResolver>(
-            new RecordingResolver(new OtlpAuthenticationHeader("Authorization", token)));
+        builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
+            new RecordingResolver(new RemoteTelemetryAuthenticationHeader("Authorization", token)));
         builder.Services.AddOpenTelemetry().WithTracing(tracing => tracing.AddSource(TraceSourceName));
         serviceMantle.AddOpenTelemetryOtlpExporter(options =>
         {
@@ -447,14 +448,14 @@ public sealed class OtlpRegistrationTests
     }
 
     private sealed class RecordingResolver(
-        OtlpAuthenticationHeader? header = null,
-        Exception? failure = null) : IOtlpAuthenticationHeaderResolver
+        RemoteTelemetryAuthenticationHeader? header = null,
+        Exception? failure = null) : IRemoteTelemetryAuthenticationResolver
     {
         private int callCount;
         public int CallCount => Volatile.Read(ref callCount);
-        public OtlpAuthenticationHeader? Header { get; } = header;
+        public RemoteTelemetryAuthenticationHeader? Header { get; } = header;
 
-        public bool TryResolve(string name, out OtlpAuthenticationHeader? resolved)
+        public bool TryResolve(string name, out RemoteTelemetryAuthenticationHeader? resolved)
         {
             Interlocked.Increment(ref callCount);
             if (failure is not null)

@@ -49,6 +49,12 @@ try
     // Microsoft.Extensions.DependencyInjection, next to every framework namespace in scope.
     builder.Services.AddSingleton<IRemoteLogAuthorizationResolver, ConsumerAuthorizationResolver>();
 
+    // The remote telemetry authentication resolver is the provider-neutral contract: it is
+    // implemented and registered entirely through ServiceMantle.Diagnostics and
+    // Microsoft.Extensions.DependencyInjection, next to every framework namespace in scope.
+    builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
+        new FixedHeaderResolver("trace-auth", "consumer-trace-secret"));
+
     ServiceMantleBuilder serviceMantle = builder.Services.AddServiceMantle(
         ServiceId.Parse("package-consumer"),
         InstanceId.Parse("package-consumer-01"),
@@ -71,6 +77,7 @@ try
         options.Traces.Enabled = true;
         options.Traces.Protocol = OtlpProtocol.Grpc;
         options.Traces.Endpoint = new Uri("https://collector.invalid:4317/");
+        options.Traces.AuthenticationHeaderName = "trace-auth";
     });
     serviceMantle.AddOpenTelemetryPrometheusEndpoint(options =>
     {
@@ -167,4 +174,22 @@ static void ReportType(Type type) => Console.WriteLine($"Resolved {type.FullName
 sealed class ConsumerAuthorizationResolver : IRemoteLogAuthorizationResolver
 {
     public string? ResolveAuthorizationHeader(string name) => "Bearer package-consumer-placeholder";
+}
+
+// The neutral authentication resolver contract from ServiceMantle.Diagnostics; the provider
+// package resolves it at host startup and never sees the header value in diagnostics.
+sealed class FixedHeaderResolver(string resolvedName, string resolvedValue)
+    : IRemoteTelemetryAuthenticationResolver
+{
+    public bool TryResolve(string name, out RemoteTelemetryAuthenticationHeader? header)
+    {
+        if (name != resolvedName)
+        {
+            header = null;
+            return false;
+        }
+
+        header = new RemoteTelemetryAuthenticationHeader(resolvedName, resolvedValue);
+        return true;
+    }
 }
