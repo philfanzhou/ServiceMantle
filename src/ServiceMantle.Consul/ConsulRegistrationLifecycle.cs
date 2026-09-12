@@ -63,25 +63,47 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
 
     /// <summary>
     /// Resolves the session exactly once. A disabled configuration creates no client, sampler,
-    /// timer, or loop; a configuration failure fails host startup without retrying.
+    /// timer, or loop; a configuration failure fails host startup without retrying. A caller
+    /// cancellation observed after client creation settles outranks every provider outcome - the
+    /// disabled result, every configuration failure category, and a produced session, which is
+    /// then disposed exactly once - and ends the start in a safe cancellation carrying only the
+    /// caller's own token.
     /// </summary>
+    /// <exception cref="OperationCanceledException">The caller cancelled the start.</exception>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var created = provider.CreateClient();
-        if (created is null)
+        ConsulClientSession? created;
+        try
         {
-            State = ConsulLifecycleState.Disabled;
-            Presence = ConsulRemotePresence.Absent;
-            return;
+            created = provider.CreateClient();
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            // Cancellation outranks the finite configuration categories; nothing the factory or
+            // provider produced reached the lifecycle, so there is nothing to dispose here.
+            ThrowIfStartupCancelledByCaller(cancellationToken);
+            throw;
         }
 
         if (cancellationToken.IsCancellationRequested)
         {
             // The session was produced before cancellation was observed, so it is disposed here
-            // rather than leaked; disposal is not deregistration.
-            DisposeSession(created);
-            cancellationToken.ThrowIfCancellationRequested();
+            // rather than leaked; disposal is not deregistration, and a failed disposal only
+            // records its diagnostic without masking the caller cancellation.
+            if (created is { } owned)
+            {
+                DisposeSession(owned);
+            }
+
+            ThrowIfStartupCancelledByCaller(cancellationToken);
+        }
+
+        if (created is null)
+        {
+            State = ConsulLifecycleState.Disabled;
+            Presence = ConsulRemotePresence.Absent;
+            return;
         }
 
         session = created;
@@ -559,6 +581,20 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
         }
 
         return signalled;
+    }
+
+    /// <summary>
+    /// The single cancellation exit of start. It carries the caller's own token and nothing else:
+    /// no provider or factory exception, no configuration category, and no Consul detail.
+    /// </summary>
+    private static void ThrowIfStartupCancelledByCaller(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(
+                "The Consul registration start was cancelled by the caller.",
+                cancellationToken);
+        }
     }
 
     /// <summary>
