@@ -149,24 +149,26 @@ internal static class ManagementSessionHandlers
             // cancellation is answered, so a cancelled caller still gets its own token back. A
             // response that already started keeps what it sent: repairing it is a declared
             // non-guarantee, and no second body is written for it either.
-            var terminated = !context.Response.HasStarted &&
-                !TryRestoreSetCookie(context.Response, snapshot);
-            if (terminated)
-            {
-                // The response may still carry a complete or chunked part of this failed ticket and
-                // cannot be repaired, so the connection is aborted rather than completed.
-                context.Abort();
-            }
-
+            var restored = RollBackSignIn(context, snapshot);
             if (cancellationToken.IsCancellationRequested)
             {
                 throw CancelledByCaller(linked, cancellationToken);
             }
 
             // A failed sign-in sends no cookie, so the caller must not be told it has a session.
-            return terminated
-                ? ManagementSessionResult.Terminated
-                : ManagementSessionResult.Unavailable;
+            return restored
+                ? ManagementSessionResult.Unavailable
+                : ManagementSessionResult.Terminated;
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            // A sign-in that completed after the caller aborted is not delivered either: its ticket
+            // is rolled back to the pre-sign-in snapshot before the cancellation is answered, and a
+            // sign-out is never used to compensate. A response that already started keeps what it
+            // sent.
+            RollBackSignIn(context, snapshot);
+            throw CancelledByCaller(linked, cancellationToken);
         }
 
         return ManagementSessionResult.NoContent;
@@ -199,9 +201,25 @@ internal static class ManagementSessionHandlers
     {
         context.RequestAborted.ThrowIfCancellationRequested();
 
-        var resolution = context.RequestServices
-            .GetRequiredService<IManagementCurrentOperatorResolver>()
-            .Resolve(context.User);
+        ManagementCurrentOperatorResult? resolution;
+        try
+        {
+            resolution = context.RequestServices
+                .GetRequiredService<IManagementCurrentOperatorResolver>()
+                .Resolve(context.User);
+        }
+        catch (Exception) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // A resolver that settles after the request aborted - whether it answered or failed -
+            // does not get to deliver that outcome, and its exception is not propagated either.
+            throw CancelledByCaller(context.RequestAborted);
+        }
+
+        if (context.RequestAborted.IsCancellationRequested)
+        {
+            throw CancelledByCaller(context.RequestAborted);
+        }
+
         if (resolution?.Status != ManagementCurrentOperatorStatus.Resolved ||
             resolution.Identity is null)
         {
@@ -227,6 +245,11 @@ internal static class ManagementSessionHandlers
             }
 
             return ManagementSessionResult.Unavailable;
+        }
+
+        if (context.RequestAborted.IsCancellationRequested)
+        {
+            throw CancelledByCaller(context.RequestAborted);
         }
 
         return authentication.Succeeded && authentication.Properties?.ExpiresUtc is { } expiresUtc
@@ -263,6 +286,13 @@ internal static class ManagementSessionHandlers
             return ManagementSessionResult.Unavailable;
         }
 
+        if (context.RequestAborted.IsCancellationRequested)
+        {
+            // The deletion cookie stays on the response: a cancelled logout must not revive the old
+            // session by rolling the deletion back, and the fixed 204 is not delivered either.
+            throw CancelledByCaller(context.RequestAborted);
+        }
+
         return ManagementSessionResult.NoContent;
     }
 
@@ -281,6 +311,31 @@ internal static class ManagementSessionHandlers
         }
 
         return snapshot;
+    }
+
+    /// <summary>
+    /// The shared rollback exit of every sign-in whose result must not be delivered: the response's
+    /// <c>Set-Cookie</c> values are restored to the snapshot taken before the sign-in, a response
+    /// that already started keeps exactly what it sent, and a response whose headers refuse the
+    /// restore is aborted rather than completed. Reports whether the response can still be
+    /// completed normally.
+    /// </summary>
+    private static bool RollBackSignIn(HttpContext context, string?[] snapshot)
+    {
+        if (context.Response.HasStarted)
+        {
+            return true;
+        }
+
+        if (TryRestoreSetCookie(context.Response, snapshot))
+        {
+            return true;
+        }
+
+        // The response may still carry a complete or chunked part of this ticket and cannot be
+        // repaired, so the connection is aborted rather than completed.
+        context.Abort();
+        return false;
     }
 
     /// <summary>

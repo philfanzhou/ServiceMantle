@@ -57,7 +57,9 @@ public static class ServiceMantleManagementSessionEndpointRouteBuilderExtensions
     /// A sign-in that appended or replaced <c>Set-Cookie</c> values before it failed is rolled back
     /// to the snapshot taken before it started, so a failed login sends no complete or chunked part
     /// of that ticket and keeps the cookies the response already carried, in their original count
-    /// and order. The rollback runs before the caller's cancellation is answered and uses no
+    /// and order. The same rollback covers a sign-in that completed after the request aborted: its
+    /// ticket is restored before the caller's cancellation is answered and the fixed <c>204</c> is
+    /// not delivered. The rollback runs before the caller's cancellation is answered and uses no
     /// sign-out compensation. A response that has already started is left as sent, an unreadable
     /// snapshot starts no sign-in, and a restore that cannot be applied aborts the connection
     /// instead of completing a response that still carries part of the ticket.
@@ -69,7 +71,10 @@ public static class ServiceMantleManagementSessionEndpointRouteBuilderExtensions
     /// and <c>HEAD</c> answers the same status and headers with no body. Logout calls the fixed
     /// scheme's sign-out and answers <c>204</c> only once the cookie deletion is on the response; it
     /// is local and stateless and revokes no copied ticket. Caller cancellation propagates its
-    /// original token.
+    /// original token: the operator resolver, the authenticate call, and the sign-out are all
+    /// observed once they settle, and a completion seen after the request aborted - including a
+    /// logout's written deletion cookie, which stays on the response - answers the cancellation
+    /// instead of a normal result.
     /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">
