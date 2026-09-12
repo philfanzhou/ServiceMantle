@@ -261,31 +261,61 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
             budget.Token);
         try
         {
-            await using var scope = scopeFactory.CreateAsyncScope();
-            // The default decision source is scoped, so exactly one is resolved per sample and the
-            // scope lives until that sample settles.
-            var source = scope.ServiceProvider.GetRequiredService<IServiceReadinessDecisionSource>();
-            var decision = await source.GetDecisionAsync(linked.Token).ConfigureAwait(false);
-            if (decision is null)
+            bool? decision;
+            await using (var scope = scopeFactory.CreateAsyncScope())
             {
-                Record(ConsulLifecycleDiagnostics.ReadinessUnavailable);
-                return false;
+                // The default decision source is scoped, so exactly one is resolved per sample and the
+                // scope lives until that sample settles.
+                var source = scope.ServiceProvider.GetRequiredService<IServiceReadinessDecisionSource>();
+                var observed = await source.GetDecisionAsync(linked.Token).ConfigureAwait(false);
+                decision = observed is null ? null : observed.IsReady;
             }
 
-            return decision.IsReady;
+            // Scope creation, resolution, the call itself, and disposal all settle before the
+            // completion helper runs, so a budget exhausted by any of them rejects the decision.
+            return CompleteSample(cancellationToken, budget, decision, failure: null);
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
+            // A stopping lifecycle outranks every other classification and records nothing.
             return false;
         }
-        catch
+        catch (Exception exception)
+        {
+            return CompleteSample(cancellationToken, budget, decision: null, failure: exception);
+        }
+    }
+
+    /// <summary>
+    /// Decides one sample after its scope has settled. Lifetime cancellation outranks an expired
+    /// readiness budget, which outranks the decision and the failure classification, and at most one
+    /// terminal diagnostic is recorded for the sample.
+    /// </summary>
+    private bool CompleteSample(
+        CancellationToken lifetime,
+        CancellationTokenSource budget,
+        bool? decision,
+        Exception? failure)
+    {
+        if (lifetime.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        if (budget.IsCancellationRequested)
+        {
+            Record(ConsulLifecycleDiagnostics.ReadinessTimeout);
+            return false;
+        }
+
+        if (decision is null || failure is not null)
         {
             // Scope creation, resolution, the call itself, and disposal all fail closed.
-            Record(budget.IsCancellationRequested
-                ? ConsulLifecycleDiagnostics.ReadinessTimeout
-                : ConsulLifecycleDiagnostics.ReadinessUnavailable);
+            Record(ConsulLifecycleDiagnostics.ReadinessUnavailable);
             return false;
         }
+
+        return decision.Value;
     }
 
     /// <summary>The single owner of every mutable field, the session, and all remote operations.</summary>
