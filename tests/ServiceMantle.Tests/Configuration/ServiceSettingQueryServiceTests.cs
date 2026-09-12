@@ -195,6 +195,26 @@ public sealed class ServiceSettingQueryServiceTests
     }
 
     [Fact]
+    public async Task Cancellation_outranking_a_source_failure_propagates_the_original_token()
+    {
+        var registry = Registry(new ServiceSettingDefinition(
+            "product.name", ServiceSettingValueType.String, isRequired: true));
+        var source = new Source(Read(1, Value("product.name", 1, ServiceSettingValueType.String, "old")));
+        using var loader = Loader(source, registry);
+        var service = new ServiceSettingQueryService(registry, loader);
+        Assert.True((await service.GetCurrentAsync(TestContext.Current.CancellationToken)).Succeeded);
+        using var cancellation = new CancellationTokenSource();
+        source.Failure = new InvalidOperationException("Host=provider-secret");
+        source.CancelFirst = cancellation;
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            service.GetCurrentAsync(cancellation.Token).AsTask());
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+        Assert.DoesNotContain("provider-secret", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Concurrent_queries_never_mix_fields_from_two_versions()
     {
         var registry = Registry(
@@ -290,6 +310,7 @@ public sealed class ServiceSettingQueryServiceTests
     {
         public ServiceSettingSnapshotRead Read { get; set; } = read;
         public Exception? Failure { get; set; }
+        public CancellationTokenSource? CancelFirst { get; set; }
         public int CallCount { get; private set; }
 
         public ValueTask<ServiceSettingSnapshotRead> LoadAsync(
@@ -297,9 +318,13 @@ public sealed class ServiceSettingQueryServiceTests
             CancellationToken cancellationToken = default)
         {
             CallCount++;
-            return Failure is null
-                ? ValueTask.FromResult(Read)
-                : ValueTask.FromException<ServiceSettingSnapshotRead>(Failure);
+            if (Failure is null)
+            {
+                return ValueTask.FromResult(Read);
+            }
+
+            CancelFirst?.Cancel();
+            return ValueTask.FromException<ServiceSettingSnapshotRead>(Failure);
         }
     }
 
