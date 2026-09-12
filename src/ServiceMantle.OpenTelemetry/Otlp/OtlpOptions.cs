@@ -91,32 +91,3 @@ public sealed class OtlpOptions
     public override string ToString() =>
         $"OtlpOptions(TracingEnabled={Traces.Enabled}, MetricsEnabled={Metrics.Enabled})";
 }
-
-/// <summary>Contains one resolved OTLP authentication header.</summary>
-public sealed class OtlpAuthenticationHeader
-{
-    /// <summary>Initializes a resolved authentication header.</summary>
-    public OtlpAuthenticationHeader(string name, string value)
-    {
-        ArgumentNullException.ThrowIfNull(name);
-        ArgumentNullException.ThrowIfNull(value);
-        Name = name;
-        Value = value;
-    }
-
-    /// <summary>Gets the HTTP header name.</summary>
-    public string Name { get; }
-
-    /// <summary>Gets the secret HTTP header value.</summary>
-    public string Value { get; }
-
-    /// <summary>Returns metadata only and never includes the header value.</summary>
-    public override string ToString() => "OtlpAuthenticationHeader(Resolved=True)";
-}
-
-/// <summary>Resolves an OTLP authentication header by a non-secret configuration name.</summary>
-public interface IOtlpAuthenticationHeaderResolver
-{
-    /// <summary>Attempts to resolve one authentication header.</summary>
-    bool TryResolve(string name, out OtlpAuthenticationHeader? header);
-}

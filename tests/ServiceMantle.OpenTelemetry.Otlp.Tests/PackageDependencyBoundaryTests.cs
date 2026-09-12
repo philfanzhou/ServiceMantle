@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using ServiceMantle.Diagnostics;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Otlp.Tests;
@@ -14,8 +15,6 @@ public sealed class PackageDependencyBoundaryTests
                      typeof(OtlpProtocol),
                      typeof(OtlpConfigurationException),
                      typeof(WellKnownOtlpErrorCodes),
-                     typeof(IOtlpAuthenticationHeaderResolver),
-                     typeof(OtlpAuthenticationHeader),
                  })
         {
             Assert.Equal("ServiceMantle.OpenTelemetry", type.Assembly.GetName().Name);
@@ -25,6 +24,23 @@ public sealed class PackageDependencyBoundaryTests
         Assert.Equal(
             "ServiceMantle.OpenTelemetry",
             typeof(ServiceMantleOtlpBuilderExtensions).Assembly.GetName().Name);
+    }
+
+    // The remote telemetry authentication contracts are provider-neutral (ADR 0007 class A): they
+    // live in the core package's ServiceMantle.Diagnostics namespace so a consumer can implement
+    // the resolver without any provider-named using. Exporting still requires this package.
+    [Fact]
+    public void Remote_telemetry_authentication_contracts_ship_in_the_core_assembly()
+    {
+        foreach (var type in new[]
+                 {
+                     typeof(IRemoteTelemetryAuthenticationResolver),
+                     typeof(RemoteTelemetryAuthenticationHeader),
+                 })
+        {
+            Assert.Equal("ServiceMantle", type.Assembly.GetName().Name);
+            Assert.Equal("ServiceMantle.Diagnostics", type.Namespace);
+        }
     }
 
     // Merging the exporter into the instrumentation package removes the dependency isolation that

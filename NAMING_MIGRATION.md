@@ -104,7 +104,9 @@ namespace 跨越两个程序集。
 | `ServiceMantle.OpenTelemetry.ServiceMantleOpenTelemetryOptions` | `ServiceMantle.OpenTelemetry.OpenTelemetryOptions` |
 | `ServiceMantle.OpenTelemetry.ServiceMantleMetrics` | `ServiceMantle.OpenTelemetry.ServiceMetrics` |
 | `ServiceMantle.OpenTelemetry.Otlp.IServiceMantleOtlpAuthenticationHeaderResolver` | `ServiceMantle.OpenTelemetry.Otlp.IOtlpAuthenticationHeaderResolver` |
+| `ServiceMantle.OpenTelemetry.Otlp.IOtlpAuthenticationHeaderResolver` | `ServiceMantle.Diagnostics.IRemoteTelemetryAuthenticationResolver` |
 | `ServiceMantle.OpenTelemetry.Otlp.ServiceMantleOtlpAuthenticationHeader` | `ServiceMantle.OpenTelemetry.Otlp.OtlpAuthenticationHeader` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpAuthenticationHeader` | `ServiceMantle.Diagnostics.RemoteTelemetryAuthenticationHeader` |
 | `ServiceMantle.OpenTelemetry.Otlp.ServiceMantleOtlpConfigurationException` | `ServiceMantle.OpenTelemetry.Otlp.OtlpConfigurationException` |
 | `ServiceMantle.OpenTelemetry.Otlp.ServiceMantleOtlpMetricOptions` | `ServiceMantle.OpenTelemetry.Otlp.OtlpMetricOptions` |
 | `ServiceMantle.OpenTelemetry.Otlp.ServiceMantleOtlpOptions` | `ServiceMantle.OpenTelemetry.Otlp.OtlpOptions` |

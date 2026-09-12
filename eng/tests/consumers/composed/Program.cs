@@ -23,6 +23,7 @@ using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.AspNetCore.PhaseGate;
 using ServiceMantle.AspNetCore.RateLimiting;
 using ServiceMantle.Database.Sqlite;
+using ServiceMantle.Diagnostics;
 using ServiceMantle.OpenTelemetry;
 using ServiceMantle.OpenTelemetry.Otlp;
 using ServiceMantle.OpenTelemetry.Prometheus;
@@ -41,6 +42,12 @@ try
 
     builder.AddServiceMantleSerilog(options => options.MinimumLevel = "Information");
     builder.AddServiceMantleGrafanaLoki(options => options.Enabled = false);
+
+    // The remote telemetry authentication resolver is the provider-neutral contract: it is
+    // implemented and registered entirely through ServiceMantle.Diagnostics and
+    // Microsoft.Extensions.DependencyInjection, next to every framework namespace in scope.
+    builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
+        new FixedHeaderResolver("trace-auth", "consumer-trace-secret"));
 
     ServiceMantleBuilder serviceMantle = builder.Services.AddServiceMantle(
         ServiceId.Parse("package-consumer"),
@@ -64,6 +71,7 @@ try
         options.Traces.Enabled = true;
         options.Traces.Protocol = OtlpProtocol.Grpc;
         options.Traces.Endpoint = new Uri("https://collector.invalid:4317/");
+        options.Traces.AuthenticationHeaderName = "trace-auth";
     });
     serviceMantle.AddOpenTelemetryPrometheusEndpoint(options =>
     {
@@ -152,3 +160,21 @@ static void Report<T>() => Console.WriteLine($"Resolved {typeof(T).FullName}.");
 
 // Static classes and open generics cannot be type arguments, so they are named through typeof.
 static void ReportType(Type type) => Console.WriteLine($"Resolved {type.FullName}.");
+
+// The neutral authentication resolver contract from ServiceMantle.Diagnostics; the provider
+// package resolves it at host startup and never sees the header value in diagnostics.
+sealed class FixedHeaderResolver(string resolvedName, string resolvedValue)
+    : IRemoteTelemetryAuthenticationResolver
+{
+    public bool TryResolve(string name, out RemoteTelemetryAuthenticationHeader? header)
+    {
+        if (name != resolvedName)
+        {
+            header = null;
+            return false;
+        }
+
+        header = new RemoteTelemetryAuthenticationHeader(resolvedName, resolvedValue);
+        return true;
+    }
+}

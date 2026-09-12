@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Trace;
+using ServiceMantle.Diagnostics;
 
 namespace ServiceMantle.OpenTelemetry.Otlp;
 
@@ -92,13 +93,13 @@ internal sealed class OtlpRuntime
 
     private readonly object sync = new();
     private readonly IReadOnlyList<OtlpRegistration> registrations;
-    private readonly IOtlpAuthenticationHeaderResolver? headerResolver;
+    private readonly IRemoteTelemetryAuthenticationResolver? headerResolver;
     private OtlpSignalConfiguration? traces;
     private OtlpSignalConfiguration? metrics;
 
     public OtlpRuntime(
         IEnumerable<OtlpRegistration> registrations,
-        IOtlpAuthenticationHeaderResolver? headerResolver = null)
+        IRemoteTelemetryAuthenticationResolver? headerResolver = null)
     {
         this.registrations = registrations.ToList().AsReadOnly();
         this.headerResolver = headerResolver;
@@ -251,7 +252,7 @@ internal sealed class OtlpRuntime
             return configuration;
         }
 
-        OtlpAuthenticationHeader? header;
+        RemoteTelemetryAuthenticationHeader? header;
         try
         {
             if (headerResolver is null || !headerResolver.TryResolve(resolverName, out header) || header is null)
