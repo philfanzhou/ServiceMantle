@@ -350,7 +350,7 @@ public sealed class CoreOptionalCompositionTests
             void RegisterLogging() => builder.AddServiceMantleSerilog(options =>
             {
                 options.FlushTimeout = TimeSpan.FromMilliseconds(50);
-                if (failure == "logging-invalid") options.MinimumLevel = Secret;
+                if (failure == "logging-invalid") options.MinimumLevel = (LogLevel)42;
             });
             if (logging && serilogFirst) RegisterLogging();
             mantle.AddSensitiveHeaders(options => options.DeniedHeaderNames = ["X-Composition-Secret"]);
