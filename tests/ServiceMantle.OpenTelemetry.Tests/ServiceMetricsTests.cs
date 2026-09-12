@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
+using ServiceMantle.Diagnostics;
 using ServiceMantle.Installation;
 using Xunit;
 
