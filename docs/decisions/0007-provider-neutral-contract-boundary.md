@@ -88,6 +88,22 @@ Prometheus exposition 是格式标准。换掉 OTel SDK，OTLP 仍在；换掉 S
 `OutputTemplate` 保留，但须在 XML 文档注释中明确声明它是 sink 实现相关的逃生舱，
 换实现时不保证兼容。本 ADR 不为它引入中立枚举：目前没有第二个实现来验证该枚举设计。
 
+### 已考虑并暂缓：中立凭据与寻址模型
+
+曾考虑把 `ConsulClientConfiguration` 一并迁入 `ServiceMantle.Discovery`，设计一个能同时承载
+Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey 对、以及 etcd 的客户端证书
+的中立凭据模型。**暂缓，不是否决。**
+
+理由是中立化会把编译错误换成静默的语义错误。`GetToken()` 只能返回一个字符串；换到用户名/密码
+模型后，中立化的类型仍然存在、仍然编译通过，错误要到运行时连接失败才暴露。保留
+`ConsulClientConfiguration` 这个名字，换 provider 时该类型不存在会当场构建失败，迫使调用方去看
+新 provider 实际需要什么。**那个构建失败正是这条规则的价值**：诚实的名字把静默的语义缺陷变成
+可见的编译错误。
+
+该模型现在也无法验证——仓库只有 Consul 一个实现，等真正做第二个 provider 时才知道设计是否
+成立，而那时它已是公开 API。重新评估的触发条件是**第二个 registry provider 进入实现**，届时用
+两个真实实现的公约数来定这个模型，而不是现在猜。
+
 ## 生命周期状态机不在本次范围
 
 `ConsulRegistrationLifecycle`（等 readiness → 注册 → 指数退避重试 → 关停预算内注销）
