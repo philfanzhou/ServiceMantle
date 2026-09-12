@@ -73,14 +73,17 @@ adapter 接收 `HttpContext` 和一个 token，该 token 是请求 token 再叠�
 | 登录前响应已开始 | 同样的 `503` | 无；不尝试登录 |
 | `SignInAsync` 失败 | 同样的 `503` | 它追加或替换的内容会被回滚 |
 | 调用方取消 | 原始的 `RequestAborted` token 向上传播 | 无 |
+| `SignInAsync` 正常完成，但完成检查点看到请求已中止 | 同上：取消向上传播 | 已追加的 ticket 先被回滚 |
 
 ### 登录回滚
 
-响应自身的 `Set-Cookie` 值在 `SignInAsync` 开始之前被复制，该登录的每个失败出口都会在应答调
-用方取消之前恢复这份副本。回滚会移除登录追加的完整或分块 ticket，并撤销对整个 Header 的替
-换，包括 cookie 由处理器写入、随后 `SignedIn` 回调抛出异常的情形。响应原本已携带的
+响应自身的 `Set-Cookie` 值在 `SignInAsync` 开始之前被复制，该登录的每个失败出口——以及
+`SignInAsync` 正常完成、但完成检查点看到 `RequestAborted` 已经取消的出口——都会在应答调用
+方取消之前恢复这份副本。回滚会移除登录追加的完整或分块 ticket，并撤销对整个 Header 的替
+换，包括 cookie 由处理器写入、随后 `SignedIn` 回调抛出异常，或回调在写完 cookie 之后取消
+请求并正常返回的情形。响应原本已携带的
 cookie——无关的 cookie 与更早的管理 cookie 一律如此——会以原始的数量、顺序和值恢复，并且不使
-用任何 `SignOutAsync` 补偿。快照属于拍摄它的那一个请求。如果快照无法读取，则根本不开始登录；
+用任何 `SignOutAsync` 补偿，固定的 `204` 也不会交付。快照属于拍摄它的那一个请求。如果快照无法读取，则根本不开始登录；
 如果恢复无法应用，则中止连接而不是完成响应，因此仍携带该 ticket 一部分的响应绝不会被发出，
 原始异常也不会暴露。
 
@@ -106,13 +109,21 @@ cookie——无关的 cookie 与更早的管理 cookie 一律如此——会以�
 取通过同一个 cookie 处理器完成认证。不再能解析的 principal 保持既有的 forbidden 契约，而不携
 带过期时间的 ticket 会应答固定的 unavailable 结果，而不是一个猜测的值。
 
+operator resolver 与 `AuthenticateAsync` 各有一个完成检查点：resolver 或认证操作在
+`RequestAborted` 已取消之后落定——正常返回 `Resolved`、`Unauthenticated`、`ClaimsInvalid`、
+null、合法 ticket、缺失过期时间的 ticket、`NoResult`，或抛出普通异常、内部取消——都不再交付
+`Current`/`Forbid`/`Unavailable` 普通结果，也不再启动下一个依赖，而是以携带原请求 token 的
+安全取消结束。未取消时，resolver 的故障仍按原样向上传播，结果分类保持不变。
+
 缺失、过期、损坏以及 claim 无效的 cookie 保持既有的 `401`/`403` 契约不变。
 
 ## 登出
 
 `POST {v1}/session/logout` 要求有效身份但不要求 Admin。它调用固定 scheme 的 `SignOutAsync`，
 并且只有在 cookie 删除已经写入响应之后才应答无 body 的 `204`。它只删除本客户端自己的宿主作用
-域 cookie，不删除任何其他内容。
+域 cookie，不删除任何其他内容。`SignOutAsync` 正常完成、但完成检查点看到请求已取消时，固定
+的 `204` 不交付，取消以原始请求 token 向上传播；已写入的删除 cookie 保留在响应上——取消的登
+出绝不通过回滚让旧会话复活，也不声称外部注销副作用未发生。
 
 ## 明确的不保证
 
