@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Serilog.Events;
 using Serilog.Formatting.Display;
 
@@ -25,12 +26,12 @@ internal sealed class SerilogConfiguration
     private SerilogConfiguration(
         LogEventLevel minimumLevel,
         string outputTemplate,
-        string[] enricherNames,
+        bool includeScopes,
         TimeSpan flushTimeout)
     {
         MinimumLevel = minimumLevel;
         OutputTemplate = outputTemplate;
-        EnricherNames = enricherNames;
+        IncludeScopes = includeScopes;
         FlushTimeout = flushTimeout;
     }
 
@@ -38,7 +39,7 @@ internal sealed class SerilogConfiguration
 
     internal string OutputTemplate { get; }
 
-    internal IReadOnlyList<string> EnricherNames { get; }
+    internal bool IncludeScopes { get; }
 
     internal TimeSpan FlushTimeout { get; }
 
@@ -76,7 +77,7 @@ internal sealed class SerilogConfiguration
 
             if (first.MinimumLevel != candidate.MinimumLevel ||
                 first.FlushTimeout != candidate.FlushTimeout ||
-                !first.EnricherNames.SequenceEqual(candidate.EnricherNames, StringComparer.Ordinal))
+                first.IncludeScopes != candidate.IncludeScopes)
             {
                 throw Failure("Registrations", "serilog.registration_conflict");
             }
@@ -87,10 +88,11 @@ internal sealed class SerilogConfiguration
 
     private static SerilogConfiguration Normalize(SerilogOptions options)
     {
+        // LogLevel.None is rejected outright rather than interpreted as an implicit off switch:
+        // silencing the pipeline is an explicit configuration decision, not a level value.
         if (options is null ||
-            string.IsNullOrWhiteSpace(options.MinimumLevel) ||
-            !Enum.TryParse<LogEventLevel>(options.MinimumLevel.Trim(), ignoreCase: true, out var minimumLevel) ||
-            !Enum.IsDefined(minimumLevel))
+            !Enum.IsDefined(options.MinimumLevel) ||
+            options.MinimumLevel == LogLevel.None)
         {
             throw Failure("MinimumLevel", "serilog.minimum_level_invalid");
         }
@@ -110,37 +112,28 @@ internal sealed class SerilogConfiguration
             throw Failure("OutputTemplate", "serilog.output_template_invalid");
         }
 
-        string[] enricherNames;
-        try
-        {
-            enricherNames = options.EnricherNames
-                .Select(name => name?.Trim() ?? string.Empty)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Order(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-        catch
-        {
-            throw Failure("EnricherNames", "serilog.enricher_names_invalid");
-        }
-
-        if (enricherNames.Any(name =>
-                !string.Equals(name, "FromLogContext", StringComparison.OrdinalIgnoreCase)))
-        {
-            throw Failure("EnricherNames", "serilog.enricher_names_invalid");
-        }
-
         if (options.FlushTimeout <= TimeSpan.Zero || options.FlushTimeout > MaximumFlushTimeout)
         {
             throw Failure("FlushTimeout", "serilog.flush_timeout_invalid");
         }
 
         return new SerilogConfiguration(
-            minimumLevel,
+            ToSerilogLevel(options.MinimumLevel),
             options.OutputTemplate,
-            enricherNames.Select(_ => "FromLogContext").ToArray(),
+            options.IncludeScopes,
             options.FlushTimeout);
     }
+
+    private static LogEventLevel ToSerilogLevel(LogLevel level) => level switch
+    {
+        LogLevel.Trace => LogEventLevel.Verbose,
+        LogLevel.Debug => LogEventLevel.Debug,
+        LogLevel.Information => LogEventLevel.Information,
+        LogLevel.Warning => LogEventLevel.Warning,
+        LogLevel.Error => LogEventLevel.Error,
+        LogLevel.Critical => LogEventLevel.Fatal,
+        _ => throw Failure("MinimumLevel", "serilog.minimum_level_invalid"),
+    };
 
     private static void ValidateOutputTemplate(string outputTemplate)
     {

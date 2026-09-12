@@ -8,11 +8,12 @@
 // option lambdas, so this file deliberately contains no using ServiceMantle.Serilog.GrafanaLoki.
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using ServiceMantle.Logging;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddSingleton<IRemoteLogAuthorizationResolver, ConsumerResolver>();
-builder.AddServiceMantleSerilog(options => options.MinimumLevel = "Information");
+builder.AddServiceMantleSerilog(options => options.MinimumLevel = LogLevel.Information);
 builder.AddServiceMantleGrafanaLoki(options =>
 {
     options.Enabled = true;

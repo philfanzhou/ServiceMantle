@@ -2085,8 +2085,8 @@ var builder = Host.CreateApplicationBuilder(args);
 
 builder.AddServiceMantleSerilog(options =>
 {
-    options.MinimumLevel = "Information";
-    options.EnricherNames = ["FromLogContext"];
+    options.MinimumLevel = LogLevel.Information;
+    options.IncludeScopes = true;
     options.FlushTimeout = TimeSpan.FromSeconds(2);
 });
 ```
@@ -2107,11 +2107,12 @@ cannot flush after forced termination such as `SIGKILL`, a host crash, or stack 
 no extra package reference is needed. It is disabled by default, and referencing the package without
 calling `AddServiceMantleGrafanaLoki` leaves the console sink factory in place and registers nothing
 Loki-owned. Authentication is resolved at startup from a non-secret name and is never part of the
-options snapshot:
+options snapshot. The resolver contract lives in the core package's `ServiceMantle.Logging`
+namespace, so implementing it requires no provider-named using:
 
 ```csharp
 builder.AddServiceMantleSerilog();
-builder.Services.AddSingleton<ILokiAuthorizationHeaderResolver, LokiAuthorizationResolver>();
+builder.Services.AddSingleton<ServiceMantle.Logging.IRemoteLogAuthorizationResolver, LokiAuthorizationResolver>();
 builder.AddServiceMantleGrafanaLoki(options =>
 {
     options.Enabled = true;
@@ -2132,7 +2133,8 @@ without including submitted values in the exception.
 
 The fixed upstream driver owns the bounded in-memory queue and retry schedule. Capacity drops,
 permanent delivery failures, drain timeouts, and caller-cancelled drains are exposed only through
-content-free counters and stable error codes on `GrafanaLokiDiagnostics`. The package
+content-free counters and stable error codes on `RemoteLogDeliveryDiagnostics` (core
+`ServiceMantle.Logging`). The package
 does not add disk buffering, unbounded retries, dynamic reload, query APIs, or exactly-once delivery.
 
 ### Migrating from the separate Grafana Loki package
@@ -2143,7 +2145,10 @@ does not add disk buffering, unbounded retries, dynamic reload, query APIs, or e
 - Replace the package reference with `ServiceMantle.Serilog`. Already published versions of the
   retired package id are untouched; they simply receive no new versions.
 - Public type names, the `ServiceMantle.Serilog.GrafanaLoki` namespace, `AddServiceMantleGrafanaLoki`,
-  defaults, error codes, and configuration validation are unchanged, so no source edit is required.
+  defaults, error codes, and configuration validation are unchanged, so no source edit is required
+  for the sink surface itself. The two provider-neutral contracts `IRemoteLogAuthorizationResolver`
+  and `RemoteLogDeliveryDiagnostics` moved to the core `ServiceMantle.Logging` namespace; see
+  `NAMING_MIGRATION.md` for the full rename mapping.
 - Recompile. The types moved to a different assembly, so binaries compiled against the retired
   assembly do not bind to the merged one.
 - Installing `ServiceMantle.Serilog` now brings `Serilog.Sinks.Grafana.Loki` in transitively.
