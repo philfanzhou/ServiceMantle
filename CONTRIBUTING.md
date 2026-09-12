@@ -94,3 +94,26 @@ namespace 已经写明产品和模块，类型名就只写职责：`ServiceMantl
 
 公开类型改名同时是源码和二进制破坏性变更：完整映射写入 `NAMING_MIGRATION.md`，在后续新版本交付，
 不覆盖历史版本。
+
+### 7. provider 命名的 namespace 只放 provider 特有契约
+
+namespace 回答「这个类型是什么」，不回答「哪个包发的」。判定一个公开类型该放哪里，看消费方在
+**自己的源码**里是否必须点名它（实现接口、resolve 后调用、catch），以及它的契约里是否含有该
+产品特有的模型：
+
+- **中立契约不得住在 provider 命名的 namespace。** 消费方必须点名、且契约中没有 provider 成分
+  的类型，放核心包。例如「从非机密名字解析出 Authorization header」对任何远程日志端点都成立，
+  不属于某个后端产品。
+- **provider 特有契约必须留在 provider 命名的 namespace。** 契约本身携带该产品的认证方式、端点
+  形状或模板语法时，中立的名字会**隐藏**耦合而不是消除它：调用方看到 `RegistryClientConfiguration`
+  会以为可移植，直到换实现时发现 `Token` 的语义对不上。命名要诚实暴露耦合。
+- **注册入口放框架 namespace**，按 §3 保留 `AddServiceMantle*` 前缀，使消费方的组合根不需要
+  provider 命名的 `using`。
+- **协议名不是库名。** OTLP、Prometheus exposition 是标准而非实现，对应 namespace 不属于泄漏。
+
+可断言的形式：消费方源码中不允许出现 provider 命名的 `using`，provider 的名字只允许出现在
+`.csproj` 的 `PackageReference` 和组合根的一行 `Add*()`。`eng/tests/consumers` 下的消费项目
+以编译失败的方式守住这条。
+
+判据全文、三层改动模型与现有类型的分类清单见
+[ADR 0007](docs/decisions/0007-provider-neutral-contract-boundary.md)。
