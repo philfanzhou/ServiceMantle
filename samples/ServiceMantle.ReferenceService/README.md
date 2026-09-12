@@ -65,7 +65,10 @@ gate's back.
 The gate then runs in a fixed order and fails closed at every step: the deployment mode is validated
 from the captured capability declarations first; a read-only observation decides whether the target
 is there; a missing target stops the startup unless preparation was explicitly permitted; and the
-consumer's own scoped executor inspects, migrates at most once, and inspects again. Only a
+consumer's own scoped executor inspects, migrates at most once, and inspects again. Concurrent calls
+for the same canonical target take one process-local turn spanning the observation and the
+migration, so a call never observes the target while a sibling call's migration is writing to it.
+Only a
 successful migration lets the host finish starting - the gate runs before any hosted service, so no
 request is ever served over an unmigrated database. A failure closes startup and logs one fixed
 outcome, with no path, connection string, provider message, or exception text.
