@@ -228,6 +228,190 @@ public sealed class ServiceSettingSnapshotLoaderTests
         Assert.False(accessor.TryGetCurrent(out _));
     }
 
+    [Theory]
+    [InlineData("source-plain")]
+    [InlineData("source-foreign-cancellation")]
+    [InlineData("root-key-plain")]
+    [InlineData("root-key-foreign-cancellation")]
+    [InlineData("constraint-rejection")]
+    [InlineData("constraint-throw")]
+    [InlineData("composite-error")]
+    [InlineData("composite-throw")]
+    public async Task Already_requested_cancellation_outranks_every_computed_failure(string scenario)
+    {
+        const string secret = "injected-provider-secret";
+        using var cancellation = new CancellationTokenSource();
+        var trigger = new RefreshTrigger();
+        var rootKey = new SequenceRootKeySource(RootKey);
+        var registry = scenario switch
+        {
+            "constraint-rejection" or "constraint-throw" => new ServiceSettingDefinitionRegistry(
+                [new Definitions(new ServiceSettingDefinition(
+                    "product.name",
+                    ServiceSettingValueType.String,
+                    isRequired: true,
+                    constraints: [new TriggeredConstraint(trigger)]))]),
+            "composite-error" or "composite-throw" => new ServiceSettingDefinitionRegistry(
+                [new Definitions(DefaultDefinitions())],
+                [new TriggeredCompositeValidator(trigger)]),
+            _ => Registry(DefaultDefinitions()),
+        };
+        var source = new MutableSource(scenario is "constraint-rejection" or "constraint-throw"
+            ? Read(1, Value("product.name", 1, ServiceSettingValueType.String, "V1"))
+            : Read(1,
+                Value("product.name", 1, ServiceSettingValueType.String, "V1"),
+                Value("product.token", 1, ServiceSettingValueType.String, Protect("product.token", "v1-secret"))));
+        var accessor = new ServiceSettingCurrentSnapshotAccessor();
+        using var loader = Loader(source, accessor, registry, rootKey);
+        Assert.True((await loader.RefreshAsync(TestContext.Current.CancellationToken)).Activated);
+        var original = Current(accessor);
+
+        switch (scenario)
+        {
+            case "source-plain":
+                source.Failure = new InvalidOperationException($"Password={secret}");
+                source.CancelFirst = cancellation;
+                break;
+            case "source-foreign-cancellation":
+                source.Failure = new OperationCanceledException(
+                    $"internal-{secret}", new CancellationToken(true));
+                source.CancelFirst = cancellation;
+                break;
+            case "root-key-plain":
+                rootKey.Failure = new InvalidOperationException($"key={secret}");
+                rootKey.CancelFirst = cancellation;
+                break;
+            case "root-key-foreign-cancellation":
+                rootKey.Failure = new OperationCanceledException(
+                    $"internal-{secret}", new CancellationToken(true));
+                rootKey.CancelFirst = cancellation;
+                break;
+            case "constraint-throw" or "composite-throw":
+                trigger.Failure = new InvalidOperationException($"combo={secret}");
+                trigger.Cancellation = cancellation;
+                break;
+            case "constraint-rejection" or "composite-error":
+                trigger.Cancellation = cancellation;
+                break;
+        }
+
+        source.Read = scenario is "root-key-plain" or "root-key-foreign-cancellation"
+            ? Read(2,
+                Value("product.name", 2, ServiceSettingValueType.String, "V2"),
+                Value("product.token", 2, ServiceSettingValueType.String, Protect("product.token", "v2-secret")))
+            : Read(2, Value("product.name", 2, ServiceSettingValueType.String, "V2"));
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            loader.RefreshAsync(cancellation.Token).AsTask());
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+        Assert.Null(exception.InnerException);
+        Assert.DoesNotContain(secret, exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
+        Assert.Same(original, Current(accessor));
+    }
+
+    [Fact]
+    public async Task First_refresh_cancellation_does_not_activate_any_snapshot()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var source = new MutableSource(Read(1,
+            Value("product.name", 1, ServiceSettingValueType.String, "V1")))
+        {
+            Failure = new InvalidOperationException("Password=provider-secret"),
+            CancelFirst = cancellation,
+        };
+        var accessor = new ServiceSettingCurrentSnapshotAccessor();
+        using var loader = Loader(source, accessor);
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            loader.RefreshAsync(cancellation.Token).AsTask());
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+        Assert.False(accessor.TryGetCurrent(out _));
+    }
+
+    [Theory]
+    [InlineData("plain")]
+    [InlineData("foreign-cancellation")]
+    public async Task Root_key_failures_without_caller_cancellation_keep_finite_classification(
+        string scenario)
+    {
+        var rootKey = new SequenceRootKeySource(RootKey)
+        {
+            Failure = scenario == "plain"
+                ? new InvalidOperationException("Password=key-provider-secret")
+                : new OperationCanceledException("internal-secret", new CancellationToken(true)),
+        };
+        var accessor = new ServiceSettingCurrentSnapshotAccessor();
+        using var loader = Loader(
+            new MutableSource(Read(1,
+                Value("product.name", 1, ServiceSettingValueType.String, "Orders"),
+                Value("product.token", 1, ServiceSettingValueType.String, Protect("product.token", "secret")))),
+            accessor,
+            rootKeySource: rootKey);
+
+        var result = await loader.RefreshAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            WellKnownServiceSettingSnapshotErrorCodes.SensitiveKeyUnavailable,
+            Assert.Single(result.Errors).ErrorCode);
+        Assert.False(accessor.TryGetCurrent(out _));
+        Assert.DoesNotContain("key-provider-secret", result.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("internal-secret", result.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Cancellation_while_waiting_for_the_refresh_lock_throws_with_the_caller_token()
+    {
+        var source = new BlockingSource();
+        var accessor = new ServiceSettingCurrentSnapshotAccessor();
+        using var loader = Loader(source, accessor);
+        var first = loader.RefreshAsync(TestContext.Current.CancellationToken).AsTask();
+        await source.FirstEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        using var waiting = new CancellationTokenSource();
+        var second = loader.RefreshAsync(waiting.Token).AsTask();
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        waiting.Cancel();
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() => second);
+
+        Assert.Equal(waiting.Token, exception.CancellationToken);
+        source.ReleaseFirst.SetResult();
+        await first;
+        Assert.Equal(1, Current(accessor).Version);
+
+        var third = await loader.RefreshAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(third.Activated);
+        Assert.Equal(2, Current(accessor).Version);
+        Assert.Equal(2, source.CallCount);
+    }
+
+    [Fact]
+    public async Task Refresh_after_a_cancellation_inside_the_lock_still_completes()
+    {
+        var source = new MutableSource(Read(1,
+            Value("product.name", 1, ServiceSettingValueType.String, "V1")));
+        var accessor = new ServiceSettingCurrentSnapshotAccessor();
+        using var loader = Loader(source, accessor);
+        Assert.True((await loader.RefreshAsync(TestContext.Current.CancellationToken)).Activated);
+        using var cancellation = new CancellationTokenSource();
+        source.Failure = new InvalidOperationException("Password=provider-secret");
+        source.CancelFirst = cancellation;
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            loader.RefreshAsync(cancellation.Token).AsTask());
+
+        source.Failure = null;
+        source.CancelFirst = null;
+        source.Read = Read(2,
+            Value("product.name", 2, ServiceSettingValueType.String, "V2"));
+        var result = await loader.RefreshAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(result.Activated);
+        Assert.Equal(2, Current(accessor).Version);
+        Assert.Equal("V2", Current(accessor).Values["product.name"].GetString());
+    }
+
     [Fact]
     public async Task Concurrent_refreshes_are_serialized_and_readers_observe_only_complete_snapshots()
     {
@@ -349,17 +533,89 @@ public sealed class ServiceSettingSnapshotLoaderTests
             ValueTask.FromResult(rootKey);
     }
 
+    private sealed class SequenceRootKeySource(string rootKey) : IServiceSettingRootKeySource
+    {
+        public Exception? Failure { get; set; }
+        public CancellationTokenSource? CancelFirst { get; set; }
+
+        public ValueTask<string> GetRootKeyAsync(CancellationToken cancellationToken = default)
+        {
+            if (Failure is null)
+            {
+                return ValueTask.FromResult(rootKey);
+            }
+
+            CancelFirst?.Cancel();
+            return ValueTask.FromException<string>(Failure);
+        }
+    }
+
+    private sealed class RefreshTrigger
+    {
+        public CancellationTokenSource? Cancellation { get; set; }
+        public Exception? Failure { get; set; }
+    }
+
+    private sealed class TriggeredConstraint(RefreshTrigger trigger) : IServiceSettingValueConstraint
+    {
+        public ServiceSettingValueType ValueType => ServiceSettingValueType.String;
+        public string ErrorCode => "product.name.unstable";
+
+        public bool IsSatisfied(ServiceSettingValue value)
+        {
+            if (trigger.Cancellation is null)
+            {
+                return true;
+            }
+
+            trigger.Cancellation.Cancel();
+            if (trigger.Failure is not null)
+            {
+                throw trigger.Failure;
+            }
+
+            return false;
+        }
+    }
+
+    private sealed class TriggeredCompositeValidator(RefreshTrigger trigger)
+        : IServiceSettingCompositeValidator
+    {
+        public IEnumerable<ServiceSettingValidationError> Validate(ServiceSettingValidationContext context)
+        {
+            if (trigger.Cancellation is null)
+            {
+                return [];
+            }
+
+            trigger.Cancellation.Cancel();
+            if (trigger.Failure is not null)
+            {
+                throw trigger.Failure;
+            }
+
+            return [new ServiceSettingValidationError("product.name", "product.name.unstable")];
+        }
+    }
+
     private sealed class MutableSource(ServiceSettingSnapshotRead read) : IServiceSettingSnapshotSource
     {
         public ServiceSettingSnapshotRead Read { get; set; } = read;
         public Exception? Failure { get; set; }
+        public CancellationTokenSource? CancelFirst { get; set; }
 
         public ValueTask<ServiceSettingSnapshotRead> LoadAsync(
             ServiceId serviceId,
-            CancellationToken cancellationToken = default) =>
-            Failure is null
-                ? ValueTask.FromResult(Read)
-                : ValueTask.FromException<ServiceSettingSnapshotRead>(Failure);
+            CancellationToken cancellationToken = default)
+        {
+            if (Failure is null)
+            {
+                return ValueTask.FromResult(Read);
+            }
+
+            CancelFirst?.Cancel();
+            return ValueTask.FromException<ServiceSettingSnapshotRead>(Failure);
+        }
     }
 
     private sealed class BlockingSource : IServiceSettingSnapshotSource

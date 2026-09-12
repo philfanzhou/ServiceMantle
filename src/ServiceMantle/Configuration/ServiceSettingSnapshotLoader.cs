@@ -11,7 +11,8 @@ namespace ServiceMantle.Configuration;
 /// </summary>
 /// <remarks>
 /// Refreshes on one loader instance are serialized. Failures never replace an existing snapshot,
-/// and caller cancellation is propagated instead of being converted to a validation result.
+/// and caller cancellation observed before a refresh hands back its result or activates a candidate
+/// is propagated instead of being converted to a failure result.
 /// </remarks>
 public sealed class ServiceSettingSnapshotLoader : IDisposable
 {
@@ -75,18 +76,20 @@ public sealed class ServiceSettingSnapshotLoader : IDisposable
             }
             catch
             {
-                return Failure(WellKnownServiceSettingSnapshotErrorCodes.LoadFailed);
+                return Complete(
+                    Failure(WellKnownServiceSettingSnapshotErrorCodes.LoadFailed), cancellationToken);
             }
 
             if (read is null)
             {
-                return Failure(WellKnownServiceSettingSnapshotErrorCodes.LoadFailed);
+                return Complete(
+                    Failure(WellKnownServiceSettingSnapshotErrorCodes.LoadFailed), cancellationToken);
             }
 
             var materialized = await MaterializeAsync(read, cancellationToken).ConfigureAwait(false);
             if (!materialized.Succeeded)
             {
-                return materialized.Result!;
+                return Complete(materialized.Result!, cancellationToken);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -95,16 +98,19 @@ public sealed class ServiceSettingSnapshotLoader : IDisposable
             {
                 if (candidate.Version < current!.Version)
                 {
-                    return Failure(WellKnownServiceSettingSnapshotErrorCodes.Stale);
+                    return Complete(
+                        Failure(WellKnownServiceSettingSnapshotErrorCodes.Stale), cancellationToken);
                 }
 
                 if (candidate.Version == current.Version)
                 {
-                    return CryptographicOperations.FixedTimeEquals(
-                            candidate.NormalizedFingerprint,
-                            current.NormalizedFingerprint)
-                        ? ServiceSettingSnapshotRefreshResult.Success(current, activated: false)
-                        : Failure(WellKnownServiceSettingSnapshotErrorCodes.Conflict);
+                    return Complete(
+                        CryptographicOperations.FixedTimeEquals(
+                                candidate.NormalizedFingerprint,
+                                current.NormalizedFingerprint)
+                            ? ServiceSettingSnapshotRefreshResult.Success(current, activated: false)
+                            : Failure(WellKnownServiceSettingSnapshotErrorCodes.Conflict),
+                        cancellationToken);
                 }
             }
 
@@ -332,6 +338,16 @@ public sealed class ServiceSettingSnapshotLoader : IDisposable
 
     private static ServiceSettingSnapshotRefreshResult Failure(string errorCode) =>
         ServiceSettingSnapshotRefreshResult.Failure(new ServiceSettingSnapshotError(null, errorCode));
+
+    // Cancellation requested before a computed outcome is handed back outranks that outcome,
+    // so every failure or no-publish result completes through this checkpoint.
+    private static ServiceSettingSnapshotRefreshResult Complete(
+        ServiceSettingSnapshotRefreshResult result,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
+    }
 
     private static ServiceSettingSnapshotRefreshResult Failure(string key, string errorCode) =>
         ServiceSettingSnapshotRefreshResult.Failure(new ServiceSettingSnapshotError(key, errorCode));
