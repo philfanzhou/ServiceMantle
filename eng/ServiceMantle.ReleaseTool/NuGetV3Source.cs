@@ -109,6 +109,10 @@ internal sealed class NuGetV3Source(
 
             using var request = new HttpRequestMessage(HttpMethod.Put, endpoint) { Content = content };
             request.Headers.TryAddWithoutValidation(ApiKeyHeader, apiKey);
+            // NuGet.org requires this protocol declaration from third-party push clients.
+            // X-NuGet-Client-Version is reserved for the official NuGet client.
+            // https://learn.microsoft.com/en-us/nuget/api/nuget-protocols
+            request.Headers.Add("X-NuGet-Protocol-Version", "4.1.0");
             using var response = await client.SendAsync(request, cancellationToken);
             return response.StatusCode switch
             {
