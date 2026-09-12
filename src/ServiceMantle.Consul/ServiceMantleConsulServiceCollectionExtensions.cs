@@ -7,7 +7,7 @@ using ServiceMantle.Consul;
 namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>Registers the optional Consul catalog, explicit client boundary, and lifecycle.</summary>
-public static class ConsulServiceCollectionExtensions
+public static class ServiceMantleConsulServiceCollectionExtensions
 {
     /// <summary>
     /// Registers definitions, validation, a deferred replaceable factory, a session provider, and

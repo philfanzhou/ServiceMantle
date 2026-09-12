@@ -230,6 +230,17 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/composed
 
+      # The Consul registration entry lives in a framework namespace and keeps the product prefix
+      # on its class name; this consumer names it and calls both registration forms statically
+      # from the packed artifact, without starting a host or creating any client, timer, or
+      # network call.
+      - name: Verify Consul registration package consumption
+        run: >-
+          eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/consul-registration
+
       - name: Upload packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

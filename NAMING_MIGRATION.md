@@ -280,6 +280,16 @@ namespace 跨越两个程序集。
 | `ServiceMantle.Serilog.GrafanaLoki.ServiceMantleLokiHttpMessageHandler` | `ServiceMantle.Serilog.GrafanaLoki.LokiHttpMessageHandler` |
 | `ServiceMantle.Serilog.GrafanaLoki.ServiceMantleLokiHttpMessageHandlerFactory` | `ServiceMantle.Serilog.GrafanaLoki.LokiHttpMessageHandlerFactory` |
 
+## Consul 入口补充映射
+
+`ServiceMantle.Consul` 的注册入口与核心包的注册入口同型：它住在框架 namespace 里，类名是唯一的
+产品标记，因此按同一条规则补齐前缀。两个 `AddServiceMantleConsul` 重载的签名、方法体与 timing
+类型全部不变。
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `Microsoft.Extensions.DependencyInjection.ConsulServiceCollectionExtensions` | `Microsoft.Extensions.DependencyInjection.ServiceMantleConsulServiceCollectionExtensions` |
+
 ## 测试类映射
 
 | 原完整类型名 | 新完整类型名 |
