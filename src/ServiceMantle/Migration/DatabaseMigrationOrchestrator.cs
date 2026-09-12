@@ -85,6 +85,9 @@ public sealed class DatabaseMigrationOrchestrator
     /// Only <see cref="MigrationObservationState.Empty"/> and
     /// <see cref="MigrationObservationState.PendingMigration"/> permit execution after the initial
     /// inspection; undefined states fail closed as an inspection failure.
+    /// After the acquired lease's release has settled, a final completion checkpoint observes
+    /// caller cancellation before the primary result is delivered; release failures never replace
+    /// the primary result or cancellation, and explicit disposal is never treated as lease loss.
     /// </summary>
     /// <param name="serviceId">The service identifier for which to orchestrate migration.</param>
     /// <param name="bootstrap">The bootstrap configuration for lock acquisition.</param>
@@ -277,16 +280,31 @@ public sealed class DatabaseMigrationOrchestrator
         {
             if (lock_ is not null)
             {
-                try
-                {
-                    await lock_.DisposeAsync().ConfigureAwait(false);
-                }
-                catch
-                {
-                    // Release failure must not replace the primary result or cancellation.
-                }
+                await ReleaseLeaseAsync(lock_, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Releases an acquired lease and applies the release-settled completion checkpoint. A release
+    /// failure never replaces the primary result or cancellation, and explicit disposal is never
+    /// treated as lease loss. Caller cancellation observed by the time the release settles takes
+    /// precedence over delivering the primary result.
+    /// </summary>
+    private static async ValueTask ReleaseLeaseAsync(
+        IDatabaseMigrationLock lock_,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await lock_.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Release failure must not replace the primary result or cancellation.
+        }
+
+        ThrowIfCallerCancellationRequested(cancellationToken);
     }
 
     private static MigrationExecutionResult? CheckAuthority(
