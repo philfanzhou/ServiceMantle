@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="ServiceMantle.AspNetCore" Version="[__SERVICEMANTLE_VERSION__]" />
+    <PackageReference Include="ServiceMantle.Database.Sqlite" Version="[__SERVICEMANTLE_VERSION__]" />
     <PackageReference Include="ServiceMantle.OpenTelemetry" Version="[__SERVICEMANTLE_VERSION__]" />
     <PackageReference Include="ServiceMantle.Persistence.EntityFrameworkCore" Version="[__SERVICEMANTLE_VERSION__]" />
     <PackageReference Include="ServiceMantle.Serilog" Version="[__SERVICEMANTLE_VERSION__]" />

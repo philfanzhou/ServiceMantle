@@ -1,4 +1,4 @@
-// Proves that a consumer can import four ServiceMantle modules at once, next to the ASP.NET Core
+// Proves that a consumer can import five ServiceMantle modules at once, next to the ASP.NET Core
 // implicit usings and the framework namespaces each module's own entry points require, and still
 // name every public type without a using alias or a fully qualified name.
 //
@@ -7,12 +7,13 @@
 // boundary and Microsoft.AspNetCore.Builder.ForwardedHeadersOptions. Every renamed public type this
 // file touches is named unqualified on purpose - the file failing to compile is the assertion.
 //
-// Microsoft.AspNetCore.DataProtection and Microsoft.EntityFrameworkCore are imported for the same
-// reason: reaching the EF Core persistence entry points requires them, so their types are in scope
-// whenever that module is, and any ServiceMantle type sharing a name with one of them would be
-// ambiguous here.
+// Microsoft.AspNetCore.DataProtection, Microsoft.EntityFrameworkCore, and Microsoft.Data.Sqlite
+// are imported for the same reason: reaching the EF Core persistence and SQLite entry points
+// requires them, so their types are in scope whenever those modules are, and any ServiceMantle
+// type sharing a name with one of them would be ambiguous here.
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using ServiceMantle;
 using ServiceMantle.AspNetCore;
@@ -21,6 +22,7 @@ using ServiceMantle.AspNetCore.Http;
 using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.AspNetCore.PhaseGate;
 using ServiceMantle.AspNetCore.RateLimiting;
+using ServiceMantle.Database.Sqlite;
 using ServiceMantle.OpenTelemetry;
 using ServiceMantle.OpenTelemetry.Otlp;
 using ServiceMantle.OpenTelemetry.Prometheus;
@@ -125,10 +127,18 @@ try
     ReportType(typeof(EfCoreManagementAuditWriter<>));
     ReportType(typeof(EfCoreManagementAuditQueryService<>));
 
+    // The SQLite module's public surface is named unqualified with Microsoft.Data.Sqlite in
+    // scope - SqlitePackage lost its product prefix in the naming migration, and a collision
+    // with the driver's own types would fail this build instead of a consumer's.
+    ReportType(typeof(SqlitePackage));
+    ReportType(typeof(SqliteBootstrapDatabaseProvider));
+    ReportType(typeof(SqliteDatabaseTargetPreparationProvider));
+    ReportType(typeof(SqliteConnectionStringBuilder));
+
     Console.WriteLine($"Correlation ID header: {ServiceHeaderNames.CorrelationId}.");
     Console.WriteLine($"Problem type prefix: {ProblemDetailsDefaults.TypeUriPrefix}.");
     Console.WriteLine(
-        "Composed consumer started; AspNetCore, OpenTelemetry, Serilog, and "
+        "Composed consumer started; AspNetCore, Database.Sqlite, OpenTelemetry, Serilog, and "
         + "Persistence.EntityFrameworkCore all resolved.");
 
     await application.StopAsync();
