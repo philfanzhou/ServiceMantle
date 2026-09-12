@@ -1,43 +1,41 @@
-# OpenTelemetry instrumentation on the HTTP pipeline
+# HTTP 管道上的 OpenTelemetry 插桩
 
-Use the existing `ServiceMantleBuilder.AddOpenTelemetryInstrumentation` extension before `Build`,
-then compose the required HTTP middleware with `UseServiceMantlePipeline`. No additional Host
-builder, automatic package registration, exporter, authentication or logging Host is required.
+在 `Build` 之前使用现有的 `ServiceMantleBuilder.AddOpenTelemetryInstrumentation` 扩展，
+然后用 `UseServiceMantlePipeline` 组合必需的 HTTP middleware。不需要额外的 Host builder、
+自动包注册、exporter、认证或日志 Host。
 
-## Selection matrix
+## 选择矩阵
 
-A is `EnableAspNetCoreTracing`, H is `EnableHttpClientTracing`, and R is `EnableRuntimeMetrics`.
-The three selectors and `Enabled` default to `true` when the extension is called; omitting the call
-registers no instrumentation. Disabled registrations normalize all selectors to false.
+A 是 `EnableAspNetCoreTracing`，H 是 `EnableHttpClientTracing`，R 是 `EnableRuntimeMetrics`。
+调用该扩展时，三个选择器和 `Enabled` 默认为 `true`；完全不调用则不注册任何插桩。禁用注册
+会把所有选择器归一化为 false。
 
-| Registration | A | H | R | TracerProvider | MeterProvider | Result |
+| 注册 | A | H | R | TracerProvider | MeterProvider | 结果 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Absent | — | — | — | None | None | HTTP 200, Stop, Dispose |
-| Enabled=false | 0 | 0 | 0 | None | None | HTTP 200, Stop, Dispose |
-| Enabled=false | 1 | 1 | 1 | None | None | HTTP 200, Stop, Dispose |
-| Enabled=true | 1 | 0 | 0 | One | None | Incoming tracing |
-| Enabled=true | 0 | 1 | 0 | One | None | Outgoing HttpClient tracing |
-| Enabled=true | 0 | 0 | 1 | None | One | Runtime metrics |
-| Enabled=true | 1 | 1 | 0 | One | None | Both tracing sources |
-| Enabled=true | 1 | 0 | 1 | One | One | Incoming tracing and runtime metrics |
-| Enabled=true | 0 | 1 | 1 | One | One | Outgoing tracing and runtime metrics |
-| Enabled=true | 1 | 1 | 1 | One | One | All three signals |
-| Enabled=true | 0 | 0 | 0 | None | None | Start fails |
-| Equivalent repeat | Same effective choices | | | At most one | At most one | No duplicate request spans or instrumentation ownership |
-| Conflicting repeat | Different effective choices | | | Must not activate | Must not activate | Start fails before instrumentation activates |
+| 缺席 | — | — | — | None | None | HTTP 200、Stop、Dispose |
+| Enabled=false | 0 | 0 | 0 | None | None | HTTP 200、Stop、Dispose |
+| Enabled=false | 1 | 1 | 1 | None | None | HTTP 200、Stop、Dispose |
+| Enabled=true | 1 | 0 | 0 | One | None | 入站 tracing |
+| Enabled=true | 0 | 1 | 0 | One | None | 出站 HttpClient tracing |
+| Enabled=true | 0 | 0 | 1 | None | One | 运行时指标 |
+| Enabled=true | 1 | 1 | 0 | One | None | 两种 tracing 源 |
+| Enabled=true | 1 | 0 | 1 | One | One | 入站 tracing 和运行时指标 |
+| Enabled=true | 0 | 1 | 1 | One | One | 出站 tracing 和运行时指标 |
+| Enabled=true | 1 | 1 | 1 | One | One | 全部三种信号 |
+| Enabled=true | 0 | 0 | 0 | None | None | Start 失败 |
+| 等价重复 | 相同的有效选择 | | | 至多一个 | 至多一个 | 无重复请求 span 或插桩所有权 |
+| 冲突重复 | 不同的有效选择 | | | 不得激活 | 不得激活 | 插桩激活前 Start 失败 |
 
-Disabled-to-enabled and enabled-to-disabled repeats are conflicts. Two disabled registrations with
-different selectors are equivalent. For successful rows, provider creation is selected by signal:
-A or H requires tracing; R requires metrics. Instrumentation creates no export destination. Runtime
-collection/export configuration is separate; the test uses a manual in-memory reader only for R rows.
+禁用到启用以及启用到禁用的重复属于冲突。两个选择器不同的禁用注册是等价的。对于成功的行，
+provider 创建由信号决定：A 或 H 需要 tracing；R 需要 metrics。插桩不创建任何导出目标。
+运行时采集/导出配置是独立的；测试仅对 R 行使用手动的内存读取器。
 
-## Executable local wiring
+## 可执行的本地接线
 
-Reference `ServiceMantle.OpenTelemetry` (which brings the AspNetCore integration) in an ASP.NET Core
-application. This local example uses an explicitly fixed Ready snapshot to isolate composition.
-A real service must provide its own cancellation-aware `IServiceHealthSnapshotSource` reflecting
-its authoritative installation, migration and database state; registering instrumentation does not
-supply or persist that state.
+在 ASP.NET Core 应用中引用 `ServiceMantle.OpenTelemetry`（它会带来 AspNetCore 集成）。
+本本地示例使用显式固定的 Ready 快照来隔离组合。真实服务必须提供自己的、可取消感知的
+`IServiceHealthSnapshotSource`，反映其权威的安装、migration 和数据库状态；注册插桩不会
+提供或持久化该状态。
 
 ```csharp
 using Microsoft.AspNetCore.Builder;
@@ -99,65 +97,56 @@ sealed class DemoSnapshotSource : IServiceHealthSnapshotSource
 }
 ```
 
-Configure all options before Build. Call the pipeline once; do not insert its individual middleware
-again. Optional forwarded-header trust, endpoint rate-limit policies and security/authorization
-metadata remain explicit. No health endpoint, Cookie scheme, Serilog Host or exporter is installed
-by this example. Its only HTTP connection is the local test request.
+在 Build 之前配置所有 options。管道只调用一次；不要再单独插入其中的各个 middleware。
+可选的转发 Header 信任、endpoint 限流策略和安全/授权元数据仍然保持显式。本示例不安装任何
+健康 endpoint、Cookie 方案、Serilog Host 或 exporter。它唯一的 HTTP 连接就是本地测试请求。
 
-## HTTP behavior and identity
+## HTTP 行为与身份
 
-The pipeline order is unchanged: configured forwarding, correlation, Problem Details, routing,
-security headers, phase gate, optional authentication, rate limiting, optional authorization, then
-consumer handlers. Telemetry does not bypass Gate: an unready snapshot still returns the existing
-503 JSON, while an unhandled exception before response start returns 500 Problem Details. Marked
-endpoints retain the security Header baseline, and `x-correlation-id` is preserved on successful,
-exception and Gate responses. A caller-aborted request remains cancellation, not a telemetry
-configuration error. The test's source-entry/handler-entry barriers explicitly bind caller
-cancellation to the server request token; they do not promise a TCP disconnect notification latency.
+管道顺序不变：已配置的转发、关联、Problem Details、路由、安全 Header、阶段门、可选认证、
+限流、可选授权，然后是消费方处理器。Telemetry 不绕过 Gate：未就绪的快照仍返回既有的
+503 JSON，而响应开始前的未处理异常返回 500 Problem Details。已标记的 endpoint 保留安全
+Header 基线，且 `x-correlation-id` 在成功、异常和 Gate 响应上都得以保留。调用方中止的请求
+仍然是取消，而不是 telemetry 配置错误。测试的源入口/处理器入口 barrier 显式地将调用方取消
+绑定到服务器请求 token；它们不承诺 TCP 断开通知的时延。
 
-Both providers carry exactly the ServiceMantle-owned Resource fields `service.name`, `service.version`
-and `service.instance.id`, matching `ServiceLogContext`. Use non-secret Host identity metadata.
-The Correlation ID remains separate from W3C trace identity; instrumentation does not rewrite it to
-a Trace ID. Upstream HTTP/runtime instrumentation owns its span and metric attributes: the Resource
-whitelist is not an arbitrary attribute sanitization or cardinality guarantee.
+两个 provider 都恰好携带 ServiceMantle 自有的 Resource 字段 `service.name`、
+`service.version` 和 `service.instance.id`，与 `ServiceLogContext` 一致。使用非机密的 Host
+身份元数据。Correlation ID 仍与 W3C trace 身份分离；插桩不会把它改写为 Trace ID。上游
+HTTP/运行时插桩拥有其 span 和 metric 属性：Resource 白名单不是任意属性的脱敏或基数保证。
 
-## Ownership and evidence
+## 所有权与证据
 
-`TelemetryPipelineTests` exercises Build, pipeline composition, mapping, Start, actual
-loopback HTTP, Stop and Dispose. For each selected tracing signal it observes ended request spans
-in memory; for R it attaches a manual reader and records a controlled `System.Runtime` counter.
-Collectors are configured only where the ServiceMantle registration already declares a provider;
-absent and disabled rows do not gain a provider through test setup. A separate full-instrumentation
-row runs with no test reader, processor or exporter.
+`TelemetryPipelineTests` 演练 Build、管道组合、映射、Start、实际回环 HTTP、Stop 和
+Dispose。对于每个选定的 tracing 信号，它在内存中观测已结束的请求 span；对于 R，它附加一个
+手动读取器并记录一个受控的 `System.Runtime` 计数器。收集器只在 ServiceMantle 注册已经声明
+provider 的地方配置；缺席和禁用行不会通过测试设置获得 provider。另有一行完整插桩的测试在
+没有测试读取器、processor 或 exporter 的情况下运行。
 
-Normal Stop plus Dispose removes the observed ActivitySource and Meter listeners, and repeated
-Dispose does not repeat successful instrumentation disposal. A pre-cancelled Start does not report
-`ApplicationStarted`. An instrumentation Dispose exception remains visible. After such an exception,
-the fixture explicitly cleans up the handles it still owns; arbitrary failures need not release all
-remaining SDK resources, and retrying failed disposal need not call instrumentation only once.
-Tests use assembly-wide serialization for global listeners and manual metric collection rather than
-sleep-based periodic export checks.
+正常 Stop 加 Dispose 会移除观测到的 ActivitySource 和 Meter 监听器，重复 Dispose 不会重复
+成功的插桩处置。预先取消的 Start 不会报告 `ApplicationStarted`。插桩的 Dispose 异常仍然
+可见。出现此类异常后，fixture 会显式清理它仍拥有的句柄；任意失败不必释放所有剩余的 SDK
+资源，重试失败的处置也不必只调用插桩一次。测试对全局监听器和手动指标采集使用程序集级串行化，
+而不是基于 sleep 的周期性导出检查。
 
-The new tests also inspect Core/AspNetCore restored dependency graphs for transitive telemetry
-references: neither may reach an Exporter or Prometheus driver. `ServiceMantle.OpenTelemetry` itself
-ships the OTLP and Prometheus exporters, so the boundary it keeps is behavioural rather than
-transitive - installing it activates no exporter until the matching registration call is made. This
-composition does not add packages, framework references or `eng/packages.json` entries.
+新测试还会检查 Core/AspNetCore 还原后的依赖图中是否有传递性 telemetry 引用：两者都不得
+触及 Exporter 或 Prometheus 驱动。`ServiceMantle.OpenTelemetry` 本身自带 OTLP 和
+Prometheus exporter，因此它守住的边界是行为性的而非传递性的——安装它不会激活任何
+exporter，直到进行匹配的注册调用。本组合不添加包、框架引用或 `eng/packages.json` 条目。
 
-## Limits
+## 限制
 
-- Absence claims cover ServiceMantle provider/listener creation and controlled export-work counters,
-  not every .NET process thread, timer or network connection, nor consumer-owned providers.
-- No OTLP, Prometheus, fixed ServiceMantle metrics, Consul, remote backend, database, authentication or
-  logging Host is added. Their independent tasks and packages are outside this matrix.
-- No guarantee is made about export success, sampling, throughput, cross-process propagation, packet
-  loss, forced-termination cleanup, or interruption of third-party code that ignores cancellation.
-- Unrelated configuration secrets are asserted absent from captured test logs and safe diagnostics.
-  This does not guarantee universal URL/Header/SQL/endpoint or third-party attribute sanitization.
-- No product identity, transaction, migration, persistence or cross-request state ownership is
-  transferred to the library, and no concurrent DI/options/endpoint mutation is supported here.
+- 缺席声明覆盖 ServiceMantle provider/监听器创建和受控的导出工作计数器，不覆盖每个
+  .NET 进程线程、定时器或网络连接，也不覆盖消费方自有的 provider。
+- 不添加 OTLP、Prometheus、固定的 ServiceMantle 指标、Consul、远程后端、数据库、认证或
+  日志 Host。它们各自独立的任务和包不在本矩阵范围内。
+- 对导出成功、采样、吞吐量、跨进程传播、丢包、强制终止清理，或中断忽略取消的第三方代码，
+  不作任何保证。
+- 断言不相关的配置密钥不会出现在捕获的测试日志和安全诊断中。这不保证对 URL/Header/SQL/
+  endpoint 或第三方属性的普遍脱敏。
+- 不把任何产品身份、事务、migration、持久化或跨请求状态所有权转移给库，此处也不支持
+  并发的 DI/options/endpoint 变更。
 
-Invalid and conflicting registrations are rejected before any ServiceMantle instrumentation is
-activated, including when framework DI resolves a meter or tracer provider before the hosted
-startup validator runs. The conflict rows assert that provider factories are never invoked; do not
-weaken them by bypassing framework metrics or skipping the assertions.
+无效和冲突的注册在任何 ServiceMantle 插桩激活之前被拒绝，包括框架 DI 在托管启动验证器
+运行之前解析 meter 或 tracer provider 的情况。冲突行断言 provider 工厂从未被调用；不要
+通过绕过框架 metrics 或跳过断言来削弱它们。
