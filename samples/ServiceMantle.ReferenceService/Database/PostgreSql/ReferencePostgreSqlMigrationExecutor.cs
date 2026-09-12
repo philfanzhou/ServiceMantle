@@ -16,17 +16,19 @@ namespace ServiceMantle.ReferenceService.Database.PostgreSql;
 /// <see cref="ExecuteAsync"/> runs exactly one explicit <c>MigrateAsync</c> on this context and
 /// nothing else: it does not save consumer work, does not initialise installation state, and does
 /// not complete Setup. A schema this executor reports as compatible is not an installation that is
-/// <c>Completed</c> or <c>Ready</c>.
+/// <c>Completed</c> or <c>Ready</c>, and a missing installation row is deliberately not inspected:
+/// schema observation says nothing about installation rows either way.
 /// </para>
 /// <para>
 /// The observation is deliberately finite and covers only the <c>public</c> schema this reference
 /// service owns. System schemas (<c>pg_catalog</c>, <c>information_schema</c>, and the
 /// <c>pg_toast</c>/<c>pg_temp</c> families) are excluded from the relation census because they are
 /// not application state; the EF history table is excluded from the application relation count
-/// because it is this executor's own evidence. Anything else - an application relation in another
-/// schema, a relation kind other than an ordinary table, an unreadable history, a history record
-/// this build does not know, a gap in the applied sequence, or a missing table or column - is
-/// refused rather than adopted.
+/// because it is this executor's own evidence. At the current known version, both the workspace
+/// table and the ServiceMantle installation table must be ordinary tables with their expected
+/// columns readable. Anything else - an application relation in another schema, a relation kind
+/// other than an ordinary table, an unreadable history, a history record this build does not know,
+/// a gap in the applied sequence, or a missing table or column - is refused rather than adopted.
 /// </para>
 /// <para>
 /// The caller owns migration serialization, the authorization of the target, the context, and every
@@ -38,10 +40,27 @@ public sealed class ReferencePostgreSqlMigrationExecutor : IDatabaseMigrationExe
 {
     private const string HistoryTable = "__EFMigrationsHistory";
     private const string WorkspaceTable = "reference_workspaces";
+    private const string InstallationTable = "service_installations";
     private const string OwnedSchema = "public";
     private const string OrdinaryTable = "r";
 
     private static readonly string[] RequiredWorkspaceColumns = ["Id", "DisplayName"];
+
+    // The ServiceMantle installation table's columns, as named by the public EF Core persistence
+    // package's own mapping. Readability of exactly these columns is what the current version
+    // requires; the rows are deliberately not this executor's evidence.
+    private static readonly string[] RequiredInstallationColumns =
+    [
+        "service_id",
+        "status",
+        "created_at_utc",
+        "completed_at_utc",
+        "version",
+        "setup_code_generation",
+        "setup_code_digest",
+        "setup_code_issued_at_utc",
+        "setup_code_expires_at_utc",
+    ];
 
     private readonly ReferencePostgreSqlDbContext context;
     private readonly Func<CancellationToken, ValueTask<MigrationObservationState>> observation;
@@ -245,7 +264,7 @@ public sealed class ReferencePostgreSqlMigrationExecutor : IDatabaseMigrationExe
                 : MigrationObservationState.InspectionFailed;
         }
 
-        return await HasWorkspaceSchemaAsync(connection, applicationRelations, cancellationToken)
+        return await HasApplicationSchemaAsync(connection, applicationRelations, cancellationToken)
             .ConfigureAwait(false)
             ? MigrationObservationState.CurrentVersionCompatible
             : MigrationObservationState.InspectionFailed;
@@ -305,25 +324,41 @@ public sealed class ReferencePostgreSqlMigrationExecutor : IDatabaseMigrationExe
         return applied;
     }
 
-    private static async Task<bool> HasWorkspaceSchemaAsync(
+    private static async Task<bool> HasApplicationSchemaAsync(
         NpgsqlConnection connection,
         IReadOnlyList<Relation> applicationRelations,
         CancellationToken cancellationToken)
     {
         if (!applicationRelations.Any(relation =>
-                string.Equals(relation.Name, WorkspaceTable, StringComparison.Ordinal)))
+                string.Equals(relation.Name, WorkspaceTable, StringComparison.Ordinal)) ||
+            !applicationRelations.Any(relation =>
+                string.Equals(relation.Name, InstallationTable, StringComparison.Ordinal)))
         {
             return false;
         }
 
         // The expected columns must be readable, not merely present in the catalog.
+        return await HasReadableColumnsAsync(
+                connection, WorkspaceTable, RequiredWorkspaceColumns, cancellationToken)
+            .ConfigureAwait(false) &&
+            await HasReadableColumnsAsync(
+                connection, InstallationTable, RequiredInstallationColumns, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<bool> HasReadableColumnsAsync(
+        NpgsqlConnection connection,
+        string tableName,
+        IReadOnlyList<string> columns,
+        CancellationToken cancellationToken)
+    {
         await using var command = connection.CreateCommand();
-        var projection = string.Join(", ", RequiredWorkspaceColumns.Select(column => $"\"{column}\""));
+        var projection = string.Join(", ", columns.Select(column => $"\"{column}\""));
         command.CommandText =
-            $"""SELECT {projection} FROM "{OwnedSchema}"."{WorkspaceTable}" WHERE false""";
+            $"""SELECT {projection} FROM "{OwnedSchema}"."{tableName}" WHERE false""";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false);
-        return reader.FieldCount == RequiredWorkspaceColumns.Length;
+        return reader.FieldCount == columns.Count;
     }
 
     private sealed record Relation(string Schema, string Name, string Kind);

@@ -12,9 +12,14 @@ context，其迁移是针对 SQLite 自己的存储类型编写的。`ReferenceP
 
 此处交付：
 
-- `ReferencePostgreSqlDbContext`，只把共享的 `ReferenceWorkspace` 业务实体映射到
-  `public.reference_workspaces`，存储类型为 `uuid` 和 `character varying(120)`。
-- 一个迁移 `20260910000000_InitialReferencePostgreSqlWorkspace`，及其模型快照。
+- `ReferencePostgreSqlDbContext`，把共享的 `ReferenceWorkspace` 业务实体映射到
+  `public.reference_workspaces`（存储类型为 `uuid` 和 `character varying(120)`），并通过公开
+  EF Core 持久化包自己的 `AddServiceMantleInstallation` 映射 ServiceMantle 安装表
+  `public.service_installations`——该表的存储类型、长度、默认值与 version 并发 token 由持久化
+  包拥有，示例不复制其映射。
+- 两个迁移：`20260910000000_InitialReferencePostgreSqlWorkspace`（只建 workspace 表）与
+  `20260912000000_AddReferencePostgreSqlInstallation`（只建**空**安装表），以及各自冻结的
+  target model 和最新模型快照。
 - `ReferencePostgreSqlMigrationExecutor`，一个 `IDatabaseMigrationExecutor`，其观察是只读的，
   其执行是仅涉及 schema 的。
 
@@ -25,6 +30,23 @@ context，其迁移是针对 SQLite 自己的存储类型编写的。`ReferenceP
 初始化和失败恢复仍是未完成的工作。
 
 由于没有 host 接线，下面的一切都是通过 executor 的公开 API 直接调用它来演练的。
+
+## 安装表交付的精确边界
+
+`20260912000000_AddReferencePostgreSqlInstallation` 建立的是一张**空**表，仅此而已。创建
+安装表不等于建立安装事实：初始安装行、Setup Code 的签发与消费、阶段 source 与启动激活都属于
+后续切片。安装表的九列（`service_id`、`status`、`created_at_utc`、`completed_at_utc`、
+`version`、`setup_code_generation`、`setup_code_digest`、`setup_code_issued_at_utc`、
+`setup_code_expires_at_utc`）、主键与 `setup_code_generation` 的默认值 `0` 由公开持久化包的
+映射决定，测试断言迁移后的物理 schema 与该运行时模型一致，且
+`HasPendingModelChanges()` 为 false。
+
+旧 workspace-only 库的升级路径是显式的：executor 对“只应用了初始迁移”的目标报告
+`PendingMigration`，调用方显式执行升级后 workspace 行保留，安装表为空——没有自动初始化行。
+安装行的写入与回滚由调用方自己的 context 和事务拥有（见
+`ReferencePostgreSqlInstallationSchemaTests`）；`version` 列是 EF 乐观并发 token，两个独立
+context 以过期 version 保存同一行时，第二个保存得到 EF 并发冲突。那是一次行版本冲突，不是
+双实例 Setup 唯一成功者的证明。
 
 ## 所有权
 
@@ -54,14 +76,19 @@ context 上恰好运行一次显式的 `MigrateAsync`。它不调用 `EnsureCrea
 | --- | --- |
 | `public` 存在且可读，没有应用关系，且没有历史表或历史表为空 | `Empty` |
 | 历史记录持有此构建所知 id 的一个严格、无缺口的前缀 | `PendingMigration` |
-| 历史记录恰好持有所知集合，`reference_workspaces` 是一个普通表，且 `Id` 和 `DisplayName` 可读 | `CurrentVersionCompatible` |
+| 历史记录恰好持有所知集合，`reference_workspaces` 与 `service_installations` 都是普通表，且各自预期列可读 | `CurrentVersionCompatible` |
 | 历史记录持有此构建不知道的 id | `VersionTooNew` |
 | 历史记录存在，但已应用的 id 不是所知集合的前缀（有缺口） | `InspectionFailed` |
 | 历史记录完全无法读取——缺少权限、意外的形状、服务器不可达、数据库缺失、`public` schema 缺失 | `InspectionFailed` |
 | 应用关系存在，但没有历史表 | `InspectionFailed` |
 | `reference_workspaces` 或其某个预期列缺失 | `InspectionFailed` |
+| `service_installations` 或其九列中的某一列缺失 | `InspectionFailed` |
 | `public` 中的某个关系不是普通表——视图、物化视图、分区表或外部表 | `InspectionFailed` |
 | 应用关系存在于 `public` 之外的任何非系统 schema 中 | `InspectionFailed` |
+
+`CurrentVersionCompatible` 刻意只检查两张表的列**可读**；它既不推断任何 `Pending` /
+`Completed` / `Ready` 安装状态，也不检查安装行——缺失的安装行不妨碍 schema 兼容，未来属于
+#160 的初始行与 Setup 流程必须另行拒绝或依明确新装证明处理，不能据此无条件 `CreatePending`。
 
 `VersionTooNew` 是根据那条未知的历史记录本身判定的。它刻意**不**通过询问
 `GetPendingMigrations()` 是否为空来判定，一个空的工作区表也绝不会被当作采纳未知 schema 的
@@ -90,6 +117,8 @@ executor 用于比较的迁移集合可以通过三参数构造函数显式提�
 `[RealDatabaseTest(RealDatabaseProvider.PostgreSql)]` 分类，并使用共享的必需环境策略，
 因此它是可选加入的，而且一旦选择加入，就不能通过跳过而静默通过：如果设置了
 `RUN_SERVICEMANTLE_POSTGRES_TESTS=true` 而 Docker 或容器不可用，测试会失败。
+`ReferencePostgreSqlInstallationSchemaTests` 使用同一分类，覆盖安装表的物理 schema、事务
+边界与版本并发 token。
 
 ```bash
 dotnet build ServiceMantle.slnx -c Release

@@ -21,10 +21,27 @@ namespace ServiceMantle.ReferenceService.Tests;
 public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
 {
     private const string WorkspaceMigration = "20260910000000_InitialReferencePostgreSqlWorkspace";
-    private const string FutureMigration = "20260911000000_FutureReferenceStep";
-    private const string LaterMigration = "20260912000000_LaterReferenceStep";
+    private const string InstallationMigration = "20260912000000_AddReferencePostgreSqlInstallation";
+    private const string FutureMigration = "20260913000000_FutureReferenceStep";
+    private const string LaterMigration = "20260914000000_LaterReferenceStep";
     private const string HistoryTable = "__EFMigrationsHistory";
     private const string WorkspaceTable = "reference_workspaces";
+    private const string InstallationTable = "service_installations";
+
+    // The ServiceMantle installation table's columns, as named by the public EF Core persistence
+    // package's own mapping; each missing one must independently refuse the observation.
+    public static TheoryData<string> InstallationColumns() => new()
+    {
+        "service_id",
+        "status",
+        "created_at_utc",
+        "completed_at_utc",
+        "version",
+        "setup_code_generation",
+        "setup_code_digest",
+        "setup_code_issued_at_utc",
+        "setup_code_expires_at_utc",
+    };
 
     // Synthetic fixture secrets. They exist only inside this container and are asserted to stay out
     // of the executor's own diagnostics.
@@ -64,7 +81,7 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task An_empty_target_is_adoptable_and_the_workspace_migration_applies()
+    public async Task An_empty_target_is_adoptable_and_both_migrations_apply()
     {
         var target = await CreateTargetAsync("adoptable");
         await using var context = CreateContext(target);
@@ -78,10 +95,42 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         Assert.Equal(MigrationObservationState.Empty, initial);
         Assert.Equal(MigrationObservationState.CurrentVersionCompatible, afterExecution);
         Assert.Equal(MigrationObservationState.CurrentVersionCompatible, afterRepeatedInspection);
-        // The repeated observation did not migrate again.
-        Assert.Equal([WorkspaceMigration], await ReadHistoryAsync(target));
+        // The repeated observation did not migrate again, and both fixed versions are recorded.
+        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
         Assert.False(context.Database.HasPendingModelChanges());
         Assert.Empty(await context.Database.GetPendingMigrationsAsync(Token));
+    }
+
+    [Fact]
+    public async Task A_workspace_only_target_is_a_pending_migration_and_the_upgrade_keeps_rows()
+    {
+        var target = await CreateTargetAsync("workspace_only");
+        await MigrateAsync(target);
+        var kept = new ReferenceWorkspace { Id = Guid.NewGuid(), DisplayName = "kept" };
+        await using (var seed = CreateContext(target))
+        {
+            seed.Workspaces.Add(kept);
+            await seed.SaveChangesAsync(Token);
+        }
+
+        // Roll the schema back to exactly what an older workspace-only build left behind.
+        await ExecuteAsync(target, $"""DROP TABLE public."{InstallationTable}" """);
+        await ExecuteAsync(target, $"""
+            DELETE FROM public."{HistoryTable}" WHERE "MigrationId" = '{InstallationMigration}'
+            """);
+        await using var context = CreateContext(target);
+        var executor = new ReferencePostgreSqlMigrationExecutor(context, target);
+
+        var pending = await executor.InspectAsync(Token);
+
+        Assert.Equal(MigrationObservationState.PendingMigration, pending);
+        await executor.ExecuteAsync(Token);
+
+        Assert.Equal(MigrationObservationState.CurrentVersionCompatible, await executor.InspectAsync(Token));
+        Assert.Equal(["kept"], await ReadWorkspaceNamesAsync(target));
+        // The upgrade created the installation table but initialised no installation row.
+        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
+        Assert.Empty(await ReadInstallationServiceIdsAsync(target));
     }
 
     [Fact]
@@ -169,11 +218,12 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         var target = await CreateTargetAsync("pending");
         await MigrateAsync(target);
         await using var context = CreateContext(target);
-        // A test-owned migration set, so the sample keeps exactly one production migration.
+        // A test-owned migration set, so the sample keeps only the migrations it has a business
+        // need for, and the fully applied pair is a strict prefix of it.
         var executor = new ReferencePostgreSqlMigrationExecutor(
             context,
             target,
-            [WorkspaceMigration, FutureMigration]);
+            [WorkspaceMigration, InstallationMigration, FutureMigration]);
 
         Assert.Equal(MigrationObservationState.PendingMigration, await executor.InspectAsync(Token));
     }
@@ -202,7 +252,7 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         var executor = new ReferencePostgreSqlMigrationExecutor(
             context,
             target,
-            [WorkspaceMigration, FutureMigration, LaterMigration]);
+            [WorkspaceMigration, InstallationMigration, FutureMigration, LaterMigration]);
 
         Assert.Equal(MigrationObservationState.InspectionFailed, await executor.InspectAsync(Token));
     }
@@ -252,6 +302,33 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         var target = await CreateTargetAsync("missing_column");
         await MigrateAsync(target);
         await ExecuteAsync(target, $"""ALTER TABLE public."{WorkspaceTable}" DROP COLUMN "DisplayName" """);
+        await using var context = CreateContext(target);
+        var executor = new ReferencePostgreSqlMigrationExecutor(context, target);
+
+        Assert.Equal(MigrationObservationState.InspectionFailed, await executor.InspectAsync(Token));
+    }
+
+    [Fact]
+    public async Task A_missing_installation_table_is_an_inspection_failure()
+    {
+        var target = await CreateTargetAsync("missing_installation_table");
+        await MigrateAsync(target);
+        await ExecuteAsync(target, $"""DROP TABLE public."{InstallationTable}" """);
+        await using var context = CreateContext(target);
+        var executor = new ReferencePostgreSqlMigrationExecutor(context, target);
+
+        // The history claims the current version, but the installation table is part of that
+        // version's schema, so its absence is not compatible and not repaired either.
+        Assert.Equal(MigrationObservationState.InspectionFailed, await executor.InspectAsync(Token));
+    }
+
+    [Theory]
+    [MemberData(nameof(InstallationColumns))]
+    public async Task A_missing_installation_column_is_an_inspection_failure(string column)
+    {
+        var target = await CreateTargetAsync($"missing_installation_{column}");
+        await MigrateAsync(target);
+        await ExecuteAsync(target, $"""ALTER TABLE public."{InstallationTable}" DROP COLUMN "{column}" """);
         await using var context = CreateContext(target);
         var executor = new ReferencePostgreSqlMigrationExecutor(context, target);
 
@@ -348,7 +425,7 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
 
         // The role can read the catalog but was granted nothing on the tables themselves.
         Assert.Equal(MigrationObservationState.InspectionFailed, await executor.InspectAsync(Token));
-        Assert.Equal([WorkspaceMigration], await ReadHistoryAsync(target));
+        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
     }
 
     [Fact]
@@ -508,6 +585,11 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         ReadStringsAsync(
             connectionString,
             $"""SELECT "DisplayName" FROM public."{WorkspaceTable}" ORDER BY "DisplayName" """);
+
+    private Task<List<string>> ReadInstallationServiceIdsAsync(string connectionString) =>
+        ReadStringsAsync(
+            connectionString,
+            $"""SELECT service_id FROM public."{InstallationTable}" ORDER BY service_id """);
 
     private Task<List<string>> ReadRelationNamesAsync(string connectionString) =>
         ReadStringsAsync(

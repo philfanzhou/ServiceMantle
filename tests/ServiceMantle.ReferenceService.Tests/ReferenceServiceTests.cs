@@ -136,6 +136,7 @@ public sealed class ReferenceServiceTests
         Assert.Equal(new[] { "../../src/ServiceMantle/ServiceMantle.csproj", "../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj",
             "../../src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
             "../../src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj",
+            "../../src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj",
             "../../src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj" },
             project.Descendants("ProjectReference").Select(reference => (string)reference.Attribute("Include")!));
         Assert.DoesNotContain(project.Descendants("Compile"), item => item.Attribute("Include") is not null);
