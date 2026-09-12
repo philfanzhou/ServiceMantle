@@ -1,179 +1,165 @@
-# Oracle container target support remains closed
+# Oracle 容器目标支持保持关闭
 
-- Date: 2026-09-06; status: decision fixed, pending PR merge.
-- Decision issue: [#203](https://github.com/philfanzhou/ServiceMantle/issues/203).
-- Code baseline: `fdac1d591488d57d639a05fc2b8a04faf536ae82`.
-- This decision supplements [ADR 0001](0001-oracle-provider-contract.md). It does not
-  change the existing single-instance, ordinary-PDB contract.
+- 日期：2026-09-06；状态：结论固定，待 PR 合并。
+- 决策 issue：[#203](https://github.com/philfanzhou/ServiceMantle/issues/203)。
+- 代码基线：`fdac1d591488d57d639a05fc2b8a04faf536ae82`。
+- 本决策补充 [ADR 0001](0001-oracle-provider-contract.md)。它不改变现有的
+  单实例、普通 PDB 契约。
 
-## Decision
+## 决策
 
-ServiceMantle continues to support only a local, non-Oracle-maintained application user
-in an ordinary user-created PDB. CDB root, PDB seed, CDB common users, application roots,
-application PDBs, and application-common users remain unsupported for Bootstrap target
-validation, observation, preparation, and migration locking.
+ServiceMantle 继续只支持普通用户创建的 PDB 中的本地、非 Oracle 维护的应用用户。
+CDB root、PDB seed、CDB common 用户、application root、application PDB 和
+application-common 用户在 Bootstrap 目标验证、观察、准备和 migration 锁获取上
+保持不受支持。
 
-This is a closed support decision, not a promise that the current parser recognizes every
-unsupported common identity before connecting. There is no feature switch, container
-switch, common grant, cross-container fallback, or unlocked migration path.
+这是一个关闭的支持决策，不是承诺当前解析器在连接之前能识别每一种不受支持的
+common 身份。没有特性开关、容器切换、common 授权、跨容器回退或未锁死的
+migration 路径。
 
-| Connected container and target identity | Decision | Current evidence and boundary |
+| 已连接的容器与目标身份 | 决策 | 当前证据与边界 |
 | --- | --- | --- |
-| Ordinary user-created PDB; local user with `COMMON=NO` and `ORACLE_MAINTAINED=N` | Existing support retained | `CON_ID > 2`, both application-container flags are `NO`, cloud marker is empty, and the database is non-RAC. Preparation also verifies the target row in `ALL_USERS`. |
-| `CDB$ROOT` (`CON_ID=1`) | Closed | The runtime topology probe rejects `CON_ID <= 2`. |
-| `PDB$SEED` (`CON_ID=2`) | Closed | The same probe rejects it; ServiceMantle does not attempt to modify the seed. |
-| Ordinary PDB; CDB common user | Closed | A default `C##` name is rejected before connection. A customized or empty `COMMON_USER_PREFIX` can evade that name check; the current target-session probe does not query `ALL_USERS`, as tracked by [#317](https://github.com/philfanzhou/ServiceMantle/issues/317). |
-| Application root | Closed | `IS_APPLICATION_ROOT=YES` is rejected after connection. |
-| Application PDB, whether its target is local or application-common | Closed | `IS_APPLICATION_PDB=YES` is rejected after connection. |
-| Application-common user in an application root | Closed | The application-root topology is rejected; the user-name prefix is not accepted as proof of identity. |
+| 普通用户创建的 PDB；`COMMON=NO` 且 `ORACLE_MAINTAINED=N` 的本地用户 | 保留现有支持 | `CON_ID > 2`，两个 application-container 标志均为 `NO`，云标记为空，且数据库为非 RAC。准备还会验证 `ALL_USERS` 中的目标行。 |
+| `CDB$ROOT`（`CON_ID=1`） | 关闭 | 运行时拓扑探测拒绝 `CON_ID <= 2`。 |
+| `PDB$SEED`（`CON_ID=2`） | 关闭 | 同一探测拒绝它；ServiceMantle 不尝试修改 seed。 |
+| 普通 PDB；CDB common 用户 | 关闭 | 默认的 `C##` 名称在连接之前被拒绝。自定义或空的 `COMMON_USER_PREFIX` 可以绕过该名称检查；当前目标会话探测不查询 `ALL_USERS`，由 [#317](https://github.com/philfanzhou/ServiceMantle/issues/317) 跟踪。 |
+| Application root | 关闭 | `IS_APPLICATION_ROOT=YES` 在连接之后被拒绝。 |
+| Application PDB，无论其目标是本地还是 application-common | 关闭 | `IS_APPLICATION_PDB=YES` 在连接之后被拒绝。 |
+| Application root 中的 application-common 用户 | 关闭 | application-root 拓扑被拒绝；用户名前缀不被接受为身份证明。 |
 
-Oracle's [`COMMON_USER_PREFIX`](https://docs.oracle.com/en/database/oracle/oracle-database/26/refrn/COMMON_USER_PREFIX.html)
-is configurable and has different defaults in the CDB root and an application root.
-Therefore, “does not start with `C##`” does not prove that a user is local. Conversely,
-a connection alias or user name does not identify a database container.
+Oracle 的 [`COMMON_USER_PREFIX`](https://docs.oracle.com/en/database/oracle/oracle-database/26/refrn/COMMON_USER_PREFIX.html)
+是可配置的，并且在 CDB root 和 application root 中有不同的默认值。因此，“不以
+`C##` 开头”不能证明一个用户是本地用户。反过来，连接别名或用户名也不能标识数据库
+容器。
 
 [`ALL_USERS`](https://docs.oracle.com/en/database/oracle/oracle-database/26/refrn/ALL_USERS.html)
-provides user metadata visible to the current session, including `COMMON`,
-`ORACLE_MAINTAINED`, and `INHERITED`. Container identity is separate evidence:
+提供当前会话可见的用户元数据，包括 `COMMON`、`ORACLE_MAINTAINED` 和
+`INHERITED`。容器身份是另一类证据：
 [`SYS_CONTEXT`](https://docs.oracle.com/en/database/oracle/oracle-database/26/sqlrf/SYS_CONTEXT.html)
-provides the current `CON_ID`, `CON_NAME`, and session user. The supported target requires
-both kinds of evidence; neither a naming convention nor a TNS alias substitutes for them.
+提供当前的 `CON_ID`、`CON_NAME` 和会话用户。受支持的目标需要两类证据；命名约定
+或 TNS 别名都不能替代它们。
 
-## Current behavior at each entry point
+## 各入口点的当前行为
 
-The tables below describe the implementation at the stated baseline. They deliberately
-distinguish a declared support boundary from complete detection. A failure before an
-authenticated session exists cannot reveal a hidden container or user type.
+下面的表格描述所述基线上的实现。它们刻意区分已声明的支持边界与完整检测。在
+已认证会话存在之前的失败无法揭示隐藏的容器或用户类型。
 
 ### Bootstrap Validate
 
-| Evidence or failure | Current result | Side effects |
+| 证据或失败 | 当前结果 | 副作用 |
 | --- | --- | --- |
-| Unsupported user-name or authentication shape, including a literal `C##` prefix | `database.connection_string_invalid` | No connection, DDL, or lock allocation. |
-| Locked/expired account or invalid credentials before a session is established | `database.authentication_failed` | No container or common-user inference; no DDL or lock allocation. |
-| Listener, service, transport, or protocol failure | `database.connection_failed` | No container or common-user inference; no DDL or lock allocation. |
-| Target lacks `CREATE SESSION` | `database.permission_denied` | No DDL or lock allocation. |
-| Connected session reports root, seed, or an application container | `database.connection_string_invalid` | Probe only; no DDL or lock allocation. |
-| Required topology probe is denied | `database.permission_denied` | No DDL or lock allocation. |
-| `SESSION_USER` differs from the normalized target user | `database.connection_string_invalid` | No DDL or lock allocation. |
-| Unexpected provider/probe failure | `database.provider_validation_failed` | No DDL or lock allocation. |
+| 不受支持的用户名或认证形态，包括字面 `C##` 前缀 | `database.connection_string_invalid` | 无连接、DDL 或锁分配。 |
+| 会话建立前账户被锁定/过期或凭据无效 | `database.authentication_failed` | 不做容器或 common 用户推断；无 DDL 或锁分配。 |
+| 监听器、服务、传输或协议失败 | `database.connection_failed` | 不做容器或 common 用户推断；无 DDL 或锁分配。 |
+| 目标缺少 `CREATE SESSION` | `database.permission_denied` | 无 DDL 或锁分配。 |
+| 已连接会话报告 root、seed 或 application 容器 | `database.connection_string_invalid` | 仅探测；无 DDL 或锁分配。 |
+| 必需的拓扑探测被拒绝 | `database.permission_denied` | 无 DDL 或锁分配。 |
+| `SESSION_USER` 与规范化后的目标用户不同 | `database.connection_string_invalid` | 无 DDL 或锁分配。 |
+| 意外的 provider/探测失败 | `database.provider_validation_failed` | 无 DDL 或锁分配。 |
 
-Validation does not query the connected target user's `ALL_USERS` row. A common user in
-an ordinary PDB whose name is not rejected by the literal `C##` check can therefore pass
-the present topology probe. That is the existing #317 detection gap, not supported
-behavior and not a guarantee added by this decision.
+验证不查询已连接目标用户的 `ALL_USERS` 行。因此，普通 PDB 中名称未被字面 `C##`
+检查拒绝的 common 用户可能通过当前的拓扑探测。那是现有的 #317 检测缺口，不是受
+支持行为，也不是本决策新增的保证。
 
 ### Observe
 
-| Evidence or failure | Current result | Side effects |
+| 证据或失败 | 当前结果 | 副作用 |
 | --- | --- | --- |
-| Unsupported user-name or authentication shape | `ServerUnreachable(InvalidTarget)` | No connection, DDL, or lock allocation. |
-| Connected root, seed, or application-container session | `TargetUnreachable(InvalidTarget)`, `TargetExists=true` | Probe only. |
-| Topology-probe permission denial | `TargetUnreachable(PermissionDenied)`, `TargetExists=true` | Probe only. |
-| Connected session identity mismatch | `TargetUnreachable(InvalidTarget)`, `TargetExists=true` | Probe only. |
-| Invalid credentials before a session exists | `TargetUnreachable(AuthenticationFailed)`, existence unknown | No hidden topology or user-type inference. |
-| Locked or expired account | `TargetUnreachable(AuthenticationFailed)`, `TargetExists=true` | No DDL or lock allocation. |
-| Listener, service, transport, or protocol failure | `ServerUnreachable(ConnectionFailed)` | No DDL or lock allocation. |
-| Other Oracle failure | `ServerUnreachable(PreparationFailed)` | No DDL or lock allocation. |
+| 不受支持的用户名或认证形态 | `ServerUnreachable(InvalidTarget)` | 无连接、DDL 或锁分配。 |
+| 已连接的 root、seed 或 application-container 会话 | `TargetUnreachable(InvalidTarget)`，`TargetExists=true` | 仅探测。 |
+| 拓扑探测权限拒绝 | `TargetUnreachable(PermissionDenied)`，`TargetExists=true` | 仅探测。 |
+| 已连接会话身份不匹配 | `TargetUnreachable(InvalidTarget)`，`TargetExists=true` | 仅探测。 |
+| 会话存在前凭据无效 | `TargetUnreachable(AuthenticationFailed)`，存在性未知 | 不做隐藏拓扑或用户类型推断。 |
+| 账户被锁定或过期 | `TargetUnreachable(AuthenticationFailed)`，`TargetExists=true` | 无 DDL 或锁分配。 |
+| 监听器、服务、传输或协议失败 | `ServerUnreachable(ConnectionFailed)` | 无 DDL 或锁分配。 |
+| 其他 Oracle 失败 | `ServerUnreachable(PreparationFailed)` | 无 DDL 或锁分配。 |
 
-Observation never performs administrative discovery or DDL. It has the same #317 gap
-for a successfully connected common target in an ordinary PDB.
+观察从不执行管理性发现或 DDL。对于普通 PDB 中成功连接的 common 目标，它存在
+同样的 #317 缺口。
 
 ### Prepare
 
-Preparation first validates both connection strings and their exact trimmed `Data Source`
-match. It then opens an unpooled administrative session and applies the runtime topology
-probe before querying or modifying the target.
+准备首先验证两个连接字符串以及它们精确修剪后的 `Data Source` 是否一致。然后它
+打开一个非池化的管理会话，并在查询或修改目标之前应用运行时拓扑探测。
 
-| Evidence or failure | Current result | Side-effect stopping point |
+| 证据或失败 | 当前结果 | 副作用停止点 |
 | --- | --- | --- |
-| Unsupported target/admin shape, invalid target name/password, or unequal data sources | `database_target_preparation.invalid_target` | Before the administrative connection and before DDL. |
-| Administrative session is in root, seed, or an application container | `database_target_preparation.invalid_target` | Before `ALL_USERS` and before DDL. |
-| Administrative topology probe is denied | `database_target_preparation.permission_denied` | Before `ALL_USERS` and before DDL. |
-| Administrative `SESSION_USER` differs from its configured user | `database_target_preparation.invalid_target` | Before `ALL_USERS` and before DDL. |
-| Administrative credentials are rejected | `database_target_preparation.authentication_failed` | Before `ALL_USERS` and before DDL. |
-| Administrative connection or session is lost | `database_target_preparation.connection_failed` | Statements already acknowledged can have occurred; ADR 0001 fixes compensation eligibility. |
-| Target row has `COMMON!=NO` or `ORACLE_MAINTAINED!=N` | `database_target_preparation.target_conflict` | `ALL_USERS` was read; no create, grant, or drop is issued. |
-| Target local user is absent in the supported ordinary PDB | Existing create path | `CREATE USER`, then `GRANT CREATE SESSION`, subject to ADR 0001 compensation rules. |
-| Required create/grant/drop privilege is denied | `database_target_preparation.permission_denied` | Only statements reached before the denial can have occurred. |
-| Overall deadline expires | `database_target_preparation.timeout` | ADR 0001 cancellation and compensation precedence applies. |
-| Unexpected Oracle failure, or eligible compensation cannot verify removal | `database_target_preparation.preparation_failed` | Previously acknowledged statements are not treated as rolled back. |
+| 不受支持的目标/管理形态、无效目标名称/密码，或数据源不相等 | `database_target_preparation.invalid_target` | 在管理连接之前、DDL 之前。 |
+| 管理会话位于 root、seed 或 application 容器 | `database_target_preparation.invalid_target` | 在 `ALL_USERS` 之前、DDL 之前。 |
+| 管理拓扑探测被拒绝 | `database_target_preparation.permission_denied` | 在 `ALL_USERS` 之前、DDL 之前。 |
+| 管理 `SESSION_USER` 与其配置用户不同 | `database_target_preparation.invalid_target` | 在 `ALL_USERS` 之前、DDL 之前。 |
+| 管理凭据被拒绝 | `database_target_preparation.authentication_failed` | 在 `ALL_USERS` 之前、DDL 之前。 |
+| 管理连接或会话丢失 | `database_target_preparation.connection_failed` | 已确认的语句可能已经发生；ADR 0001 固定补偿资格。 |
+| 目标行 `COMMON!=NO` 或 `ORACLE_MAINTAINED!=N` | `database_target_preparation.target_conflict` | 已读取 `ALL_USERS`；不发出创建、授权或 drop。 |
+| 受支持普通 PDB 中缺少目标本地用户 | 现有创建路径 | `CREATE USER`，然后 `GRANT CREATE SESSION`，受 ADR 0001 补偿规则约束。 |
+| 必需的创建/授权/drop 权限被拒绝 | `database_target_preparation.permission_denied` | 只有拒绝之前已到达的语句可能已经发生。 |
+| 总截止时间到期 | `database_target_preparation.timeout` | 适用 ADR 0001 的取消与补偿优先级。 |
+| 意外的 Oracle 失败，或符合条件的补偿无法验证移除 | `database_target_preparation.preparation_failed` | 之前已确认的语句不被视为已回滚。 |
 
-The SQL contains no `SET CONTAINER` and no `CONTAINER=ALL`. Oracle's
+SQL 中不包含 `SET CONTAINER`，也不包含 `CONTAINER=ALL`。Oracle 的
 [`CREATE USER`](https://docs.oracle.com/en/database/oracle/oracle-database/26/sqlrf/CREATE-USER.html)
-rules make `CONTAINER=CURRENT` the local-user meaning in a PDB; the current implementation
-relies on that scope by omitting the clause. It likewise issues no common
-`GRANT ... CONTAINER=ALL`. The administrative account may itself be common when connected
-to an ordinary PDB because the current topology probe does not prove that account local;
-this does not authorize cross-container work. Target discovery still rejects a visible
-common or Oracle-maintained target row before DDL.
+规则使 `CONTAINER=CURRENT` 成为 PDB 中本地用户的含义；当前实现通过省略该子句
+依赖这一 scope。它同样不发出 common 的 `GRANT ... CONTAINER=ALL`。连接到普通
+PDB 时管理账户本身可能是 common 的，因为当前拓扑探测不证明该账户是本地账户；
+这并不授权跨容器操作。目标发现仍然在 DDL 之前拒绝可见的 common 或 Oracle 维护
+的目标行。
 
 ### Acquire migration lock
 
-| Evidence or failure | Current result | Side-effect stopping point |
+| 证据或失败 | 当前结果 | 副作用停止点 |
 | --- | --- | --- |
-| Unsupported version, authentication, or name shape such as literal `C##` | `migration.lock_not_supported` | Before connection and lock allocation. |
-| Malformed provider/configuration or missing data source | `migration.lock_failed` | Before lock allocation. |
-| Connected root, seed, or application-container session | `migration.lock_not_supported` | Before `DBMS_LOCK.ALLOCATE_UNIQUE_AUTONOMOUS` and `REQUEST`. |
-| Topology-probe permission denial | `migration.lock_not_supported` | Before lock allocation. |
-| Connected session identity mismatch | `migration.lock_failed` | Before lock allocation. |
-| Authentication, connection, or unexpected Oracle failure | `migration.lock_failed`; acquisition deadline remains `migration.lock_timeout` | No allocation unless all earlier checks succeeded. |
-| Target cannot execute the required `SYS.DBMS_LOCK` calls | `migration.lock_not_supported` | Allocation or request can have been attempted, but no valid lease is returned. |
+| 不受支持的版本、认证或名称形态，例如字面 `C##` | `migration.lock_not_supported` | 在连接和锁分配之前。 |
+| 格式错误的 provider/配置或缺失数据源 | `migration.lock_failed` | 在锁分配之前。 |
+| 已连接的 root、seed 或 application-container 会话 | `migration.lock_not_supported` | 在 `DBMS_LOCK.ALLOCATE_UNIQUE_AUTONOMOUS` 和 `REQUEST` 之前。 |
+| 拓扑探测权限拒绝 | `migration.lock_not_supported` | 在锁分配之前。 |
+| 已连接会话身份不匹配 | `migration.lock_failed` | 在锁分配之前。 |
+| 认证、连接或意外的 Oracle 失败 | `migration.lock_failed`；获取截止时间仍为 `migration.lock_timeout` | 除非所有更早的检查都成功，否则不分配。 |
+| 目标无法执行所需的 `SYS.DBMS_LOCK` 调用 | `migration.lock_not_supported` | 分配或请求可能已被尝试，但不返回有效租约。 |
 
-After a successful topology probe, the current lock name is derived from only the
-normalized `ServiceId`. The provider does not incorporate a database ID, container ID,
-user name, or connection alias. That is sufficient only inside the existing single-target
-contract. A connection alias and a user name are specifically not accepted as a future
-cross-container lock identity. Because Acquire also has the #317 target-session gap, a
-common user with a non-rejected name in an ordinary PDB can reach lock allocation today;
-that is not supported or made safe by this document.
+拓扑探测成功后，当前锁名仅由规范化的 `ServiceId` 派生。provider 不并入数据库
+ID、容器 ID、用户名或连接别名。这仅在现有单目标契约之内足够。连接别名和用户名
+被明确排除在未来的跨容器锁身份之外。由于 Acquire 同样存在 #317 目标会话缺口，
+普通 PDB 中名称未被拒绝的 common 用户今天可以到达锁分配；这既不受支持，本文档
+也不使其变得安全。
 
-Caller cancellation, bounded timeouts, preparation compensation, lock release, and
-lease-loss behavior remain exactly as specified by ADR 0001. Cancellation does not
-convert an unsupported topology into success, and ServiceMantle does not promise to
-undo consumer DDL.
+调用方取消、有界超时、准备补偿、锁释放和租约丢失行为完全保持 ADR 0001 的规定。
+取消不会把不支持的拓扑变成成功，ServiceMantle 也不承诺撤销消费方的 DDL。
 
-## Why common and cross-container operations are not enabled
+## 为什么不启用 common 与跨容器操作
 
-Oracle permits common-user creation only from an appropriate root. `CONTAINER=ALL`
-changes the scope of creation or grants, while `CONTAINER=CURRENT` limits them to the
-current container. Application-common identities have a separate application-root and
-synchronization lifecycle. Those operations require a larger privilege and ownership
-contract than the current local-PDB provider. ServiceMantle does not silently expand
-`CREATE USER`, `DROP USER`, or `CREATE SESSION WITH ADMIN OPTION` into root-level common
-administration.
+Oracle 只允许从适当的 root 创建 common 用户。`CONTAINER=ALL` 改变创建或授权的
+scope，而 `CONTAINER=CURRENT` 把它们限制在当前容器。application-common 身份有
+独立的 application-root 与同步生命周期。这些操作需要比当前 local-PDB provider
+更大的权限与所有权契约。ServiceMantle 不会悄悄把 `CREATE USER`、`DROP USER` 或
+`CREATE SESSION WITH ADMIN OPTION` 扩大为 root 级的 common 管理。
 
-The database/container identity is also part of safe lock scoping. Supporting multiple
-containers would require a server-verified, canonical identity such as database identity
-plus container identity (`CON_ID` and a stable container identifier or equivalent), not
-an unverified alias. The exact identity must survive multiple service names for the same
-target while keeping distinct PDBs from aliasing one lock namespace.
+数据库/容器身份也是安全锁 scope 的一部分。支持多个容器将需要一个经服务器验证的
+规范身份，例如数据库身份加容器身份（`CON_ID` 和一个稳定的容器标识符或等价物），
+而不是未经验证的别名。该精确身份必须在同一目标的多个服务名之间保持一致，同时
+防止不同 PDB 意外共用同一个锁命名空间。
 
-## Requirements to reopen support
+## 重新开启支持的要求
 
-Reopening any closed row requires a separate decision and implementation task. It must
-provide all of the following automated evidence; unavailable infrastructure keeps the
-feature closed and must not produce a skipped or falsely green required job.
+重新开启任何关闭行需要独立的决策和实现任务。它必须提供以下全部自动化证据；
+基础设施不可用时特性保持关闭，且不得产生跳过或虚假通过（绿）的必需作业。
 
-1. A dedicated real CDB environment containing root, seed, at least two ordinary PDBs,
-   and an application root/application PDB. Tests must assert server-reported database,
-   container, session-user, `COMMON`, `ORACLE_MAINTAINED`, and `INHERITED` evidence rather
-   than infer it from names or aliases.
-2. Explicit support rules for CDB common, application-common, and local users under
-   customized, default, and empty `COMMON_USER_PREFIX` values. #317 must be resolved for
-   every entry point that claims the identity.
-3. A least-privilege matrix for `CREATE USER` and `GRANT` with explicit
-   `CONTAINER=CURRENT` or `CONTAINER=ALL`, including create races, cancellation, lost DDL
-   acknowledgements, compensation ownership, and proof that unrelated containers are
-   never modified. No test may use broad DBA/SYSDBA access to hide the required grants.
-4. A canonical database-and-container lock identity and two-session tests. Two actors
-   targeting the same canonical container and service must contend; actors in distinct
-   PDBs must not alias accidentally; release, timeout, cancellation, and killed-session
-   lease loss must remain deterministic.
-5. Required CI and release gates for each claimed topology. Missing credentials,
-   permissions, containers, discovered tests, or assertions must fail rather than skip.
+1. 一个专用真实 CDB 环境，包含 root、seed、至少两个普通 PDB，以及一个
+   application root/application PDB。测试必须断言服务器报告的数据库、容器、会话
+   用户、`COMMON`、`ORACLE_MAINTAINED` 和 `INHERITED` 证据，而不是从名称或别名
+   推断。
+2. 在自定义、默认和空 `COMMON_USER_PREFIX` 值下，对 CDB common、
+   application-common 和本地用户的显式支持规则。每个声称该身份的入口点都必须先
+   解决 #317。
+3. 针对 `CREATE USER` 和带显式 `CONTAINER=CURRENT` 或 `CONTAINER=ALL` 的
+   `GRANT` 的最小权限矩阵，包括创建竞争、取消、丢失的 DDL 确认、补偿所有权，
+   以及无关容器绝不被修改的证明。任何测试都不得使用宽泛的 DBA/SYSDBA 访问来
+   掩盖所需的授权。
+4. 一个规范的数据库加容器锁身份和双会话测试。针对同一规范容器和服务的两个参与者
+   必须互斥竞争；不同 PDB 中的参与者不得意外共用别名；释放、超时、取消和被杀
+   会话的租约丢失必须保持确定性。
+5. 每种所声称拓扑的必需 CI 和发布门禁。缺失的凭据、权限、容器、已发现的测试或
+   断言必须失败而不是跳过。
 
-No implementation task is created by this closed decision. #317 remains the known
-adjacent defect and is not fixed here; no other adjacent debt was found. This document
-adds no provider code, SQL, tests, package metadata, CI, README change, or guarantee for
-cross-container behavior.
+本关闭决策不创建任何实现任务。#317 仍是已知邻近缺陷，不在此修复；未发现其他
+邻近债务。本文档不为跨容器行为添加任何 provider 代码、SQL、测试、包元数据、CI、
+README 更改或保证。
