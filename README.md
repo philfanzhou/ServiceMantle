@@ -2177,14 +2177,14 @@ another service fails with a value-free `ConsulConfigurationException`.
 
 | Setting | Enabled configuration contract |
 | --- | --- |
-| `consul.enabled` | Boolean, default `false` |
-| `consul.endpoint` | Root HTTPS agent URI, or loopback HTTP; no credentials, query, fragment or subpath |
-| `consul.token` | Optional sensitive string, no default; 1–4096 printable ASCII characters without whitespace |
-| `consul.service-name` | 1–63 ASCII letters/digits/hyphens, starting and ending with a letter/digit |
-| `consul.address` | Advertised DNS name or IP address, at most 253 characters |
-| `consul.port` | Integer from 1 through 65535 |
-| `consul.health-path` | Root-relative path, at most 512 ASCII letters/digits, `/`, `-`, `_`; default `/health/ready`; no leading `//` |
-| `consul.health-scheme` | `http` or `https`, default `http` |
+| `discovery.enabled` | Boolean, default `false` |
+| `discovery.endpoint` | Root HTTPS agent URI, or loopback HTTP; no credentials, query, fragment or subpath |
+| `discovery.credential` | Optional sensitive string, no default; the provider-defined single credential - for this Consul adapter the ACL token, 1–4096 printable ASCII characters without whitespace |
+| `discovery.service-name` | 1–63 ASCII letters/digits/hyphens, starting and ending with a letter/digit |
+| `discovery.address` | Advertised DNS name or IP address, at most 253 characters |
+| `discovery.port` | Integer from 1 through 65535 |
+| `discovery.health-path` | Root-relative path, at most 512 ASCII letters/digits, `/`, `-`, `_`; default `/health/ready`; no leading `//` |
+| `discovery.health-scheme` | `http` or `https`, default `http` |
 
 All definitions require restart. The shared loader requires encrypted `sm:v1:` persisted tokens,
 using the stable setting key as protection purpose. The catalog validates enabled combinations
@@ -2227,6 +2227,199 @@ custom serialization that invokes methods, debuggers or process memory. Do not p
 non-sensitive service names, addresses or identities. Enterprise namespaces/partitions, mTLS,
 certificate overrides, automatic reload and Consul KV are outside this boundary.
 
+### Migrating from `consul.*` setting keys
+
+The Consul adapter now registers the eight persisted setting keys below under the neutral
+`discovery.*` prefix. Constant member names, types, and the namespace are unchanged
+(`ConsulSettingDefinitions.Enabled` and friends); only the key values moved. The diagnostic codes,
+including `consul.invalid_configuration`, the `X-Consul-Token` header, and the HTTP wire model are
+unchanged. This is an external contract change delivered in a new package version; historical
+packages are not overwritten.
+
+| Retired key | New key |
+| --- | --- |
+| `consul.enabled` | `discovery.enabled` |
+| `consul.endpoint` | `discovery.endpoint` |
+| `consul.token` | `discovery.credential` |
+| `consul.service-name` | `discovery.service-name` |
+| `consul.address` | `discovery.address` |
+| `consul.port` | `discovery.port` |
+| `consul.health-path` | `discovery.health-path` |
+| `consul.health-scheme` | `discovery.health-scheme` |
+
+`discovery.credential` carries the provider-defined single credential string. This Consul adapter
+still uses it as the ACL token and keeps the 1–4096 printable-ASCII validation; multi-field
+authentication of other providers is out of scope. Because the persisted envelope is bound to the
+setting key as its protection purpose, a stored `consul.token` envelope must be decrypted under the
+retired purpose and re-encrypted under `discovery.credential`; the ciphertext row cannot just be
+renamed.
+
+The new version rejects complete snapshots that contain any retired key with
+`configuration.snapshot_unknown_key`; the first load then does not activate, and disabled-looking
+mixes never succeed silently. There are no aliases, no read compatibility, and no automatic
+migration. Upgrade with all instances stopped:
+
+1. Back up the complete setting rows and their version using your own tooling, then stop every
+   instance that reads or writes that setting store. Never run old and new versions against the
+   same store at the same time.
+2. Inside your own unit of work, check for old/new key conflicts and map the rows one by one; keep
+   every other product key. Abort without overwriting data when a target key already exists, when a
+   row version or type is unknown, or when decryption fails.
+3. Re-protect the credential: decrypt with purpose `consul.token`, re-encrypt with purpose
+   `discovery.credential`, using the existing `SensitiveValueProtector`, the same service id, and
+   the correct external root key. Never emit the plaintext, root key, or ciphertext into logs.
+4. Commit the complete mapping once under one consistent new setting version, following your own
+   audit and transaction constraints. The library never saves or commits your `DbContext`.
+5. Before starting the new version, confirm that no retired key remains anywhere in the store; a
+   successful full snapshot refresh must precede the first client creation.
+
+The new management API is not a migration path for old rows: an unknown retired key makes the full
+load or update fail, so posting settings through the new version cannot clear old keys "while
+running". Rollback requires stopping every instance first and restoring both the backed-up setting
+rows plus version and the previous binaries; rolling back binaries alone cannot read envelopes
+encrypted under the new purpose. Unknown commit outcomes are your responsibility to reconcile; the
+library provides no automatic compensation.
+
+The following in-memory conversion example is the tested source of truth
+(`tests/ServiceMantle.Consul.Tests/ConsulDiscoverySettingMigrationTests.cs`); database reads and the
+final commit stay with the consumer. It returns rows only on success - failures and caller
+cancellation never produce a partial committable result. Rows are resolved with the store's key
+normalization (trimmed, lowercased invariantly), so case or whitespace variants of a retired key
+still map to their neutral key, still re-protect the credential, and still conflict with an existing
+neutral target key. Rows that resolve to one of the eight catalog keys are type-checked against the
+registry: an undefined or mismatched value type aborts with `migration.type_mismatch`. Cancellation
+is observed even for an empty row set.
+
+```csharp
+internal static class ConsulDiscoverySettingMigration
+{
+    internal const string LegacyCredentialKey = "consul.token";
+
+    internal static readonly IReadOnlyDictionary<string, string> LegacyKeyMap =
+        new Dictionary<string, string>
+        {
+            ["consul.enabled"] = ConsulSettingDefinitions.Enabled,
+            ["consul.endpoint"] = ConsulSettingDefinitions.Endpoint,
+            ["consul.token"] = ConsulSettingDefinitions.Token,
+            ["consul.service-name"] = ConsulSettingDefinitions.ServiceName,
+            ["consul.address"] = ConsulSettingDefinitions.Address,
+            ["consul.port"] = ConsulSettingDefinitions.Port,
+            ["consul.health-path"] = ConsulSettingDefinitions.HealthPath,
+            ["consul.health-scheme"] = ConsulSettingDefinitions.HealthScheme
+        };
+
+    internal static bool TryConvert(
+        ServiceId serviceId,
+        string rootKey,
+        ServiceSettingDefinitionRegistry registry,
+        long targetVersion,
+        IReadOnlyList<PersistedServiceSettingValue> persistedRows,
+        out IReadOnlyList<PersistedServiceSettingValue>? migratedRows,
+        out string? errorCode,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(serviceId);
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(persistedRows);
+        if (targetVersion < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(targetVersion));
+        }
+
+        migratedRows = null;
+        errorCode = null;
+
+        // The rows must come from one complete store version read inside the consumer's own unit of
+        // work. The consumer commits the full mapping once under one consistent new version.
+        long? version = null;
+        var migrated = new List<PersistedServiceSettingValue>(persistedRows.Count);
+        var targetKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // An empty row set is a valid default-disabled store, so cancellation is observed even when
+        // no row is ever visited.
+        cancellationToken.ThrowIfCancellationRequested();
+        foreach (var row in persistedRows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (row.Version < 0 || (version is not null && row.Version != version))
+            {
+                errorCode = "migration.mixed_version";
+                return false;
+            }
+
+            version = row.Version;
+
+            // The store and the loader resolve keys by trimming and lowercasing them; retired-key
+            // variants must map, re-protect, and collide with their neutral target key the same way.
+            var normalizedKey = NormalizeKey(row.Key);
+            var targetKey = LegacyKeyMap.TryGetValue(normalizedKey, out var mapped) ? mapped : row.Key;
+            if (!targetKeys.Add(NormalizeKey(targetKey)))
+            {
+                errorCode = "migration.target_key_conflict";
+                return false;
+            }
+
+            if (registry.TryGetDefinition(targetKey, out var definition))
+            {
+                // Mirror the loader's materialization rules: a row whose declared type is undefined
+                // or differs from the catalog aborts here instead of reaching the consumer as a
+                // committed row the new version cannot load.
+                if (!Enum.IsDefined(row.ValueType) || row.ValueType != definition!.ValueType)
+                {
+                    errorCode = normalizedKey == LegacyCredentialKey
+                        ? "migration.credential_type_invalid"
+                        : "migration.type_mismatch";
+                    return false;
+                }
+            }
+
+            if (normalizedKey != LegacyCredentialKey)
+            {
+                migrated.Add(new PersistedServiceSettingValue(targetKey, targetVersion, row.ValueType, row.Value));
+                continue;
+            }
+
+            if (row.ValueType != ServiceSettingValueType.String)
+            {
+                errorCode = "migration.credential_type_invalid";
+                return false;
+            }
+
+            try
+            {
+                // The envelope is bound to the setting key as its protection purpose, so it must be
+                // decrypted under the retired purpose and re-encrypted under the neutral key. The
+                // plaintext stays local to this loop; only safe failure codes are ever returned.
+                var plaintext = new SensitiveValueProtector(serviceId, LegacyCredentialKey)
+                    .Unprotect(row.Value, rootKey, cancellationToken);
+                var envelope = new SensitiveValueProtector(serviceId, targetKey)
+                    .Protect(plaintext, rootKey, cancellationToken);
+                migrated.Add(new PersistedServiceSettingValue(targetKey, targetVersion, row.ValueType, envelope));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (SensitiveValueProtectionException)
+            {
+                errorCode = "migration.credential_decryption_failed";
+                return false;
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        migratedRows = migrated.AsReadOnly();
+        return true;
+    }
+
+    private static string NormalizeKey(string key) => key.Trim().ToLowerInvariant();
+}
+```
+
+The example performs the in-memory conversion and input checks only. It does not prove anything
+about the atomicity, durability, or failure recovery of your database commit, and it covers only
+the upgrade ordering described above. You remain responsible for the shutdown, backup, root key,
+transaction, version, audit trail, and rollback.
+
 ### Readiness-driven registration lifecycle
 
 `AddServiceMantleConsul()` also registers one hosted controller that drives registration from the
@@ -2240,7 +2433,7 @@ in a terminal `Disabled` state with no client and no background work at all; a s
 failure fails host startup with the existing value-free exception and is never retried; a session
 created before caller cancellation is observed is disposed rather than leaked. The session,
 registration ID, and captured snapshot version are then fixed for the life of the process, so every
-`consul.*` change requires a consumer-owned restart.
+`discovery.*` change requires a consumer-owned restart.
 
 One owner loop holds all mutable state and the session, so at most one register or deregister is
 active for this instance. A separate non-overlapping sampler resolves the scoped decision source in

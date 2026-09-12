@@ -165,11 +165,13 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 | [#443](https://github.com/philfanzhou/ServiceMantle/issues/443) | L02 | OTLP 认证解析的中立契约迁入核心包 `ServiceMantle.Diagnostics` | #432 |
 | [#435](https://github.com/philfanzhou/ServiceMantle/issues/435) | L02 | 服务注册中立契约迁入 `ServiceMantle.Discovery` | #432 |
 | [#438](https://github.com/philfanzhou/ServiceMantle/issues/438) | L02 | `SerilogOptions` 级别与 scope 选项改用 MEL 词汇 | #432 |
-| [#436](https://github.com/philfanzhou/ServiceMantle/issues/436) | L03 | discovery 设置键中立化与迁移路径 | #435 |
-| [#437](https://github.com/philfanzhou/ServiceMantle/issues/437) | L04 | 中立性消费验证项目与 CI 断言 | #433 #434 #435 #436 #443 |
+| [#436](https://github.com/philfanzhou/ServiceMantle/issues/436) | L02 | discovery 设置键中立化与迁移路径 | #432 |
+| [#437](https://github.com/philfanzhou/ServiceMantle/issues/437) | L03 | 中立性消费验证项目与 CI 断言 | #433 #434 #435 #436 #443 |
 
 #436 与 #435 分开，是因为设置键是外部契约而非类型改名（`CONTRIBUTING.md` §6），需要自带
-迁移路径。#437 是把判据落成 CI 会挡的断言，否则本 ADR 只是文档里的一句话。
+迁移路径。#436 的开工盘点修正了上表最初的顺序假设：它只修改目录常量与设置加密 purpose，不引用
+任何未来 Discovery 类型，因此在 #435 之前即可独立交付；本表已按此同步，#435 的暂缓凭据模型
+决策不受影响。#437 是把判据落成 CI 会挡的断言，否则本 ADR 只是文档里的一句话。
 #438 是盘点 #434 时发现的既有债务，与类型归属无关，按邻近债务规则独立成 issue。
 #443 是 #434 的遥测侧同型：分类盘点时发现 `IOtlpAuthenticationHeaderResolver` 与 Loki 的
 授权 resolver 形状一致，补入 A 类清单并独立成 issue，避免漏掉遥测侧扩展点。

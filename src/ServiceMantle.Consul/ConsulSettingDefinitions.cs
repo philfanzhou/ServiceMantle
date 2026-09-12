@@ -6,21 +6,24 @@ namespace ServiceMantle.Consul;
 public sealed class ConsulSettingDefinitions : IServiceSettingDefinitionProvider, IServiceSettingCompositeValidator
 {
     /// <summary>Enables explicit client creation; defaults to false.</summary>
-    public const string Enabled = "consul.enabled";
+    public const string Enabled = "discovery.enabled";
     /// <summary>The root HTTPS agent URI, or a loopback HTTP URI.</summary>
-    public const string Endpoint = "consul.endpoint";
-    /// <summary>The optional encrypted ACL token; never has a plaintext default.</summary>
-    public const string Token = "consul.token";
+    public const string Endpoint = "discovery.endpoint";
+    /// <summary>
+    /// The optional encrypted provider-defined credential string; never has a plaintext default.
+    /// This Consul adapter uses it as the ACL token.
+    /// </summary>
+    public const string Token = "discovery.credential";
     /// <summary>The DNS-compatible Consul service name.</summary>
-    public const string ServiceName = "consul.service-name";
+    public const string ServiceName = "discovery.service-name";
     /// <summary>The advertised DNS name or IP address.</summary>
-    public const string Address = "consul.address";
+    public const string Address = "discovery.address";
     /// <summary>The advertised integer port from 1 through 65535.</summary>
-    public const string Port = "consul.port";
+    public const string Port = "discovery.port";
     /// <summary>The root-relative health path, defaulting to /health/ready.</summary>
-    public const string HealthPath = "consul.health-path";
+    public const string HealthPath = "discovery.health-path";
     /// <summary>The health URL scheme, http or https; defaults to http.</summary>
-    public const string HealthScheme = "consul.health-scheme";
+    public const string HealthScheme = "discovery.health-scheme";
 
     /// <inheritdoc />
     public IEnumerable<ServiceSettingDefinition> GetDefinitions() =>
