@@ -45,10 +45,18 @@ internal static class InstallationStatusHandler
         {
             throw CancelledByCaller(linked, cancellationToken);
         }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            snapshot = BudgetExpired(linked);
+        }
+        catch (TimeoutException)
+        {
+            snapshot = BudgetExpired(linked);
+        }
         catch
         {
-            // A source failure, an internal timeout, and an unrelated internal cancellation are one
-            // safe outcome here. The reason itself is never projected.
+            // A source failure and an unrelated internal cancellation are one safe outcome here.
+            // The reason itself is never projected.
             snapshot = null;
         }
 
@@ -115,6 +123,25 @@ internal static class InstallationStatusHandler
         ServiceStartupPhase.PendingSetup or ServiceStartupPhase.Completed => bootstrapConfigured,
         _ => false,
     };
+
+    /// <summary>
+    /// Owns the budget expiry exit: the snapshot source is notified on the token it received before
+    /// the linked source is released, whatever timer reached the deadline first.
+    /// </summary>
+    private static ServiceHealthSnapshot? BudgetExpired(CancellationTokenSource linked)
+    {
+        try
+        {
+            linked.Cancel();
+        }
+        catch (AggregateException)
+        {
+            // Cancellation callbacks that throw are outside the cooperative cancellation contract
+            // and must not replace the closed rejection.
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Owns the cancellation exit: the sources are notified on the token they received before the
