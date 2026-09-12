@@ -1,6 +1,7 @@
 using OpenTelemetry.Metrics;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Diagnostics;
 using ServiceMantle.OpenTelemetry;
 
 namespace Microsoft.Extensions.DependencyInjection;
