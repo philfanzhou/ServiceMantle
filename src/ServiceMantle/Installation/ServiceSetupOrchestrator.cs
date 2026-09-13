@@ -54,6 +54,9 @@ public sealed class ServiceSetupOrchestrator
 
     /// <summary>
     /// Validates all contributors, then stages all registrations in stable ascending order.
+    /// After failure cleanup has settled, observed caller cancellation takes precedence over the
+    /// failure classification and ends the orchestration with a safe
+    /// <see cref="OperationCanceledException"/> carrying the caller's token.
     /// </summary>
     public async ValueTask<ServiceSetupResult> OrchestrateAsync(
         CancellationToken cancellationToken = default)
@@ -90,7 +93,7 @@ public sealed class ServiceSetupOrchestrator
                 }
 
                 return stagingScope.HasPendingChanges
-                    ? await CleanupFailureAsync(WellKnownServiceSetupErrorCodes.ContributorFailed)
+                    ? await CleanupFailureAsync(WellKnownServiceSetupErrorCodes.ContributorFailed, cancellationToken)
                         .ConfigureAwait(false)
                     : ServiceSetupResult.Failure(WellKnownServiceSetupErrorCodes.ContributorFailed);
             }
@@ -102,7 +105,7 @@ public sealed class ServiceSetupOrchestrator
 
             if (stagingScope.HasPendingChanges)
             {
-                return await CleanupFailureAsync(WellKnownServiceSetupErrorCodes.ValidationSideEffect)
+                return await CleanupFailureAsync(WellKnownServiceSetupErrorCodes.ValidationSideEffect, cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -137,7 +140,7 @@ public sealed class ServiceSetupOrchestrator
                     await CleanupBeforeCancellationAsync(cancellationToken).ConfigureAwait(false);
                 }
 
-                return await CleanupFailureAsync(WellKnownServiceSetupErrorCodes.ContributorFailed)
+                return await CleanupFailureAsync(WellKnownServiceSetupErrorCodes.ContributorFailed, cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -148,13 +151,13 @@ public sealed class ServiceSetupOrchestrator
 
             if (result is null)
             {
-                return await CleanupFailureAsync(WellKnownServiceSetupErrorCodes.ContributorFailed)
+                return await CleanupFailureAsync(WellKnownServiceSetupErrorCodes.ContributorFailed, cancellationToken)
                     .ConfigureAwait(false);
             }
 
             if (!result.Succeeded)
             {
-                return await CleanupFailureAsync(result.ErrorCode!).ConfigureAwait(false);
+                return await CleanupFailureAsync(result.ErrorCode!, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -166,20 +169,41 @@ public sealed class ServiceSetupOrchestrator
         return ServiceSetupResult.Success();
     }
 
-    private async ValueTask<ServiceSetupResult> CleanupFailureAsync(string errorCode)
+    /// <summary>
+    /// Discards staged changes exactly once with <see cref="CancellationToken.None"/>, rechecks
+    /// cleanliness, and classifies the failure. After the discard and the existing cleanliness
+    /// recheck have settled, a completion checkpoint lets caller cancellation take precedence over
+    /// the original rejection, contributor failure, validation side effect, and cleanup failure
+    /// classifications. The final cancellation is delivered outside the exception normalization,
+    /// so it can never be reclassified as a cleanup failure.
+    /// </summary>
+    private async ValueTask<ServiceSetupResult> CleanupFailureAsync(
+        string errorCode,
+        CancellationToken cancellationToken)
     {
+        ServiceSetupResult failure;
         try
         {
             await stagingScope.DiscardPendingChangesAsync(CancellationToken.None).ConfigureAwait(false);
-            return stagingScope.HasPendingChanges
+            failure = stagingScope.HasPendingChanges
                 ? ServiceSetupResult.Failure(WellKnownServiceSetupErrorCodes.CleanupFailed)
                 : ServiceSetupResult.Failure(errorCode);
         }
         catch
         {
-            return ServiceSetupResult.Failure(WellKnownServiceSetupErrorCodes.CleanupFailed);
+            failure = ServiceSetupResult.Failure(WellKnownServiceSetupErrorCodes.CleanupFailed);
         }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            throw SafeCallerCancellation(cancellationToken);
+        }
+
+        return failure;
     }
+
+    private static OperationCanceledException SafeCallerCancellation(CancellationToken cancellationToken) =>
+        new("Service setup was cancelled by the caller.", cancellationToken);
 
     private async ValueTask CleanupBeforeCancellationAsync(CancellationToken cancellationToken)
     {
