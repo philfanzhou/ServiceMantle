@@ -16,6 +16,11 @@ internal static class SettingUpdateHandlers
         {
             var resolver = context.RequestServices.GetRequiredService<IManagementCurrentOperatorResolver>();
             var resolution = resolver.Resolve(context.User);
+
+            // Cancellation observed after the resolver settles outranks its classification: a
+            // resolved, rejected, or internally cancelled resolution never delivers Forbid, and the
+            // request body is never read.
+            context.RequestAborted.ThrowIfCancellationRequested();
             if (resolution?.Status != ManagementCurrentOperatorStatus.Resolved
                 || resolution.Operator is null)
             {
@@ -25,12 +30,16 @@ internal static class SettingUpdateHandlers
             var command = await SettingUpdateRequestParser
                 .ParseAsync(context, resolution.Operator)
                 .ConfigureAwait(false);
+
+            // Cancellation observed after the body parser settles outranks its classification: a
+            // produced, null, or internally cancelled parse never delivers the 400, and the executor
+            // is never invoked.
+            context.RequestAborted.ThrowIfCancellationRequested();
             if (command is null)
             {
                 return ManagementApiResults.InvalidRequest();
             }
 
-            context.RequestAborted.ThrowIfCancellationRequested();
             var result = await executor(context, command, context.RequestAborted).ConfigureAwait(false);
             context.RequestAborted.ThrowIfCancellationRequested();
             return Map(result);
