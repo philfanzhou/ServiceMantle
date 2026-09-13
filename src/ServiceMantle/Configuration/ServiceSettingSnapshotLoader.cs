@@ -328,12 +328,32 @@ public sealed class ServiceSettingSnapshotLoader : IDisposable
 
     private static void Append(IncrementalHash hash, string value)
     {
-        var bytes = Encoding.UTF8.GetBytes(value);
-        Span<byte> length = stackalloc byte[sizeof(int)];
-        BinaryPrimitives.WriteInt32BigEndian(length, bytes.Length);
-        hash.AppendData(length);
-        hash.AppendData(bytes);
-        CryptographicOperations.ZeroMemory(bytes);
+        // Encode the raw UTF-16 code units by hand with a deterministic byte order and a
+        // code-unit-count length prefix. Encoding.UTF8 (and Encoding.Unicode) apply a replacement
+        // fallback that folds every unpaired surrogate onto the same bytes, so distinct normalized
+        // strings such as "\uD800", "\uD801", and "\uFFFD" would collapse onto one fingerprint and
+        // a same-version conflict would be misreported as a reuse. Writing each code unit verbatim
+        // keeps distinct code-unit sequences distinct through SHA-256. The fingerprint is only ever
+        // compared in-process and never persisted, so the encoding has no cross-version contract.
+        var encoded = new byte[value.Length * sizeof(ushort)];
+        try
+        {
+            var offset = 0;
+            foreach (var codeUnit in value.AsSpan())
+            {
+                BinaryPrimitives.WriteUInt16BigEndian(encoded.AsSpan(offset, sizeof(ushort)), codeUnit);
+                offset += sizeof(ushort);
+            }
+
+            Span<byte> length = stackalloc byte[sizeof(int)];
+            BinaryPrimitives.WriteInt32BigEndian(length, value.Length);
+            hash.AppendData(length);
+            hash.AppendData(encoded);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(encoded);
+        }
     }
 
     private static ServiceSettingSnapshotRefreshResult Failure(string errorCode) =>
