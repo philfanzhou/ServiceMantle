@@ -102,6 +102,7 @@ namespace 跨越两个程序集。
 | `ServiceMantle.AspNetCore.ServiceMantleRateLimitingDefaults` | `ServiceMantle.AspNetCore.RateLimiting.RateLimitingDefaults` |
 | `ServiceMantle.AspNetCore.ServiceMantleRateLimitingOptions` | `ServiceMantle.AspNetCore.RateLimiting.RateLimitingOptions` |
 | `ServiceMantle.Database.Sqlite.ServiceMantleSqlitePackage` | `ServiceMantle.Database.Sqlite.SqlitePackage` |
+| `ServiceMantle.Consul.ConsulLifecycleOptions` | `ServiceMantle.Discovery.ServiceRegistrationLifecycleOptions` |
 | `ServiceMantle.OpenTelemetry.ServiceMantleOpenTelemetryOptions` | `ServiceMantle.OpenTelemetry.OpenTelemetryOptions` |
 | `ServiceMantle.OpenTelemetry.ServiceMantleMetrics` | `ServiceMantle.OpenTelemetry.ServiceMetrics` |
 | `ServiceMantle.OpenTelemetry.ServiceMetrics` | `ServiceMantle.Diagnostics.ServiceMetrics` |
@@ -284,12 +285,31 @@ namespace 跨越两个程序集。
 ## Consul 入口补充映射
 
 `ServiceMantle.Consul` 的注册入口与核心包的注册入口同型：它住在框架 namespace 里，类名是唯一的
-产品标记，因此按同一条规则补齐前缀。两个 `AddServiceMantleConsul` 重载的签名、方法体与 timing
-类型全部不变。
+产品标记，因此按同一条规则补齐前缀。方法体不变；带 configure 参数的重载随后续生命周期时间选项
+迁移（见下节）把参数类型换成了 `Action<ServiceRegistrationLifecycleOptions>?`。
 
 | 原完整类型名 | 新完整类型名 |
 | --- | --- |
 | `Microsoft.Extensions.DependencyInjection.ConsulServiceCollectionExtensions` | `Microsoft.Extensions.DependencyInjection.ServiceMantleConsulServiceCollectionExtensions` |
+
+## 生命周期时间选项迁移（#435）
+
+ADR 0007 判定为 A 类的 `ConsulLifecycleOptions` 迁入核心包，成为 provider 中立的
+`ServiceRegistrationLifecycleOptions`（`src/ServiceMantle/Discovery/`）。这是源码与二进制破坏性
+变更，只在后续新版本交付，不覆盖历史版本；旧公开类型与旧公开属性不留兼容壳。
+
+- 属性 `ConsulOperationBudget` 同时改名为 `OperationBudget`；其余五个属性名、默认值与允许区间
+  不变。调用方若把 options 当作 JSON/配置绑定模型使用，须自行迁移属性名，本仓库不提供旧属性别名。
+- 校验仍发生在 Consul 注册入口写入 descriptor 之前：原先 options 上的 internal `Validate()` 移入
+  Consul 内部 `ConsulLifecycleSettings.FromOptions(ServiceRegistrationLifecycleOptions)`。核心包 POCO
+  只承载数据，不验证、不创建 timer；`ConsulConfigurationException`、内部 settings 与生命周期状态机
+  都不进入核心包。内部 `ConsulLifecycleSettings` 的字段名 `ConsulOperationBudget` 保持，映射自新的
+  `OperationBudget`。
+- 契约族文件改名为 `src/ServiceMantle.Consul/ConsulLifecycleState.cs`；其中的类型名、可见性、成员与
+  字符串（诊断码、设置键、HTTP、wire 字段、程序集标识、`InternalsVisibleTo`）全部不变。
+- 不变式：单次参数无效仍在注册调用中失败且不写入 descriptor；重复调用参数冲突仍在生命周期首次解析
+  时失败。`BuildServiceProvider` / 任意形式的 `Host.Build()` 并不必然解析生命周期，不能把它们当作
+  冲突检测点。
 
 ## 测试类映射
 

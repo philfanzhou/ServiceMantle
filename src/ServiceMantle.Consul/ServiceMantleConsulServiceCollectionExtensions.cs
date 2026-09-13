@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using ServiceMantle;
 using ServiceMantle.Configuration;
 using ServiceMantle.Consul;
+using ServiceMantle.Discovery;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -30,22 +31,23 @@ public static class ServiceMantleConsulServiceCollectionExtensions
     /// <param name="configure">Configures the validated lifecycle timing.</param>
     /// <returns>The same service collection.</returns>
     /// <remarks>
-    /// Every timing value is validated here, before the host is built and therefore before any
-    /// readiness sampler, timer, or remote operation can exist. Repeating this call is idempotent,
-    /// but two calls that configure different timing are a conflicting configuration: that conflict
-    /// is detected when the lifecycle is resolved, so it fails while the host is built rather than
-    /// from this method.
+    /// Every timing value is validated here, before any descriptor that could reach a timer is
+    /// written and therefore before any readiness sampler, timer, or remote operation can exist.
+    /// Repeating this call is idempotent, but two calls that configure different timing are a
+    /// conflicting configuration: that conflict is detected when the lifecycle is first resolved,
+    /// before any of its background work starts - not by this method and not necessarily by
+    /// building a service provider or host.
     /// </remarks>
     /// <exception cref="ConsulConfigurationException">A timing value is out of range.</exception>
     public static IServiceCollection AddServiceMantleConsul(
         this IServiceCollection services,
-        Action<ConsulLifecycleOptions>? configure)
+        Action<ServiceRegistrationLifecycleOptions>? configure)
     {
         ArgumentNullException.ThrowIfNull(services);
-        var options = new ConsulLifecycleOptions();
+        var options = new ServiceRegistrationLifecycleOptions();
         configure?.Invoke(options);
         // Validation happens at registration time, so an invalid value can never reach a timer.
-        var settings = options.Validate();
+        var settings = ConsulLifecycleSettings.FromOptions(options);
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IServiceSettingDefinitionProvider, ConsulSettingDefinitions>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IServiceSettingCompositeValidator, ConsulSettingDefinitions>());

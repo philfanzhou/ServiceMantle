@@ -129,19 +129,24 @@ README（英文）中的 `ConsulDiscoverySettingMigration.TryConvert` 内存转�
 
 ## 计时与重试策略
 
-Issue #49 引入一个经过校验的生命周期选项对象，具有以下精确默认值和闭区间范围：
+生命周期计时由核心包的中立选项对象 `ServiceMantle.Discovery.ServiceRegistrationLifecycleOptions`
+承载（Issue #49 引入校验语义，#435 完成中立化迁移），具有以下精确默认值和闭区间范围：
 
-| 选项 | 默认值 | 最小值 | 最大值 | 用途 |
+| 选项属性 | 默认值 | 最小值 | 最大值 | 用途 |
 | --- | ---: | ---: | ---: | --- |
-| readiness 轮询间隔 | 1 s | 100 ms | 30 s | 两次完成的 readiness 采样之间的延迟 |
-| readiness 调用预算 | 10 s | 100 ms | 60 s | 一次决策来源调用的外层预算 |
-| Consul 操作预算 | 10 s | 100 ms | 30 s | 传给一次注册/注销调用并等待其完成的预算 |
-| 初始重试延迟 | 250 ms | 50 ms | 5 s | 第一次传输重试延迟 |
-| 最大重试延迟 | 5 s | 初始延迟 | 30 s | 指数延迟上限 |
-| 关闭总预算 | 15 s | 1 s | 60 s | 停止开始后的协作清理总时长 |
+| `ReadinessPollInterval` | 1 s | 100 ms | 30 s | 两次完成的 readiness 采样之间的延迟 |
+| `ReadinessCallBudget` | 10 s | 100 ms | 60 s | 一次决策来源调用的外层预算 |
+| `OperationBudget` | 10 s | 100 ms | 30 s | 传给一次注册/注销调用并等待其完成的预算 |
+| `InitialRetryDelay` | 250 ms | 50 ms | 5 s | 第一次传输重试延迟 |
+| `MaximumRetryDelay` | 5 s | `InitialRetryDelay` | 30 s | 指数延迟上限 |
+| `ShutdownBudget` | 15 s | 1 s | 60 s | 停止开始后的协作清理总时长 |
 
-无效、非有限、冲突或超出范围的值会在 readiness 采样器、timer 或远程操作启动之前使主机启动失败。
-时长使用 `TimeProvider`；测试使用 fake time。重试延迟为
+选项 POCO 本身只承载数据；校验由 Consul 注册入口负责，发生在任何 descriptor 写入之前。单个
+无效、非有限或超出范围的值使注册调用本身以 `ConsulConfigurationException` /
+`InvalidConfiguration` 失败，不写入任何 descriptor。重复注册的参数冲突在**生命周期首次解析**时
+失败，早于其任何后台工作开始；`BuildServiceProvider` 或任意形式的 `Host.Build()` 并不必然解析
+生命周期，不能把它们当作冲突检测点。所有失败都发生在 readiness 采样器、timer 或远程操作启动
+之前。时长使用 `TimeProvider`；测试使用 fake time。重试延迟为
 `min(maximum, initial * 2^failureCount)`，并带溢出安全的饱和。没有 jitter。一次成功的操作或期望
 存在性的变化会重置失败计数。
 
@@ -158,8 +163,8 @@ readiness 失败在固定的轮询间隔后再次采样，不使用传输退避�
 且清理重试延迟会被剩余预算截断，而不是用全新的预算重新开始。它不会缩短已在途的操作，该操作自身
 的取消期限仍是 Consul 操作预算；一个已经运行了该预算一部分的操作会在其余时间内落定，这比完整
 预算是更紧的上界。因此，对于协作的 client 和决策来源，一次停止的结果上界是
-`max(Consul operation budget, shutdown total budget)`，而不是仅关闭预算：合法组合
-`Consul operation budget = 30 s` 与 `shutdown total budget = 1 s` 可能花费约 30 秒。该模型是协作
+`max(OperationBudget, ShutdownBudget)`，而不是仅关闭预算：合法组合 `OperationBudget = 30 s` 与
+`ShutdownBudget = 1 s` 可能花费约 30 秒。该模型是协作
 上界，不是精确的调度时间，也不是对任意清理代码的墙钟上界。
 
 ## 转换矩阵

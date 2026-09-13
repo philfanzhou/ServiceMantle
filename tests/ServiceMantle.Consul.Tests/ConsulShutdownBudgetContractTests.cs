@@ -27,7 +27,7 @@ public sealed class ConsulShutdownBudgetContractTests
             client: client,
             configure: options =>
             {
-                options.ConsulOperationBudget = operationBudget;
+                options.OperationBudget = operationBudget;
                 options.ShutdownBudget = shutdownBudget;
             });
 
@@ -93,7 +93,7 @@ public sealed class ConsulShutdownBudgetContractTests
             configure: options =>
             {
                 options.ReadinessPollInterval = TimeSpan.FromSeconds(30);
-                options.ConsulOperationBudget = TimeSpan.FromSeconds(30);
+                options.OperationBudget = TimeSpan.FromSeconds(30);
                 options.ShutdownBudget = shutdownBudget;
                 options.InitialRetryDelay = retryDelay;
                 options.MaximumRetryDelay = retryDelay;

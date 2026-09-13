@@ -2454,24 +2454,29 @@ services.AddServiceMantleConsul(options =>
 {
     options.ReadinessPollInterval = TimeSpan.FromSeconds(1);   // 100 ms - 30 s
     options.ReadinessCallBudget = TimeSpan.FromSeconds(10);    // 100 ms - 60 s
-    options.ConsulOperationBudget = TimeSpan.FromSeconds(10);  // 100 ms - 30 s
+    options.OperationBudget = TimeSpan.FromSeconds(10);          // 100 ms - 30 s
     options.InitialRetryDelay = TimeSpan.FromMilliseconds(250);// 50 ms - 5 s
     options.MaximumRetryDelay = TimeSpan.FromSeconds(5);       // initial - 30 s
     options.ShutdownBudget = TimeSpan.FromSeconds(15);         // 1 s - 60 s
 });
 ```
 
-Every value is validated when the capability is registered, so an out-of-range or conflicting value
-fails before the host is built and therefore before any sampler, timer, or remote call exists.
+The options type is the core package's provider-neutral
+`ServiceMantle.Discovery.ServiceRegistrationLifecycleOptions`; the POCO itself only carries data.
+Every value is validated when the capability is registered - before any descriptor that could reach
+a timer is written - so an out-of-range value fails the registration call itself, before any
+sampler, timer, or remote call can exist. Repeated registrations that disagree on the timing fail
+when the lifecycle is first resolved, before any of its background work starts; building a service
+provider or host alone does not necessarily resolve the lifecycle.
 Stop cancels the sampler and every delay first, forbids any new register, and deregisters within the
 cooperative shutdown budget. That budget starts when stop begins, before the owner is woken, so
 whatever an in-flight operation spends settling is deducted from what the cleanup deregistration has
 left, and a cleanup retry delay is cut short by the remaining budget rather than by a fresh one. It
-does not shorten the operation that is already in flight: that call keeps `ConsulOperationBudget` as
+does not shorten the operation that is already in flight: that call keeps `OperationBudget` as
 its own cancellation deadline, and one that already ran for part of that budget settles within
 whatever is left of it. For cooperative dependencies the bound on a stop is therefore
-`max(ConsulOperationBudget, ShutdownBudget)`, not `ShutdownBudget` alone - the legal combination
-`ConsulOperationBudget = 30 s` with `ShutdownBudget = 1 s` can take about 30 seconds - and it is a
+`max(OperationBudget, ShutdownBudget)`, not `ShutdownBudget` alone - the legal combination
+`OperationBudget = 30 s` with `ShutdownBudget = 1 s` can take about 30 seconds - and it is a
 cooperative model rather than exact scheduling time or a wall-clock bound over arbitrary cleanup
 code. An in-flight register is cancelled, because stop may never start one; an in-flight deregister
 is awaited instead, because it is already doing what stop wants and cancelling it would discard a

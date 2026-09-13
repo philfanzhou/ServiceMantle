@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Consul;
+using ServiceMantle.Discovery;
 using ServiceMantle.Health;
 using Xunit;
 
@@ -280,7 +281,7 @@ public sealed class ConsulReadinessCompletionTests
             fixture.ClientFactory.CreateClient = _ => client;
             await fixture.ActivateAsync(ConsulFixture.Enabled());
 
-            var options = new ConsulLifecycleOptions
+            var options = new ServiceRegistrationLifecycleOptions
             {
                 ReadinessPollInterval = PollInterval,
                 ReadinessCallBudget = Budget
@@ -292,7 +293,7 @@ public sealed class ConsulReadinessCompletionTests
             var lifecycle = new ConsulRegistrationLifecycle(
                 fixture.Provider,
                 scopeFactory,
-                options.Validate(),
+                ConsulLifecycleSettings.FromOptions(options),
                 time,
                 observer);
             return new Rig(fixture, lifecycle, source, scopeFactory, client, time, observer);

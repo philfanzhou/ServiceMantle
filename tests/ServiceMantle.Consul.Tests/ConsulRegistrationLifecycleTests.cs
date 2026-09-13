@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Configuration;
+using ServiceMantle.Discovery;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using Xunit;
@@ -231,7 +232,7 @@ public sealed class ConsulRegistrationLifecycleTests
         };
         await using var harness = await Harness.CreateAsync(
             client: client,
-            configure: options => options.ConsulOperationBudget = TimeSpan.FromSeconds(2));
+            configure: options => options.OperationBudget = TimeSpan.FromSeconds(2));
 
         await harness.StartAsync();
         await client.Entered.Task.WaitAsync(TestContext.Current.CancellationToken);
@@ -450,7 +451,7 @@ public sealed class ConsulRegistrationLifecycleTests
             configure: options =>
             {
                 options.ReadinessPollInterval = TimeSpan.FromMilliseconds(100);
-                options.ConsulOperationBudget = TimeSpan.FromSeconds(30);
+                options.OperationBudget = TimeSpan.FromSeconds(30);
                 options.ShutdownBudget = TimeSpan.FromSeconds(60);
             });
 
@@ -760,8 +761,8 @@ public sealed class ConsulRegistrationLifecycleTests
     [InlineData("ReadinessPollInterval", 30_001)]
     [InlineData("ReadinessCallBudget", 99)]
     [InlineData("ReadinessCallBudget", 60_001)]
-    [InlineData("ConsulOperationBudget", 99)]
-    [InlineData("ConsulOperationBudget", 30_001)]
+    [InlineData("OperationBudget", 99)]
+    [InlineData("OperationBudget", 30_001)]
     [InlineData("InitialRetryDelay", 49)]
     [InlineData("InitialRetryDelay", 5_001)]
     [InlineData("MaximumRetryDelay", 30_001)]
@@ -811,18 +812,19 @@ public sealed class ConsulRegistrationLifecycleTests
     [Fact]
     public void The_default_and_boundary_timing_values_are_accepted()
     {
-        var defaults = new ConsulLifecycleOptions();
+        var defaults = new ServiceRegistrationLifecycleOptions();
 
-        var settings = defaults.Validate();
-        var boundaries = new ConsulLifecycleOptions
+        var settings = ConsulLifecycleSettings.FromOptions(defaults);
+        var boundaries = new ServiceRegistrationLifecycleOptions
         {
             ReadinessPollInterval = TimeSpan.FromMilliseconds(100),
             ReadinessCallBudget = TimeSpan.FromSeconds(60),
-            ConsulOperationBudget = TimeSpan.FromMilliseconds(100),
+            OperationBudget = TimeSpan.FromMilliseconds(100),
             InitialRetryDelay = TimeSpan.FromMilliseconds(50),
             MaximumRetryDelay = TimeSpan.FromMilliseconds(50),
             ShutdownBudget = TimeSpan.FromSeconds(60),
-        }.Validate();
+        };
+        var boundarySettings = ConsulLifecycleSettings.FromOptions(boundaries);
 
         Assert.Equal(TimeSpan.FromSeconds(1), settings.ReadinessPollInterval);
         Assert.Equal(TimeSpan.FromSeconds(10), settings.ReadinessCallBudget);
@@ -835,7 +837,77 @@ public sealed class ConsulRegistrationLifecycleTests
         Assert.Equal(TimeSpan.FromMilliseconds(500), settings.RetryDelay(1));
         Assert.Equal(TimeSpan.FromSeconds(5), settings.RetryDelay(10));
         Assert.Equal(TimeSpan.FromSeconds(5), settings.RetryDelay(int.MaxValue));
-        Assert.Equal(TimeSpan.FromMilliseconds(50), boundaries.MaximumRetryDelay);
+        Assert.Equal(TimeSpan.FromMilliseconds(50), boundarySettings.MaximumRetryDelay);
+    }
+
+    [Theory]
+    [InlineData("ReadinessPollInterval")]
+    [InlineData("ReadinessCallBudget")]
+    [InlineData("OperationBudget")]
+    [InlineData("InitialRetryDelay")]
+    [InlineData("MaximumRetryDelay")]
+    [InlineData("ShutdownBudget")]
+    public void An_extreme_time_span_value_fails_registration(string field)
+    {
+        foreach (var extreme in new[] { TimeSpan.MinValue, TimeSpan.MaxValue })
+        {
+            var services = new ServiceCollection();
+
+            var failure = Assert.Throws<ConsulConfigurationException>(() =>
+                services.AddServiceMantleConsul(options => SetRaw(options, field, extreme)));
+
+            Assert.Equal(ConsulConfigurationError.InvalidConfiguration, failure.Error);
+            Assert.Empty(services);
+        }
+    }
+
+    [Theory]
+    [InlineData("ReadinessPollInterval")]
+    [InlineData("ReadinessCallBudget")]
+    [InlineData("OperationBudget")]
+    [InlineData("InitialRetryDelay")]
+    [InlineData("MaximumRetryDelay")]
+    [InlineData("ShutdownBudget")]
+    public void A_one_tick_out_of_range_value_fails_registration(string field)
+    {
+        var (minimum, maximum) = RangeOf(field);
+        foreach (var beyond in new[] { minimum - TimeSpan.FromTicks(1), maximum + TimeSpan.FromTicks(1) })
+        {
+            var services = new ServiceCollection();
+
+            var failure = Assert.Throws<ConsulConfigurationException>(() =>
+                services.AddServiceMantleConsul(options => SetRaw(options, field, beyond)));
+
+            Assert.Equal(ConsulConfigurationError.InvalidConfiguration, failure.Error);
+            Assert.Empty(services);
+        }
+    }
+
+    [Fact]
+    public void Mutating_the_captured_options_after_registration_does_not_change_the_registered_timing()
+    {
+        var services = new ServiceCollection();
+        ServiceRegistrationLifecycleOptions? captured = null;
+        services.AddServiceMantleConsul(options =>
+        {
+            options.ReadinessPollInterval = TimeSpan.FromSeconds(2);
+            options.OperationBudget = TimeSpan.FromSeconds(11);
+            captured = options;
+        });
+
+        var registered = (ConsulLifecycleSettings?)services
+            .Single(descriptor => descriptor.ServiceType == typeof(ConsulLifecycleSettings))
+            .ImplementationInstance;
+        Assert.NotNull(registered);
+
+        Assert.NotNull(captured);
+        captured!.ReadinessPollInterval = TimeSpan.FromSeconds(30);
+        captured.OperationBudget = TimeSpan.FromMilliseconds(100);
+        captured.ShutdownBudget = TimeSpan.FromSeconds(60);
+
+        Assert.Equal(TimeSpan.FromSeconds(2), registered!.ReadinessPollInterval);
+        Assert.Equal(TimeSpan.FromSeconds(11), registered.ConsulOperationBudget);
+        Assert.Equal(TimeSpan.FromSeconds(15), registered.ShutdownBudget);
     }
 
     /// <summary>Advances exactly one retry delay, proving the attempt does not start early.</summary>
@@ -852,9 +924,11 @@ public sealed class ConsulRegistrationLifecycleTests
         harness.Time.Advance(TimeSpan.FromMilliseconds(1));
     }
 
-    private static void Apply(ConsulLifecycleOptions options, string field, int milliseconds)
+    private static void Apply(ServiceRegistrationLifecycleOptions options, string field, int milliseconds) =>
+        SetRaw(options, field, TimeSpan.FromMilliseconds(milliseconds));
+
+    private static void SetRaw(ServiceRegistrationLifecycleOptions options, string field, TimeSpan value)
     {
-        var value = TimeSpan.FromMilliseconds(milliseconds);
         switch (field)
         {
             case "ReadinessPollInterval":
@@ -863,8 +937,8 @@ public sealed class ConsulRegistrationLifecycleTests
             case "ReadinessCallBudget":
                 options.ReadinessCallBudget = value;
                 break;
-            case "ConsulOperationBudget":
-                options.ConsulOperationBudget = value;
+            case "OperationBudget":
+                options.OperationBudget = value;
                 break;
             case "InitialRetryDelay":
                 options.InitialRetryDelay = value;
@@ -877,4 +951,15 @@ public sealed class ConsulRegistrationLifecycleTests
                 break;
         }
     }
+
+    private static (TimeSpan Minimum, TimeSpan Maximum) RangeOf(string field) => field switch
+    {
+        "ReadinessPollInterval" => (TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30)),
+        "ReadinessCallBudget" => (TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(60)),
+        "OperationBudget" => (TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30)),
+        "InitialRetryDelay" => (TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(5)),
+        "MaximumRetryDelay" => (TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(30)),
+        "ShutdownBudget" => (TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(60)),
+        _ => throw new ArgumentOutOfRangeException(nameof(field), field, null)
+    };
 }

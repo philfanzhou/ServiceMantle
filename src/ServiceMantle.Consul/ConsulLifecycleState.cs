@@ -1,3 +1,5 @@
+using ServiceMantle.Discovery;
+
 namespace ServiceMantle.Consul;
 
 /// <summary>The finite control state of the Consul registration lifecycle.</summary>
@@ -40,79 +42,6 @@ public enum ConsulRemotePresence
     Unknown,
 }
 
-/// <summary>
-/// Configures the timing of the Consul registration lifecycle.
-/// </summary>
-/// <remarks>
-/// Every value is validated when the capability is registered, which is before any readiness
-/// sampler, timer, or remote operation exists. Invalid, non-finite, or conflicting values fail the
-/// host before it starts.
-/// </remarks>
-public sealed class ConsulLifecycleOptions
-{
-    /// <summary>Gets or sets the delay between completed readiness samples. 100 ms - 30 s.</summary>
-    public TimeSpan ReadinessPollInterval { get; set; } = TimeSpan.FromSeconds(1);
-
-    /// <summary>Gets or sets the outer budget for one decision-source call. 100 ms - 60 s.</summary>
-    public TimeSpan ReadinessCallBudget { get; set; } = TimeSpan.FromSeconds(10);
-
-    /// <summary>Gets or sets the budget for one register or deregister call. 100 ms - 30 s.</summary>
-    public TimeSpan ConsulOperationBudget { get; set; } = TimeSpan.FromSeconds(10);
-
-    /// <summary>Gets or sets the first transport retry delay. 50 ms - 5 s.</summary>
-    public TimeSpan InitialRetryDelay { get; set; } = TimeSpan.FromMilliseconds(250);
-
-    /// <summary>
-    /// Gets or sets the exponential delay ceiling. At least
-    /// <see cref="InitialRetryDelay"/>, at most 30 s.
-    /// </summary>
-    public TimeSpan MaximumRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
-
-    /// <summary>Gets or sets the total cooperative cleanup time after stop begins. 1 s - 60 s.</summary>
-    /// <remarks>
-    /// The budget starts when stop begins, before the owner loop is woken, and it bounds the cleanup
-    /// deregistration: whatever an already in-flight operation spends settling is deducted from what
-    /// the cleanup has left, and a cleanup retry delay is cut short by the remaining budget rather
-    /// than by a fresh one. It does not shorten the operation that is already in flight, which keeps
-    /// <see cref="ConsulOperationBudget"/> as its own cancellation deadline; an operation that has
-    /// already run for part of that budget settles within whatever is left of it. For cooperative
-    /// dependencies the resulting bound on one stop is therefore
-    /// <c>max(ConsulOperationBudget, ShutdownBudget)</c> - with <c>ConsulOperationBudget = 30 s</c>
-    /// and <c>ShutdownBudget = 1 s</c>, a stop can take about 30 seconds. It is not exact scheduling
-    /// time, and it is no bound at all on a client, factory, or disposal that ignores cancellation.
-    /// </remarks>
-    public TimeSpan ShutdownBudget { get; set; } = TimeSpan.FromSeconds(15);
-
-    /// <summary>Returns a validated immutable copy, or throws before any work can start.</summary>
-    /// <exception cref="ConsulConfigurationException">A value is out of range or conflicting.</exception>
-    internal ConsulLifecycleSettings Validate()
-    {
-        Ensure(ReadinessPollInterval, TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30));
-        Ensure(ReadinessCallBudget, TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(60));
-        Ensure(ConsulOperationBudget, TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30));
-        Ensure(InitialRetryDelay, TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(5));
-        Ensure(MaximumRetryDelay, InitialRetryDelay, TimeSpan.FromSeconds(30));
-        Ensure(ShutdownBudget, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(60));
-        return new ConsulLifecycleSettings(
-            ReadinessPollInterval,
-            ReadinessCallBudget,
-            ConsulOperationBudget,
-            InitialRetryDelay,
-            MaximumRetryDelay,
-            ShutdownBudget);
-    }
-
-    private static void Ensure(TimeSpan value, TimeSpan minimum, TimeSpan maximum)
-    {
-        // TimeSpan cannot hold a non-finite value, but MinValue/MaxValue and any inverted range
-        // are rejected here rather than turned into an unbounded wait.
-        if (value < minimum || value > maximum || minimum > maximum)
-        {
-            throw new ConsulConfigurationException(ConsulConfigurationError.InvalidConfiguration);
-        }
-    }
-}
-
 /// <summary>The validated immutable timing the controller actually runs on.</summary>
 internal sealed record ConsulLifecycleSettings(
     TimeSpan ReadinessPollInterval,
@@ -122,6 +51,30 @@ internal sealed record ConsulLifecycleSettings(
     TimeSpan MaximumRetryDelay,
     TimeSpan ShutdownBudget)
 {
+    /// <summary>
+    /// Reads the six neutral timing properties, validates them, and returns the immutable copy the
+    /// lifecycle runs on. Called by the Consul registration entry before any descriptor that could
+    /// reach a timer is written, so an invalid value fails the registration call itself.
+    /// </summary>
+    /// <exception cref="ConsulConfigurationException">A value is out of range or conflicting.</exception>
+    internal static ConsulLifecycleSettings FromOptions(ServiceRegistrationLifecycleOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        Ensure(options.ReadinessPollInterval, TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30));
+        Ensure(options.ReadinessCallBudget, TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(60));
+        Ensure(options.OperationBudget, TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30));
+        Ensure(options.InitialRetryDelay, TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(5));
+        Ensure(options.MaximumRetryDelay, options.InitialRetryDelay, TimeSpan.FromSeconds(30));
+        Ensure(options.ShutdownBudget, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(60));
+        return new ConsulLifecycleSettings(
+            options.ReadinessPollInterval,
+            options.ReadinessCallBudget,
+            options.OperationBudget,
+            options.InitialRetryDelay,
+            options.MaximumRetryDelay,
+            options.ShutdownBudget);
+    }
+
     /// <summary>
     /// Returns the overflow-safe exponential delay <c>min(maximum, initial * 2^failures)</c>.
     /// There is deliberately no jitter.
@@ -139,6 +92,16 @@ internal sealed record ConsulLifecycleSettings(
                 ? MaximumRetryDelay.Ticks
                 : InitialRetryDelay.Ticks << failures;
         return TimeSpan.FromTicks(Math.Min(scaled, MaximumRetryDelay.Ticks));
+    }
+
+    private static void Ensure(TimeSpan value, TimeSpan minimum, TimeSpan maximum)
+    {
+        // TimeSpan cannot hold a non-finite value, but MinValue/MaxValue and any inverted range
+        // are rejected here rather than turned into an unbounded wait.
+        if (value < minimum || value > maximum || minimum > maximum)
+        {
+            throw new ConsulConfigurationException(ConsulConfigurationError.InvalidConfiguration);
+        }
     }
 }
 
