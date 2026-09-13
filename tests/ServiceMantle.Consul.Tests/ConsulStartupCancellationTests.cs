@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Configuration;
 using ServiceMantle.Consul;
+using ServiceMantle.Discovery;
 using ServiceMantle.Health;
 using Xunit;
 
@@ -290,7 +291,7 @@ public sealed class ConsulStartupCancellationTests
             var lifecycle = new ConsulRegistrationLifecycle(
                 provider,
                 services.GetRequiredService<IServiceScopeFactory>(),
-                new ConsulLifecycleOptions().Validate(),
+                ConsulLifecycleSettings.FromOptions(new ServiceRegistrationLifecycleOptions()),
                 new ManualTimeProvider(),
                 observer);
             return new Rig(lifecycle, accessor, factory, client, source, observer, services);

@@ -71,8 +71,16 @@ namespace 拼写：协议名让 `OtlpOptions` / `OtlpProtocol` 这类**配置契
 | `ServiceMantle.OpenTelemetry.Otlp.IOtlpAuthenticationHeaderResolver` / `OtlpAuthenticationHeader` | **必须实现**才能用带认证的 OTLP 导出 | `ServiceMantle.Diagnostics` |
 | `ServiceMantle.Serilog.GrafanaLoki.ILokiAuthorizationHeaderResolver` | **必须实现**才能用带认证的远程 sink | `ServiceMantle.Logging` |
 | `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiDiagnostics` | resolve 后读投递失败计数 | `ServiceMantle.Logging` |
-| `ServiceMantle.Consul.IConsulClient` / `IConsulClientFactory` | 替换传输时实现 | `ServiceMantle.Discovery` |
-| `ServiceMantle.Consul.ConsulLifecycleOptions` | 调整超时与退避 | `ServiceMantle.Discovery` |
+| `ServiceMantle.Consul.IConsulClient` / `IConsulClientFactory` | 替换传输时实现 | `ServiceMantle.Discovery`（由 #481 交付，受 B 类参数类型钉住） |
+| `ServiceMantle.Consul.ConsulLifecycleOptions` | 调整超时与退避 | `ServiceMantle.Discovery.ServiceRegistrationLifecycleOptions`（已由 #435 交付） |
+
+#435 的开工盘点发现 `IConsulClient` / `IConsulClientFactory` 的签名被 B 类的
+`ConsulServiceRegistration` 与 `ConsulClientConfiguration` 钉住：原样迁入核心包编译不过，且任何
+实现方仍须在自己源码里点名这两个 B 类类型，「迁移后无需 provider `using` 即可实现自定义
+registrar」的断言不成立。按范围纪律收窄：本 ADR 表中这两个接口的迁移改由 #481 在固定设计（泛型
+参数化、撤回暂缓或降级为「待第二个 provider 重评」三选一）之后交付；只有六个纯 `TimeSpan` 的
+生命周期时间属性是真正中立的，已随 #435 以 `ServiceRegistrationLifecycleOptions` 落地，校验仍由
+Consul 注册入口负责。
 
 `ServiceMetrics` 只使用 `System.Diagnostics.Metrics.Meter`；该程序集位于
 `Microsoft.NETCore.App.Ref/10.0.11/ref/net10.0`，属共享框架，移入核心包
@@ -133,8 +141,11 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 
 ## 明确不包含与不保证
 
-- 保证：A 类类型迁移后，消费方源码中不再需要 provider 命名的 `using` 即可实现自定义
-  registrar、实现远程日志授权解析、实现远程遥测认证解析、以及发布安装阶段指标。
+- 保证：A 类类型迁移后，消费方源码中不再需要 provider 命名的 `using` 即可实现远程日志授权
+  解析、实现远程遥测认证解析、以及发布安装阶段指标。已交付的
+  `ServiceMantle.Discovery.ServiceRegistrationLifecycleOptions`（#435）同样不要求任何 provider
+  命名的 `using`。实现自定义 registrar 的路径受 B 类参数类型钉住，该部分保证在 #481 固定设计
+  之前不成立。
 - 不保证：不保证「换任意底层库零改动」。L2 的 `Add*()` 与 `PackageReference` 必须改。
   不保证 B 类类型在换实现后语义等价。不保证 `IServiceRegistrar` 覆盖心跳续租、
   namespace/group、或平台代劳注册的模型。
@@ -163,10 +174,11 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 | [#433](https://github.com/philfanzhou/ServiceMantle/issues/433) | L02 | `ServiceMetrics` 迁入核心包 `ServiceMantle.Diagnostics` | #432 |
 | [#434](https://github.com/philfanzhou/ServiceMantle/issues/434) | L02 | 远程日志投递中立契约迁入 `ServiceMantle.Logging` | #432 |
 | [#443](https://github.com/philfanzhou/ServiceMantle/issues/443) | L02 | OTLP 认证解析的中立契约迁入核心包 `ServiceMantle.Diagnostics` | #432 |
-| [#435](https://github.com/philfanzhou/ServiceMantle/issues/435) | L02 | 服务注册中立契约迁入 `ServiceMantle.Discovery` | #432 |
+| [#435](https://github.com/philfanzhou/ServiceMantle/issues/435) | L02 | 生命周期时间选项迁入核心包 `ServiceMantle.Discovery`（registrar/factory 移交 #481） | #432 |
+| [#481](https://github.com/philfanzhou/ServiceMantle/issues/481) | L02 | `IConsulClient`/`IConsulClientFactory` 中立化的受钉住部分：固定设计后迁移 | #432 |
 | [#438](https://github.com/philfanzhou/ServiceMantle/issues/438) | L02 | `SerilogOptions` 级别与 scope 选项改用 MEL 词汇 | #432 |
 | [#436](https://github.com/philfanzhou/ServiceMantle/issues/436) | L02 | discovery 设置键中立化与迁移路径 | #432 |
-| [#437](https://github.com/philfanzhou/ServiceMantle/issues/437) | L03 | 中立性消费验证项目与 CI 断言 | #433 #434 #435 #436 #443 |
+| [#437](https://github.com/philfanzhou/ServiceMantle/issues/437) | L03 | 中立性消费验证项目与 CI 断言（registrar 实现路径的断言覆盖取决于 #481 的结论） | #433 #434 #435 #436 #443 #481 |
 
 #436 与 #435 分开，是因为设置键是外部契约而非类型改名（`CONTRIBUTING.md` §6），需要自带
 迁移路径。#436 的开工盘点修正了上表最初的顺序假设：它只修改目录常量与设置加密 purpose，不引用

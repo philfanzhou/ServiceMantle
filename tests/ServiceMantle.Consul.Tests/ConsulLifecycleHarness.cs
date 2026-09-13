@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using ServiceMantle.Discovery;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using Xunit;
@@ -60,7 +61,7 @@ internal sealed class ConsulLifecycleHarness : IAsyncDisposable
     internal static async Task<ConsulLifecycleHarness> CreateAsync(
         bool enabled = true,
         bool activate = true,
-        Action<ConsulLifecycleOptions>? configure = null,
+        Action<ServiceRegistrationLifecycleOptions>? configure = null,
         ScriptedDecisionSource? decisions = null,
         ScriptedClient? client = null)
     {
@@ -84,14 +85,14 @@ internal sealed class ConsulLifecycleHarness : IAsyncDisposable
             await fixture.ActivateAsync(raw);
         }
 
-        var options = new ConsulLifecycleOptions();
+        var options = new ServiceRegistrationLifecycleOptions();
         configure?.Invoke(options);
         var time = new ManualTimeProvider();
         var observer = new ConsulLifecycleObserver();
         var lifecycle = new ConsulRegistrationLifecycle(
             fixture.Provider,
             fixture.Services.GetRequiredService<IServiceScopeFactory>(),
-            options.Validate(),
+            ConsulLifecycleSettings.FromOptions(options),
             time,
             observer);
         return new ConsulLifecycleHarness(fixture, lifecycle, resolvedDecisions, resolvedClient, time, observer);
