@@ -20,6 +20,9 @@ public sealed class SetupCleanupCancellationTests
     private const string DiscardFailureSecret = "Server=db;Password=discard-failure-secret";
     private const string DiscardInternalSecret = "Host=private;Password=discard-internal-secret";
     private const string DiscardInnerSecret = "discard-internal-inner-secret";
+    private const string RecheckSecret = "Server=db;Password=recheck-failure-secret";
+
+    private static readonly TimeSpan Observation = TimeSpan.FromSeconds(5);
 
     public static TheoryData<FailureEntry, DiscardSettlement> EntrySettlementMatrix
     {
@@ -148,38 +151,112 @@ public sealed class SetupCleanupCancellationTests
     }
 
     [Fact]
-    public async Task Concurrent_orchestrations_cancel_one_without_polluting_the_other()
+    public async Task Concurrent_orchestrations_overlap_and_cancel_one_without_polluting_the_other()
     {
         using var cancelledCaller = new CancellationTokenSource();
+        using var gate = new AsyncGate();
+
+        // The cancelled orchestration's discard would fail (CleanupFailed were it not cancelled) and
+        // the independent one cleans up cleanly (product.rejected). Both park on the shared gate
+        // inside DiscardPendingChangesAsync, so they are genuinely in flight at the same time before
+        // either settles. The caller is cancelled by the test, not from inside the discard.
         var cancelledScenario = Scenario.Build(
             FailureEntry.RegistrationRejected,
             DiscardSettlement.ThrowsFailure,
             cancelledCaller,
-            cancelCallerOnDiscard: true);
+            cancelCallerOnDiscard: false,
+            gate);
         var independentScenario = Scenario.Build(
             FailureEntry.RegistrationRejected,
             DiscardSettlement.CompletesClean,
             callerCancellation: null,
-            cancelCallerOnDiscard: false);
+            cancelCallerOnDiscard: false,
+            gate);
 
         var cancelledTask = cancelledScenario.Orchestrator
             .OrchestrateAsync(cancelledCaller.Token).AsTask();
         var independentTask = independentScenario.Orchestrator
             .OrchestrateAsync(TestContext.Current.CancellationToken).AsTask();
+        try
+        {
+            // Both orchestrations have entered failure cleanup (one discard each) and are parked there.
+            await gate.WaitForArrivalsAsync(2, Observation, TestContext.Current.CancellationToken);
+            Assert.False(cancelledTask.IsCompleted);
+            Assert.False(independentTask.IsCompleted);
+            Assert.Equal(1, cancelledScenario.Scope.DiscardCount);
+            Assert.Equal(1, independentScenario.Scope.DiscardCount);
+
+            // Cancel exactly one caller while both cleanups are still in flight, then release both.
+            await cancelledCaller.CancelAsync();
+        }
+        finally
+        {
+            gate.Release();
+        }
 
         var cancelledException = await Assert.ThrowsAsync<OperationCanceledException>(
             () => cancelledTask);
         Assert.Equal(FixedCallerCancellationMessage, cancelledException.Message);
         Assert.Equal(cancelledCaller.Token, cancelledException.CancellationToken);
         Assert.Null(cancelledException.InnerException);
+        AssertFreeOfSecrets(cancelledException.Message);
+        AssertFreeOfSecrets(cancelledException.ToString());
 
         var independentResult = await independentTask;
         Assert.False(independentResult.Succeeded);
         Assert.Equal(ProductRejectedCode, independentResult.ErrorCode);
+        AssertFreeOfSecrets(independentResult.ToString());
 
+        // Each scope cleaned up exactly once with CancellationToken.None; no cross-contamination.
         Assert.Equal(1, cancelledScenario.Scope.DiscardCount);
         Assert.Equal(1, independentScenario.Scope.DiscardCount);
+        Assert.Equal(CancellationToken.None, cancelledScenario.Scope.LastDiscardToken);
         Assert.Equal(CancellationToken.None, independentScenario.Scope.LastDiscardToken);
+        Assert.True(cancelledCaller.IsCancellationRequested);
+    }
+
+    public static TheoryData<RecheckSettlement> RecheckSettlements => new()
+    {
+        RecheckSettlement.ReturnsClean,
+        RecheckSettlement.ReturnsStillDirty,
+        RecheckSettlement.ThrowsAfterCancellation,
+    };
+
+    [Theory]
+    [MemberData(nameof(RecheckSettlements))]
+    public async Task Caller_cancellation_during_cleanliness_recheck_suppresses_classification(
+        RecheckSettlement recheckSettlement)
+    {
+        using var callerCancellation = new CancellationTokenSource();
+        var scope = new RecheckCancellingStagingScope(callerCancellation, recheckSettlement);
+        var calls = new List<string>();
+        var failing = new ScriptedContributor(1, "failing", calls)
+        {
+            RegistrationResult = ServiceSetupContributorResult.Rejected(ProductRejectedCode),
+        };
+        var following = new ScriptedContributor(2, "following", calls);
+        var orchestrator = new ServiceSetupOrchestrator([failing, following], scope);
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            orchestrator.OrchestrateAsync(callerCancellation.Token).AsTask());
+
+        // The discard completed cleanly first; the caller was cancelled only inside the cleanliness
+        // recheck getter, yet that cancellation still outranks the product.rejected / CleanupFailed
+        // classification and is delivered as a fresh, safe OperationCanceledException.
+        Assert.Equal(FixedCallerCancellationMessage, exception.Message);
+        Assert.Equal(callerCancellation.Token, exception.CancellationToken);
+        Assert.Null(exception.InnerException);
+        AssertFreeOfSecrets(exception.Message);
+        AssertFreeOfSecrets(exception.ToString());
+
+        // Cleanup used CancellationToken.None exactly once; the recheck cancelled exactly once.
+        Assert.Equal(1, scope.DiscardCount);
+        Assert.Equal(CancellationToken.None, scope.LastDiscardToken);
+        Assert.Equal(1, scope.RecheckCancellationCount);
+
+        // No later contributor registration was started after cancellation was observed.
+        Assert.DoesNotContain("register:following", calls);
+        Assert.Equal(0, following.RegistrationCount);
     }
 
     private static string ExpectedUncancelledCode(FailureEntry entry, DiscardSettlement settlement) =>
@@ -208,6 +285,7 @@ public sealed class SetupCleanupCancellationTests
         Assert.DoesNotContain(DiscardFailureSecret, text, StringComparison.Ordinal);
         Assert.DoesNotContain(DiscardInternalSecret, text, StringComparison.Ordinal);
         Assert.DoesNotContain(DiscardInnerSecret, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(RecheckSecret, text, StringComparison.Ordinal);
         Assert.DoesNotContain("Host=", text, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Password", text, StringComparison.OrdinalIgnoreCase);
     }
@@ -229,6 +307,13 @@ public sealed class SetupCleanupCancellationTests
         CompletesStillDirty,
         ThrowsFailure,
         ThrowsInternalCancellation
+    }
+
+    public enum RecheckSettlement
+    {
+        ReturnsClean,
+        ReturnsStillDirty,
+        ThrowsAfterCancellation,
     }
 
     private sealed class Scenario
@@ -261,10 +346,11 @@ public sealed class SetupCleanupCancellationTests
             FailureEntry entry,
             DiscardSettlement settlement,
             CancellationTokenSource? callerCancellation,
-            bool cancelCallerOnDiscard)
+            bool cancelCallerOnDiscard,
+            AsyncGate? gate = null)
         {
             var calls = new List<string>();
-            var scope = new CancellingStagingScope(callerCancellation, settlement, cancelCallerOnDiscard);
+            var scope = new CancellingStagingScope(callerCancellation, settlement, cancelCallerOnDiscard, gate);
             var failing = new ScriptedContributor(1, "failing", calls);
             var following = new ScriptedContributor(2, "following", calls);
 
@@ -361,7 +447,8 @@ public sealed class SetupCleanupCancellationTests
     private sealed class CancellingStagingScope(
         CancellationTokenSource? callerCancellation,
         DiscardSettlement settlement,
-        bool cancelCallerOnDiscard) : IServiceSetupStagingScope
+        bool cancelCallerOnDiscard,
+        AsyncGate? gate = null) : IServiceSetupStagingScope
     {
         private readonly List<CancellationToken> discardTokens = [];
         private bool hasPendingChanges;
@@ -380,6 +467,30 @@ public sealed class SetupCleanupCancellationTests
         public ValueTask DiscardPendingChangesAsync(CancellationToken cancellationToken = default)
         {
             discardTokens.Add(cancellationToken);
+
+            // When a gate is supplied, the discard parks inside it so concurrent orchestrations
+            // overlap in flight; the test releases the gate and the discard then settles.
+            if (gate is not null)
+            {
+                return GatedDiscardAsync();
+            }
+
+            var error = SettleDiscard();
+            return error is null ? ValueTask.CompletedTask : ValueTask.FromException(error);
+        }
+
+        private async ValueTask GatedDiscardAsync()
+        {
+            await gate!.EnterAsync().ConfigureAwait(false);
+            var error = SettleDiscard();
+            if (error is not null)
+            {
+                throw error;
+            }
+        }
+
+        private Exception? SettleDiscard()
+        {
             if (cancelCallerOnDiscard)
             {
                 callerCancellation?.Cancel();
@@ -389,20 +500,113 @@ public sealed class SetupCleanupCancellationTests
             {
                 case DiscardSettlement.CompletesClean:
                     hasPendingChanges = false;
-                    return ValueTask.CompletedTask;
+                    return null;
                 case DiscardSettlement.CompletesStillDirty:
                     hasPendingChanges = true;
-                    return ValueTask.CompletedTask;
+                    return null;
                 case DiscardSettlement.ThrowsFailure:
-                    return ValueTask.FromException(new InvalidOperationException(DiscardFailureSecret));
+                    return new InvalidOperationException(DiscardFailureSecret);
                 case DiscardSettlement.ThrowsInternalCancellation:
-                    return ValueTask.FromException(new OperationCanceledException(
+                    return new OperationCanceledException(
                         DiscardInternalSecret,
                         new Exception(DiscardInnerSecret),
-                        new CancellationToken(true)));
+                        new CancellationToken(true));
                 default:
                     throw new ArgumentOutOfRangeException(nameof(settlement));
             }
         }
+    }
+
+    /// <summary>
+    /// A dedicated staging scope whose discard completes cleanly without cancelling, so the caller is
+    /// cancelled only later - inside the cleanliness recheck getter that <c>CleanupFailureAsync</c>
+    /// reads after the discard settles. This isolates the recheck-window cancellation that caching the
+    /// cancellation state before the recheck read would otherwise miss.
+    /// </summary>
+    private sealed class RecheckCancellingStagingScope(
+        CancellationTokenSource callerCancellation,
+        RecheckSettlement recheckSettlement) : IServiceSetupStagingScope
+    {
+        private readonly List<CancellationToken> discardTokens = [];
+        private bool hasPendingChanges;
+        private bool recheckFired;
+
+        internal int DiscardCount => discardTokens.Count;
+
+        internal CancellationToken? LastDiscardToken =>
+            discardTokens.Count > 0 ? discardTokens[^1] : null;
+
+        internal int RecheckCancellationCount { get; private set; }
+
+        public bool HasPendingChanges
+        {
+            get
+            {
+                // Only the cleanliness recheck - the first getter read after the single discard
+                // settles - cancels the caller. Entry and validation-phase reads see a clean scope.
+                if (discardTokens.Count == 1 && !recheckFired)
+                {
+                    recheckFired = true;
+                    RecheckCancellationCount++;
+                    callerCancellation.Cancel();
+                    switch (recheckSettlement)
+                    {
+                        case RecheckSettlement.ThrowsAfterCancellation:
+                            throw new InvalidOperationException(RecheckSecret);
+                        case RecheckSettlement.ReturnsStillDirty:
+                            return true;
+                        case RecheckSettlement.ReturnsClean:
+                            return false;
+                        default:
+                            throw new ArgumentOutOfRangeException(nameof(recheckSettlement));
+                    }
+                }
+
+                return hasPendingChanges;
+            }
+
+            internal set => hasPendingChanges = value;
+        }
+
+        public ValueTask DiscardPendingChangesAsync(CancellationToken cancellationToken = default)
+        {
+            discardTokens.Add(cancellationToken);
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    /// <summary>
+    /// A file-private two-phase gate that lets a concurrency test park concurrent orchestrations
+    /// inside their failure cleanup until every expected discard has arrived, so they are genuinely
+    /// in flight at the same time. The test then cancels one caller and releases all of them.
+    /// </summary>
+    private sealed class AsyncGate : IDisposable
+    {
+        private readonly SemaphoreSlim arrivals = new(0);
+        private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Signals that a discard has arrived, then waits until the gate is released.</summary>
+        public async Task EnterAsync()
+        {
+            arrivals.Release();
+            await release.Task.ConfigureAwait(false);
+        }
+
+        /// <summary>Waits until <paramref name="count"/> discards have arrived at the gate.</summary>
+        public async Task WaitForArrivalsAsync(int count, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                if (!await arrivals.WaitAsync(timeout, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new TimeoutException($"Only {i} of {count} gated discards arrived.");
+                }
+            }
+        }
+
+        /// <summary>Releases every waiting discard. Idempotent.</summary>
+        public void Release() => release.TrySetResult();
+
+        public void Dispose() => arrivals.Dispose();
     }
 }
