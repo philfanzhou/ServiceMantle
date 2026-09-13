@@ -27,6 +27,8 @@ public sealed class SettingUpdateAdmissionCancellationTests
         "Host=private;Password=update-internal-cancellation-canary";
     private const string InternalCancellationInnerSecret = "update-internal-cancellation-inner-canary";
 
+    private static readonly TimeSpan Observation = TimeSpan.FromSeconds(5);
+
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
     [Fact]
@@ -217,41 +219,73 @@ public sealed class SettingUpdateAdmissionCancellationTests
     }
 
     [Fact]
-    public async Task Concurrent_requests_keep_cancellation_and_counts_isolated()
+    public async Task Concurrent_requests_overlap_and_cancel_one_without_cross_contamination()
     {
         using var cancelledAbort = new CancellationTokenSource();
         using var liveAbort = new CancellationTokenSource();
-        var cancelledResolver = new ScriptedResolver(ResolverSettlement.ReturnsResolved, cancelledAbort);
+        using var gate = new AsyncGate();
+
+        // Neither resolver cancels; both requests resolve identically and then block on the shared
+        // body gate, so they are genuinely in flight at the same time before either completes.
+        var cancelledResolver = new ScriptedResolver(ResolverSettlement.ReturnsResolved, cancelCaller: null);
+        var cancelledBody = new ScriptedBodyStream(BodySettlement.ReturnsValidJson, cancelCaller: null, gate);
         var cancelledExecutor = new RecordingExecutor();
         var cancelledContext = CreateContext(
             new SingleResolverProvider(cancelledResolver),
-            new ScriptedBodyStream(BodySettlement.ReturnsValidJson, cancelCaller: null),
+            cancelledBody,
             cancelledAbort.Token,
             ValidBody.Length);
+
         var liveResolver = new ScriptedResolver(ResolverSettlement.ReturnsResolved, cancelCaller: null);
+        var liveBody = new ScriptedBodyStream(BodySettlement.ReturnsValidJson, cancelCaller: null, gate);
         var liveExecutor = new RecordingExecutor
         {
             Handler = _ => ValueTask.FromResult(ServiceSettingUpdateResult.Applied(3)),
         };
         var liveContext = CreateContext(
             new SingleResolverProvider(liveResolver),
-            new ScriptedBodyStream(BodySettlement.ReturnsValidJson, cancelCaller: null),
+            liveBody,
             liveAbort.Token,
             ValidBody.Length);
 
         var cancelledTask = SettingUpdateHandlers.UpdateAsync(
             cancelledContext, cancelledExecutor.ExecuteAsync);
         var liveTask = SettingUpdateHandlers.UpdateAsync(liveContext, liveExecutor.ExecuteAsync);
+        try
+        {
+            // Both requests are past their synchronous resolver and now parked inside the body read.
+            await gate.WaitForArrivalsAsync(2, Observation, Token);
+            Assert.Equal(1, cancelledResolver.Calls);
+            Assert.Equal(1, liveResolver.Calls);
+            Assert.Equal(0, cancelledExecutor.Calls);
+            Assert.Equal(0, liveExecutor.Calls);
+
+            // Cancel exactly one request while both are still in flight, then release both.
+            await cancelledAbort.CancelAsync();
+        }
+        finally
+        {
+            gate.Release();
+        }
 
         var exception = await Assert.ThrowsAsync<OperationCanceledException>(() => cancelledTask);
         var liveResult = await liveTask;
         var (statusCode, _) = await SerializeAsync(liveResult);
 
+        // Cancelled request: its own token, no inner exception, and the executor is never invoked.
         AssertSafeCallerCancellation(exception, cancelledAbort.Token);
-        Assert.Equal(StatusCodes.Status200OK, statusCode);
         Assert.Equal(0, cancelledExecutor.Calls);
+
+        // Live request: a normal 200 with exactly one executor call carrying its own token.
+        Assert.Equal(StatusCodes.Status200OK, statusCode);
         Assert.Equal(1, liveExecutor.Calls);
         Assert.Equal(liveAbort.Token, liveExecutor.ObservedToken);
+
+        // Per-request resolver/body counts stay isolated; only the intended token was cancelled.
+        Assert.Equal(1, cancelledResolver.Calls);
+        Assert.Equal(1, liveResolver.Calls);
+        Assert.True(cancelledBody.ReadCount >= 1);
+        Assert.True(liveBody.ReadCount >= 1);
         Assert.True(cancelledAbort.IsCancellationRequested);
         Assert.False(liveAbort.IsCancellationRequested);
     }
@@ -424,7 +458,8 @@ public sealed class SettingUpdateAdmissionCancellationTests
 
     private sealed class ScriptedBodyStream(
         BodySettlement settlement,
-        CancellationTokenSource? cancelCaller) : Stream
+        CancellationTokenSource? cancelCaller,
+        AsyncGate? gate = null) : Stream
     {
         private const int OversizedTotal = (256 * 1024) + 4096;
         private static readonly byte[] ValidJson = Encoding.UTF8.GetBytes(ValidBody);
@@ -460,6 +495,25 @@ public sealed class SettingUpdateAdmissionCancellationTests
         public override ValueTask<int> ReadAsync(
             Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            // When a gate is supplied, the first read parks inside it so concurrent requests overlap
+            // in flight; the test releases the gate. The request token is deliberately not observed
+            // here so the cancelled request settles at the handler checkpoint, not inside the read.
+            if (gate is not null && first)
+            {
+                return GatedFirstReadAsync(buffer);
+            }
+
+            return ValueTask.FromResult(ReadCore(buffer));
+        }
+
+        private async ValueTask<int> GatedFirstReadAsync(Memory<byte> buffer)
+        {
+            await gate!.EnterAsync().ConfigureAwait(false);
+            return ReadCore(buffer);
+        }
+
+        private int ReadCore(Memory<byte> buffer)
+        {
             Interlocked.Increment(ref readCount);
             if (first)
             {
@@ -477,14 +531,13 @@ public sealed class SettingUpdateAdmissionCancellationTests
                 }
             }
 
-            var written = settlement switch
+            return settlement switch
             {
                 BodySettlement.ReturnsValidJson => Copy(ValidJson, buffer),
                 BodySettlement.ReturnsMalformedJson => Copy(MalformedJson, buffer),
                 BodySettlement.ReturnsOversizedRead => EmitOversized(buffer),
                 _ => 0,
             };
-            return ValueTask.FromResult(written);
         }
 
         private int Copy(byte[] source, Memory<byte> buffer)
@@ -512,5 +565,40 @@ public sealed class SettingUpdateAdmissionCancellationTests
             emitted += count;
             return count;
         }
+    }
+
+    /// <summary>
+    /// A file-private two-phase gate that lets a concurrency test park concurrent requests inside a
+    /// body read until every expected reader has arrived, so the requests are genuinely in flight at
+    /// the same time. The test then cancels one caller and releases all readers deterministically.
+    /// </summary>
+    private sealed class AsyncGate : IDisposable
+    {
+        private readonly SemaphoreSlim arrivals = new(0);
+        private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Signals that a reader has arrived, then waits until the gate is released.</summary>
+        public async Task EnterAsync()
+        {
+            arrivals.Release();
+            await release.Task.ConfigureAwait(false);
+        }
+
+        /// <summary>Waits until <paramref name="count"/> readers have arrived at the gate.</summary>
+        public async Task WaitForArrivalsAsync(int count, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                if (!await arrivals.WaitAsync(timeout, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new TimeoutException($"Only {i} of {count} gated readers arrived.");
+                }
+            }
+        }
+
+        /// <summary>Releases every waiting reader. Idempotent.</summary>
+        public void Release() => release.TrySetResult();
+
+        public void Dispose() => arrivals.Dispose();
     }
 }
