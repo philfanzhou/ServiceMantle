@@ -68,8 +68,17 @@ internal sealed class PhaseGateState(IEnumerable<PhaseGateRegistration> registra
         _ => false
     };
 
-    internal static bool Under(string path, string prefix) =>
-        new PathString(path).StartsWithSegments(new PathString(prefix), StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Compares one route text with an already normalized prefix. An attribute-routed MVC endpoint
+    /// exposes its combined template without the leading slash even though it stays root relative,
+    /// so both spellings of the same path reach one comparison instead of failing
+    /// <see cref="PathString"/> construction. An empty route text stays outside every prefix.
+    /// </summary>
+    internal static bool Under(string path, string prefix)
+    {
+        var rooted = string.IsNullOrEmpty(path) || path[0] == '/' ? path : '/' + path;
+        return new PathString(rooted).StartsWithSegments(new PathString(prefix), StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool MethodsOverlap(RouteEndpoint first, RouteEndpoint second)
     {
