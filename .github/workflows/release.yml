@@ -242,11 +242,20 @@ jobs:
   # Publishing succeeded is not the same as a consumer being able to use the result. This restores
   # the published version from NuGet.org itself, through a cache that has never held a ServiceMantle
   # package, so nothing local can make a broken package look installable.
+  #
+  # The retry budget is explicit and stays below the job timeout on purpose: measured NuGet.org
+  # indexing latency reached ~6 minutes before the version became restorable (v0.1.0-alpha.3), and
+  # the previous 10x30s budget burned out before then. 30 attempts x 30s covers a worst-case wait
+  # of 14.5 minutes — roughly 2.3x the observed latency — leaving more than five minutes of the
+  # 30-minute timeout for checkout, setup, each restore attempt, the build, and the consumer run.
+  # When the budget is exhausted the script itself fails with its fixed message; the job must not
+  # degrade into a timeout cancellation. To recover, confirm the package is visible on NuGet.org
+  # and re-run only this failed job.
   verify-published-packages:
     name: Verify the published packages restore from NuGet.org
     needs: [version, publish-nuget]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -268,3 +277,5 @@ jobs:
           --version "$PACKAGE_VERSION"
           --source "${{ env.RELEASE_SOURCE }}"
           --consumer eng/tests/consumers/aspnetcore
+          --attempts 30
+          --delay-seconds 30

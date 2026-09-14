@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -178,6 +179,37 @@ public sealed class ReleaseWorkflowTests
         Assert.Contains("--version \"$PACKAGE_VERSION\"", job, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The post-publish restore retry must be an explicit, finite budget that stays below the job
+    /// timeout, so index latency fails through the script's own non-zero exit instead of degrading
+    /// into a timeout cancellation.
+    /// </summary>
+    [Fact]
+    public void The_post_publish_restore_budget_is_finite_explicit_and_below_the_job_timeout()
+    {
+        var job = Job("verify-published-packages");
+
+        // The workflow must pass the budget explicitly rather than leaning on the script's
+        // defaults: the defaults are invisible here, and an invariant over invisible values cannot
+        // be checked.
+        var attempts = PositiveInt(job, @"--attempts\s+(?<value>\d+)");
+        var delaySeconds = PositiveInt(job, @"--delay-seconds\s+(?<value>\d+)");
+        var timeoutMinutes = PositiveInt(job, @"timeout-minutes:\s*(?<value>\d+)");
+        Assert.True(attempts >= 1, "The attempt budget must be a positive integer.");
+        Assert.True(delaySeconds >= 0, "The retry delay must be a non-negative whole number of seconds.");
+        Assert.True(timeoutMinutes >= 1, "The job timeout must be a positive whole number of minutes.");
+
+        // The worst case spends (attempts - 1) waits plus one final failed restore, and the fixed
+        // overhead (checkout, setup-dotnet, each restore, build, run — measured at well under a
+        // minute combined on the success path) is covered by a five-minute margin.
+        var worstCaseWaitSeconds = (attempts - 1) * delaySeconds;
+        const int MarginSeconds = 5 * 60;
+        Assert.True(
+            worstCaseWaitSeconds + MarginSeconds <= timeoutMinutes * 60,
+            $"The worst-case wait of {worstCaseWaitSeconds}s plus the {MarginSeconds}s margin " +
+            $"must not exceed the {timeoutMinutes}-minute job timeout.");
+    }
+
     [Theory]
     [InlineData("\n")]
     [InlineData("\r\n")]
@@ -195,6 +227,15 @@ public sealed class ReleaseWorkflowTests
         var match = Regex.Match(job, @"needs:\s*\[(?<list>[^\]]*)\]", RegexOptions.None, TimeSpan.FromSeconds(5));
         Assert.True(match.Success, "The job does not declare its prerequisites as a list.");
         return [.. match.Groups["list"].Value.Split(',').Select(entry => entry.Trim())];
+    }
+
+    private static int PositiveInt(string job, string pattern)
+    {
+        var match = Regex.Match(job, pattern, RegexOptions.None, TimeSpan.FromSeconds(5));
+        Assert.True(
+            match.Success,
+            $"The job text must carry a value matching '{pattern}' for this invariant to hold.");
+        return int.Parse(match.Groups["value"].Value, CultureInfo.InvariantCulture);
     }
 
     private static string Job(string name, string? workflow = null)
