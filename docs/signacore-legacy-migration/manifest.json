@@ -149,7 +149,7 @@
         "reference": "#95",
         "state": "planned"
       },
-      "prerequisites": ["#95"],
+      "prerequisites": ["#95", "#133"],
       "coverageGaps": [],
       "disposition": "blocked",
       "batch": "bootstrap"
@@ -1113,15 +1113,24 @@
     },
     {
       "order": 2,
+      "id": "session",
+      "subsystem": "Session",
+      "candidateIds": ["admin-data-protection-key-store", "admin-cookie-session"],
+      "prerequisites": ["#38", "#39", "#40", "#41", "#97", "#102", "#105", "#128"],
+      "trackingIssue": 133,
+      "proposedTitle": "[SignaCore 清理][会话] 切换管理 Cookie 与共享 Data Protection 存储"
+    },
+    {
+      "order": 3,
       "id": "bootstrap",
       "subsystem": "Bootstrap",
       "candidateIds": ["bootstrap-file-lifecycle", "bootstrap-management-mode", "bootstrap-startup-branch"],
-      "prerequisites": ["#70", "#71", "#95", "#105", "#116", "#128"],
+      "prerequisites": ["#70", "#71", "#95", "#105", "#116", "#128", "#133"],
       "trackingIssue": 129,
       "proposedTitle": "[SignaCore 清理][Bootstrap] 切换本地引导与管理模式并删除重复实现"
     },
     {
-      "order": 3,
+      "order": 4,
       "id": "setup",
       "subsystem": "Setup",
       "candidateIds": ["setup-lifecycle", "setup-mode-gate"],
@@ -1130,7 +1139,7 @@
       "proposedTitle": "[SignaCore 清理][Setup] 切换一次性安装编排并删除重复模式代码"
     },
     {
-      "order": 4,
+      "order": 5,
       "id": "configuration",
       "subsystem": "Configuration",
       "candidateIds": ["configuration-catalog", "configuration-snapshot-storage", "configuration-management-api", "legacy-configuration-upgrade"],
@@ -1139,7 +1148,7 @@
       "proposedTitle": "[SignaCore 清理][配置] 切换共享快照、升级导入与管理 API"
     },
     {
-      "order": 5,
+      "order": 6,
       "id": "audit",
       "subsystem": "Audit",
       "candidateIds": ["management-audit-storage", "management-audit-query-api"],
@@ -1148,20 +1157,11 @@
       "proposedTitle": "[SignaCore 清理][审计] 切换管理审计写入查询并保留登录历史"
     },
     {
-      "order": 6,
-      "id": "session",
-      "subsystem": "Session",
-      "candidateIds": ["admin-data-protection-key-store", "admin-cookie-session"],
-      "prerequisites": ["#38", "#39", "#40", "#41", "#97", "#102", "#105", "#132"],
-      "trackingIssue": 133,
-      "proposedTitle": "[SignaCore 清理][会话] 切换管理 Cookie 与共享 Data Protection 存储"
-    },
-    {
       "order": 7,
       "id": "health",
       "subsystem": "Health",
       "candidateIds": ["phase-health-endpoints", "signing-key-readiness"],
-      "prerequisites": ["#45", "#89", "#103", "#105", "#116", "#133"],
+      "prerequisites": ["#45", "#89", "#103", "#105", "#116", "#132"],
       "trackingIssue": 134,
       "proposedTitle": "[SignaCore 清理][健康] 切换阶段端点与签名密钥 Readiness"
     },
