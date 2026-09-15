@@ -128,3 +128,20 @@ feed 停止响应是这类失败之一，不是中断。每个请求有五分钟
 feed，因此它绝不会进入子进程的参数列表。命令打印的每一行都经过一个以该值为键的 redactor，
 这覆盖了由本工具不撰写的 feed 响应组装出的诊断。redactor 把每次写入作为整体扫描，因此一次调用
 打印的诊断会被覆盖；它不跨多次写入缓冲。
+
+### 发布后的还原验证预算
+
+`release.yml` 的 `verify-published-packages` job 在推送成功后从 NuGet.org 还原并运行一个消费
+项目。NuGet.org 的索引延迟长于推送被接受的时间：`v0.1.0-alpha.3`（2026-09-14）实测 flat
+container 在发布完成约 6 分 16 秒后才可见，而当时的预算（10 次 × 30 秒，最坏等待 4.5 分钟）
+在索引完成前耗尽，导致已成功发布的 run 被标红。
+
+因此该 job 显式向 `eng/tests/published-package-consumption.sh` 传入 `--attempts 30
+--delay-seconds 30`：最坏等待 `(30 − 1) × 30 = 870` 秒（14.5 分钟），约为实测延迟的 2.3 倍；
+`timeout-minutes` 相应从 20 调到 30，使最坏等待加至少 5 分钟余量（checkout、setup-dotnet、
+每次还原、build 与 run）仍严格小于 job 超时。这条关系由
+`ReleaseWorkflowTests.The_post_publish_restore_budget_is_finite_explicit_and_below_the_job_timeout`
+固定。预算耗尽时由脚本自身以非零退出码和 `did not become restorable ... within N attempts`
+消息明确失败，而不是退化为 job 超时取消。恢复方式：确认包已在 NuGet.org 页面可见后，只重跑
+失败的 `verify-published-packages` job（`v0.1.0-alpha.3` 的重跑在 20 秒内成功）；包本身已经
+发布，不需要也不应该重推。
