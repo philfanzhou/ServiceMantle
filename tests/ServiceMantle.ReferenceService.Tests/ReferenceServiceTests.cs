@@ -136,6 +136,7 @@ public sealed class ReferenceServiceTests
         Assert.Equal(new[] { "../../src/ServiceMantle/ServiceMantle.csproj", "../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj",
             "../../src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
             "../../src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj",
+            "../../src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj",
             "../../src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj",
             "../../src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj" },
             project.Descendants("ProjectReference").Select(reference => (string)reference.Attribute("Include")!));
