@@ -9,10 +9,16 @@
 此处交付：一个 `Order = 100` 的 `IServiceReadinessContributor`，基于
 `IDbContextFactory<ReferencePostgreSqlDbContext>`。
 
-**此处不交付：**真实的安装阶段快照来源、live/ready/compatibility 健康 endpoint、host 激活和
-注册。正在运行的示例没有变化——它旧的占位符仍然回答 `reference.health_not_integrated`，
-这里没有任何内容使示例变为 `Ready`。测试中给此 contributor 的快照是它的输入矩阵，不是任何
-来源会产出它们的证据。
+**此处不交付：**真实的安装阶段快照来源、live/ready 健康 endpoint、host 激活和注册。这些由
+[#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 的健康接线交付：当且仅当
+PostgreSQL 启动 gate 打开时，样例注册 `ReferencePostgreSqlHealthSnapshotSource`（每次请求重读
+安装行的唯一实时阶段来源）、映射 `/health/live`、`/health/ready` 与 `/health`，并把本 contributor
+作为业务就绪否决接入（见样例 README 的
+[阶段 Live/Ready 健康接线](../../samples/ServiceMantle.ReferenceService/README.md#postgresql-live-ready-health)）。
+因此**本文件里的测试只单独验收该 contributor 组件本身**——它们直接构造 contributor 并喂入手工
+快照，既不经健康 endpoint，也不经实时来源。运行中的示例是否 `Ready` 由 #156 的接线与真库验收
+（`ReferencePostgreSqlHealthTests`）证明，不是这里的对象。这里给 contributor 的快照是它的输入
+矩阵，不是任何来源会产出它们的证据。
 
 ## 决策
 

@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Configuration;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
@@ -9,6 +10,7 @@ using ServiceMantle.ReferenceService.Data;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.ReferenceService.Database.Sqlite;
 using ServiceMantle.ReferenceService.Health;
+using ServiceMantle.ReferenceService.Health.PostgreSql;
 using ServiceMantle.ReferenceService.Installation;
 using ServiceMantle.ReferenceService.Logging;
 using ServiceMantle.ReferenceService.Management;
@@ -59,7 +61,21 @@ public static class ReferenceApplication
         if (postgresqlOptions is not null)
         {
             builder.Services.AddReferencePostgreSqlStartup(postgresqlOptions);
+            // The health capability, its one live snapshot source, and the business readiness
+            // contributor are wired if and only if the PostgreSQL startup gate is enabled, and they
+            // reuse the gate's own context factory and Ready result rather than any new setting. The
+            // source re-reads the installation row per request, so the reported phase is
+            // authoritative database fact, not the gate's frozen startup phase. The contributor
+            // registered here is the business one; the placeholder contributor below is deliberately
+            // not registered, because both share Order 100 and the health validator refuses a
+            // duplicate order at startup.
+            builder.Services.AddSingleton<
+                IServiceHealthSnapshotSource,
+                ReferencePostgreSqlHealthSnapshotSource>();
+            mantle.AddServiceMantleHealthEndpoints();
+            mantle.AddServiceReadinessContributor<ReferencePostgreSqlWorkspaceReadinessContributor>();
         }
+
         var databasePath = builder.Configuration["ReferenceService:DatabasePath"]
             ?? Path.Combine(builder.Environment.ContentRootPath, "reference.db");
         var connectionString = sqliteStartup?.TargetConnectionString
@@ -69,7 +85,13 @@ public static class ReferenceApplication
         builder.Services.AddSingleton(provider => new ServiceSettingDefinitionRegistry(
             provider.GetServices<IServiceSettingDefinitionProvider>()));
         builder.Services.AddScoped<IServiceSetupContributor, ReferenceSetupContributor>();
-        builder.Services.AddSingleton<IServiceReadinessContributor, ReferenceReadinessContributor>();
+        if (postgresqlOptions is null)
+        {
+            // With the PostgreSQL gate off, the placeholder stays the single readiness contributor and
+            // never claims ready; no health endpoint or snapshot source is registered on this path.
+            builder.Services.AddSingleton<IServiceReadinessContributor, ReferenceReadinessContributor>();
+        }
+
         builder.Services.AddScoped<IManagementIdentityProvider, ExternalManagementIdentityPlaceholder>();
         return builder;
     }
@@ -85,6 +107,14 @@ public static class ReferenceApplication
             app.UseServiceMantleCorrelationId();
             app.UseMiddleware<ReferenceRequestLoggingMiddleware>();
             app.UseServiceMantleProblemDetails();
+        }
+
+        // The fixed live and readiness endpoints are mapped if and only if the PostgreSQL startup
+        // gate registered its options, exactly matching the capability registered in CreateBuilder.
+        // No Phase Gate, management API, or installation status endpoint is wired here.
+        if (app.Services.GetService<ReferencePostgreSqlStartupOptions>() is not null)
+        {
+            app.MapServiceMantleHealthEndpoints();
         }
 
         // No database creation, migration, setup, administrator provisioning, or management routes.

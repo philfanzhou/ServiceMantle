@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Migration;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.ReferenceService.Database.Sqlite;
@@ -45,6 +46,13 @@ public sealed class ReferencePostgreSqlStartupTests
         Assert.Null(app.Services.GetService<ReferencePostgreSqlStartupCoordinator>());
         Assert.Null(app.Services.GetService<ReferencePostgreSqlStartupOptions>());
         Assert.Null(app.Services.GetService<ReferencePostgreSqlStartupHostedService>());
+        // The health wiring is registered if and only if the PostgreSQL gate is on, so a gate-off
+        // host registers neither the live snapshot source nor the gate's context factory, and its
+        // only readiness contributor stays the placeholder asserted by ReferenceServiceTests.
+        Assert.Null(app.Services.GetService<IServiceHealthSnapshotSource>());
+        Assert.Null(app.Services.GetService<IDbContextFactory<ReferencePostgreSqlDbContext>>());
+        using var healthProbe = await client.GetAsync("/health", Token);
+        Assert.Equal(HttpStatusCode.NotFound, healthProbe.StatusCode);
         await app.StopAsync(Token);
         Assert.Empty(Directory.EnumerateFileSystemEntries(directory.Path));
     }

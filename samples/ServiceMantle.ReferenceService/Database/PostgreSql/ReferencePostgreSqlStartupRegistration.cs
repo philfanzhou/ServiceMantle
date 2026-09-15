@@ -77,7 +77,15 @@ public static class ReferencePostgreSqlStartupRegistration
         // connection, and the composite initialization executor all share one orchestration scope
         // and the target connection string. The administrative connection is never registered:
         // it exists only inside the coordinator's single preparation request.
-        services.AddDbContext<ReferencePostgreSqlDbContext>(dbContextOptions =>
+        //
+        // A context factory - not AddDbContext - registers the shared target connection. The gate's
+        // own scoped context, the installation store, and the executors all resolve the scoped
+        // ReferencePostgreSqlDbContext from the orchestration scope exactly as before, while the
+        // health snapshot source and the workspace readiness contributor each create their own
+        // short-lived context from the factory instead of capturing that scoped one. Registering the
+        // factory (rather than AddDbContext alongside it) keeps a single set of context options and
+        // lets a singleton consumer create contexts safely without a scoped-options capture error.
+        services.AddDbContextFactory<ReferencePostgreSqlDbContext>(dbContextOptions =>
             dbContextOptions.UseNpgsql(options.TargetConnectionString));
         services.AddScoped<IServiceInstallationStore>(provider =>
             new EfCoreServiceInstallationStore<ReferencePostgreSqlDbContext>(

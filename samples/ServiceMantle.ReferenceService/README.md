@@ -23,7 +23,8 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 | `Database/PostgreSql/` | 消费方自有的 PostgreSQL 迁移 executor、单事务初始化 executor 与 opt-in 启动部署 gate | #497 / #160 |
 | `ReferenceSetupContributor` | 只读校验与仅 staging 的示例；启动时绝不调用 | [#175](https://github.com/philfanzhou/ServiceMantle/issues/175) |
 | `ReferenceSettingDefinitions` | 只有默认值与约束；没有 store、HTTP 或激活 | #177 |
-| `ReferenceReadinessContributor` | 返回 `reference.health_not_integrated`；绝不声称就绪 | #156 |
+| `ReferenceReadinessContributor` | gate 关闭路径的唯一占位 contributor，返回 `reference.health_not_integrated`；绝不声称就绪 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 在 PostgreSQL 路径改接业务 contributor |
+| `Health/PostgreSql/` | 仅当 PostgreSQL 启动 gate 打开时接线：`ReferencePostgreSqlHealthSnapshotSource` 每次请求重读安装行，`ReferencePostgreSqlWorkspaceReadinessContributor` 提供业务就绪否决 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) / [#388](https://github.com/philfanzhou/ServiceMantle/issues/388) 交付 |
 | `ExternalManagementIdentityPlaceholder` | 以安全的未配置 provider 错误码返回 Failed | 未来的外部身份集成 |
 | `Logging/` | opt-in 的 Serilog Console 接线与一行已清理的请求日志 | 由 [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) 交付 |
 | `Telemetry/` | opt-in 的基础 ASP.NET Core、HttpClient 与运行时插桩；没有 exporter | [#158](https://github.com/philfanzhou/ServiceMantle/issues/158) |
@@ -134,12 +135,63 @@ provider 消息或异常文本。只有 `Ready` 允许宿主完成启动——ga
 不发布结果。
 
 本 gate **不**保证：不自动接管任意旧库（缺安装行或安装行无效一律关闭失败）；不回滚已提交的
-迁移或 `CREATE DATABASE`；不保证 gate 结果之后的状态新鲜度（实时健康归
-[#156](https://github.com/philfanzhou/ServiceMantle/issues/156)）；不签发 Setup Code（
+迁移或 `CREATE DATABASE`；不保证 gate 结果之后的状态新鲜度（实时健康见下文的
+[阶段 Live/Ready 健康接线](#postgresql-live-ready-health)）；不签发 Setup Code（
 [#175](https://github.com/philfanzhou/ServiceMantle/issues/175)）；不做双实例最终 E2E（
 [#165](https://github.com/philfanzhou/ServiceMantle/issues/165)）；不保证行政连接端点的 TLS
 与网络信任。调用方责任：可信的 PostgreSQL 端点、最小权限的运行时账户、首次准备之后移除
 行政凭据、部署侧负责备份。
+
+<a id="postgresql-live-ready-health"></a>
+
+## 阶段 Live/Ready 健康接线
+
+当且仅当上面的 PostgreSQL 启动 gate 被显式打开时，样例才接线健康能力；**不新增任何配置键**。
+gate 关闭的所有路径（默认、SQLite、日志、遥测开关）行为完全不变：`/health*` 仍返回 404，
+`ReferenceReadinessContributor` 仍是唯一的 readiness contributor，也不注册快照来源或
+`IDbContextFactory<ReferencePostgreSqlDbContext>`。
+
+接线复用 gate 已注册的目标连接 factory 与 Ready 结果，注册三样东西：
+
+- `ReferencePostgreSqlHealthSnapshotSource`（单例，`IServiceHealthSnapshotSource`）：每次
+  `GetSnapshotAsync` 先确认 gate 结果为 Ready，再从 `IDbContextFactory<ReferencePostgreSqlDbContext>`
+  创建一个本次调用独占的 context，经 `EfCoreServiceInstallationStore` 调用一次
+  `FindAsync(serviceId)`，随后释放该 context。它不缓存、不后台轮询、不重试、不写入、也不捕获
+  请求 scope 的 context，因此安装行的变化在下一次请求即被反映，无需重启。
+- `mantle.AddServiceMantleHealthEndpoints()`：使用库的默认探测预算，映射 `/health/live`、
+  `/health/ready` 与 `/health`。不接线 Phase Gate、管理 API 或安装状态端点。
+- `ReferencePostgreSqlWorkspaceReadinessContributor`（经 `AddServiceReadinessContributor<T>`）：
+  业务就绪否决，替换占位 contributor；两者同为 `Order 100`，因此 PostgreSQL 路径只注册业务者，
+  以免 `HealthStartupValidator` 因重复 order 拒绝启动。
+
+字段来源固定：`phase` 只来自本次读取到的非 null 安装行，经
+`ServiceStartupPhaseResolver.Resolve(true, state)` 解析，绝不使用 gate 结果里的启动阶段；
+`migrationStatus` 恒为 `succeeded`（依据是 gate 已 Ready，宿主只在此后接收请求）；
+`databaseStatus` 只在本次读取成功时为 `reachable`，本来源绝不产出 `unreachable` 快照；
+`errorCode` 为 null。
+
+完整的结果矩阵（入口 × 外部输入 × 事件 → 唯一结果）以
+[#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 的「语义模型」一节为权威，
+本节不复制第二套规则。其要点：`/health/live` 恒 200 且不读数据库；安装行 `PendingSetup` →
+503 `phase: pendingSetup`；`Completed` 且至少一个 workspace → 200 `ready`；`Completed` 且
+workspace 为空 → 503 `reference.workspace_missing`；workspace 不可读 →
+503 `reference.workspace_probe_failed`；gate 未 Ready、安装行缺失/无效、数据库拒绝连接或读取
+失败 → 503 `health.probe_failed` 且 `phase` 为 null（绝不回落为 `pendingSetup`）；读取超出探测
+预算 → 503 `health.probe_timeout`；调用方取消 → 以请求 token 的 `OperationCanceledException`
+结束，不写出响应。
+
+本接线**不**保证：请求时刻之后的状态新鲜度，或跨实例的原子阶段转换与一致观察（
+[#173](https://github.com/philfanzhou/ServiceMantle/issues/173)）；`migrationStatus` 在宿主生命
+周期内恒为 `succeeded`，启动后由其他实例或外部 DDL 推进的 schema 变化只有当安装行读取因此失败
+时才表现为 `health.probe_failed`；不区分「数据库不可达」与「安装行缺失/无效」——两者都是无快照的
+`health.probe_failed`，不产出 `databaseStatus: unreachable`；不强制中断不合作的 provider，探测
+预算（库默认 5 秒）与 Npgsql 连接超时的协调不在保证内，超出预算即 `health.probe_timeout`。健康
+响应只含 `status`、`phase`、`migrationStatus`、`databaseStatus`、`errorCode` 五个有限字段，不含
+连接串、密码、用户名或 provider 文本。调用方责任：探针把 503 视为 not ready；运行时账户对
+`service_installations` 与 `reference_workspaces` 具有 SELECT 权限；部署侧决定探测频率与负载
+均衡摘除策略。真库验收见
+[`ReferencePostgreSqlHealthTests`](../../tests/ServiceMantle.ReferenceService.Tests/) 与无需数据库的
+[`ReferencePostgreSqlHealthSnapshotSourceTests`](../../tests/ServiceMantle.ReferenceService.Tests/)。
 
 ## PostgreSQL 单事务初始化 executor
 
