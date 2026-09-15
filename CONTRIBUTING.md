@@ -102,5 +102,8 @@ namespace 回答「这个类型是什么」，不回答「哪个包发的」。�
 `.csproj` 的 `PackageReference` 和组合根的一行 `Add*()`。`eng/tests/consumers` 下的消费项目
 以编译失败的方式守住这条。
 
+替换 provider 特有传输或凭据的扩展点（[ADR 0007](docs/decisions/0007-provider-neutral-contract-boundary.md)
+的 B 类 SPI，例如 Consul 传输）属于 provider 特有代码，不在该断言范围内。
+
 判据全文、三层改动模型与现有类型的分类清单见
 [ADR 0007](docs/decisions/0007-provider-neutral-contract-boundary.md)。

@@ -1,7 +1,8 @@
 # ADR 0007：provider 中立性判据与契约归属边界
 
-- 日期：2026-09-12；状态：决策已固定，待本 PR 合并；实现由独立 task 交付
+- 日期：2026-09-12；状态：已接受；实现由独立 task 交付
 - 决策 issue：[#432](https://github.com/philfanzhou/ServiceMantle/issues/432)
+- 重新评估：[#481](https://github.com/philfanzhou/ServiceMantle/issues/481)
 - 代码基线：`7d1f98edc7b6a91db77bc4a8ca38312e3c02dfef`
 - 本决策补充 `CONTRIBUTING.md` 的「命名规范」，不改变既有的包边界规则。
 
@@ -71,16 +72,12 @@ namespace 拼写：协议名让 `OtlpOptions` / `OtlpProtocol` 这类**配置契
 | `ServiceMantle.OpenTelemetry.Otlp.IOtlpAuthenticationHeaderResolver` / `OtlpAuthenticationHeader` | **必须实现**才能用带认证的 OTLP 导出 | `ServiceMantle.Diagnostics` |
 | `ServiceMantle.Serilog.GrafanaLoki.ILokiAuthorizationHeaderResolver` | **必须实现**才能用带认证的远程 sink | `ServiceMantle.Logging` |
 | `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiDiagnostics` | resolve 后读投递失败计数 | `ServiceMantle.Logging` |
-| `ServiceMantle.Consul.IConsulClient` / `IConsulClientFactory` | 替换传输时实现 | `ServiceMantle.Discovery`（由 #481 交付，受 B 类参数类型钉住） |
 | `ServiceMantle.Consul.ConsulLifecycleOptions` | 调整超时与退避 | `ServiceMantle.Discovery.ServiceRegistrationLifecycleOptions`（已由 #435 交付） |
 
-#435 的开工盘点发现 `IConsulClient` / `IConsulClientFactory` 的签名被 B 类的
-`ConsulServiceRegistration` 与 `ConsulClientConfiguration` 钉住：原样迁入核心包编译不过，且任何
-实现方仍须在自己源码里点名这两个 B 类类型，「迁移后无需 provider `using` 即可实现自定义
-registrar」的断言不成立。按范围纪律收窄：本 ADR 表中这两个接口的迁移改由 #481 在固定设计（泛型
-参数化、撤回暂缓或降级为「待第二个 provider 重评」三选一）之后交付；只有六个纯 `TimeSpan` 的
-生命周期时间属性是真正中立的，已随 #435 以 `ServiceRegistrationLifecycleOptions` 落地，校验仍由
-Consul 注册入口负责。
+`IConsulClient` / `IConsulClientFactory` 曾列于本表；#481 的重新评估按判据把它们改判为 B 类的
+注册传输 SPI，不迁移类型，详见「重新评估：注册传输 SPI（#481）」一节。六个纯 `TimeSpan` 的
+生命周期时间属性是真正中立的，已随 #435 以 `ServiceRegistrationLifecycleOptions` 落地，校验
+仍由 Consul 注册入口负责。
 
 `ServiceMetrics` 只使用 `System.Diagnostics.Metrics.Meter`；该程序集位于
 `Microsoft.NETCore.App.Ref/10.0.11/ref/net10.0`，属共享框架，移入核心包
@@ -99,6 +96,7 @@ Consul 注册入口负责。
 | --- | --- |
 | `ConsulClientConfiguration` | `Endpoint` + `GetToken()` 即 Consul agent HTTP API 与 ACL token |
 | `ConsulServiceRegistration` | `Id = service:instance` + `HealthUri` 即 agent check 模型 |
+| `IConsulClient` / `IConsulClientFactory` / `ConsulClientResult` | 注册传输 SPI：签名直接收发 `ConsulServiceRegistration` 与 `ConsulClientConfiguration`，用于替换 Consul 传输 |
 | `SerilogOptions.OutputTemplate` | Serilog 模板语法 |
 | `GrafanaLokiOptions` / `OtlpOptions` / `PrometheusOptions` | `CONTRIBUTING.md` §2 已认定模块词是调用方唯一区分，保留 |
 | `WellKnownGrafanaLokiErrorCodes` 及 `loki.*` 取值 | 诊断码是外部契约，`CONTRIBUTING.md` §6 |
@@ -122,6 +120,45 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 成立，而那时它已是公开 API。重新评估的触发条件是**第二个 registry provider 进入实现**，届时用
 两个真实实现的公约数来定这个模型，而不是现在猜。
 
+### 重新评估：注册传输 SPI（#481）
+
+本 ADR 初版把 `ServiceMantle.Consul.IConsulClient` / `IConsulClientFactory` 列入 A 类，计划
+迁入 `ServiceMantle.Discovery`。#481（2026-09-15）重评后改判 B 类，暂缓中立 registrar，
+不迁移任何类型。
+
+**判据推导。** A 类的判定条件是「消费方必须点名，且契约中没有任何 provider 特有成分」。
+`IConsulClient.RegisterAsync(ConsulServiceRegistration, …)` 与
+`IConsulClientFactory.Create(ConsulClientConfiguration)` 的契约直接收发 B 类的 agent check
+模型和 ACL token 配置，属于 provider 特有的传输 SPI。`ConsulClientResult` 只作为这个 SPI 的
+返回值被点名；单独迁移它，一个 provider `using` 也减少不了，只会平添一次破坏性变更。
+
+**最小编译实验**（基线 main `f7988c8`，在隔离的 scratch 目录进行，只产生结论、不留在仓库）：
+两个 `Microsoft.NET.Sdk.Web` / `net10.0` 类库以 `ProjectReference` 引用 `src/ServiceMantle.Consul`，
+各自写空的 `Directory.Build.props` 与 `Directory.Packages.props`。
+
+- 变体 a（现状）：消费方只写 `using ServiceMantle.Discovery;`，实现
+  `sealed class MyFactory : IConsulClientFactory { public IConsulClient Create(ConsulClientConfiguration c) => throw null!; }`。
+  结果：`CS0246` × 3（`IConsulClientFactory`、`IConsulClient`、`ConsulClientConfiguration`）。
+- 变体 b（泛型参数化）：在 `ServiceMantle.Discovery.Proto` 声明 `ServiceRegistrationResult`、
+  `IServiceRegistrar<in TRegistration>`（`RegisterAsync(TRegistration, CancellationToken)` /
+  `DeregisterAsync(string, CancellationToken)`）、
+  `IServiceRegistrarFactory<in TConfiguration, in TRegistration>`。消费方只写
+  `using ServiceMantle.Discovery.Proto;`，实现
+  `IServiceRegistrarFactory<ConsulClientConfiguration, ConsulServiceRegistration>`。
+  结果：中立声明编译通过；实现处 `CS0246` × 4（`ConsulClientConfiguration`、
+  `ConsulServiceRegistration` 各两处）。
+
+**不选泛型参数化。** 中立的泛型接口本身能编译，但实现方仍须点名 `ConsulClientConfiguration`
+和 `ConsulServiceRegistration`；「源码无需 provider `using`」这条验收仍然做不到。
+
+**不撤回暂缓。** 真正满足该验收的唯一办法是从签名中去掉 B 类参数，也就是引入中立的
+registration 与凭据/寻址模型——这等于推翻上文「已考虑并暂缓：中立凭据与寻址模型」。该决策的
+重评触发条件是「第二个 registry provider 进入实现」，目前没有出现；「抽象上限」也写明，没有
+第二个实现验证的抽象就是猜。
+
+**重评触发条件与中立凭据模型相同：第二个 registry provider 进入实现。** 届时 registrar 接口、
+结果枚举、registration 与凭据/寻址模型一起设计。
+
 ## 生命周期状态机不在本次范围
 
 `ConsulRegistrationLifecycle`（等 readiness → 注册 → 指数退避重试 → 关停预算内注销）
@@ -134,6 +171,9 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 
 ## 抽象上限
 
+本 ADR 不引入 `IServiceRegistrar`：注册传输 SPI 已由 #481 归入 B 类（见「重新评估：注册
+传输 SPI（#481）」）。以下上限论述保留，作为未来重评时的约束。
+
 `IServiceRegistrar` 只保证「一次性注册 / 注销」这条最小公约数。K8s 根本不需要服务注册
 （平台代劳），Eureka 需要续租心跳，Nacos 有 namespace/group。心跳续租由 provider 在
 自己的 `IServiceRegistrar` 实现内部处理。**本次不预先设计
@@ -144,10 +184,10 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 - 保证：A 类类型迁移后，消费方源码中不再需要 provider 命名的 `using` 即可实现远程日志授权
   解析、实现远程遥测认证解析、以及发布安装阶段指标。已交付的
   `ServiceMantle.Discovery.ServiceRegistrationLifecycleOptions`（#435）同样不要求任何 provider
-  命名的 `using`。实现自定义 registrar 的路径受 B 类参数类型钉住，该部分保证在 #481 固定设计
-  之前不成立。
-- 不保证：不保证「换任意底层库零改动」。L2 的 `Add*()` 与 `PackageReference` 必须改。
-  不保证 B 类类型在换实现后语义等价。不保证 `IServiceRegistrar` 覆盖心跳续租、
+  命名的 `using`。
+- 不保证：实现自定义注册传输时无需 provider 命名的 `using`——替换 Consul 传输属于 B 类的
+  provider 特有代码。不保证「换任意底层库零改动」。L2 的 `Add*()` 与 `PackageReference`
+  必须改。不保证 B 类类型在换实现后语义等价。不保证中立 registrar 抽象覆盖心跳续租、
   namespace/group、或平台代劳注册的模型。
 - 调用方责任：在组合根声明选择；B 类类型的可移植性由调用方自行评估。
 
@@ -159,9 +199,8 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
    单独成 issue，不与类型迁移同 PR。
 3. `eng/tests/consumers` 目前有 aspnetcore / composed / opentelemetry / serilog，**没有
    consul**。AGENTS.md 要求消费项目覆盖本次改名涉及的每个包，须补齐。
-4. 判据须落成 CI 可挡的断言，而不只是文档里的一句话：新增一个消费项目，实现自定义
-   registrar + 远程日志授权解析 + 远程遥测认证解析 + 读安装阶段指标，断言其编译不需要
-   任何 provider 命名的 `using`。
+4. 判据须落成 CI 可挡的断言，而不只是文档里的一句话：新增一个消费项目，实现远程日志授权
+   解析 + 远程遥测认证解析 + 读安装阶段指标，断言其编译不需要任何 provider 命名的 `using`。
 5. 成本随消费方采用面扩大而上升。当前 #27 将可选 Consul 列为 P2；本 ADR 不改变排期，
    但把「越晚做越贵」这一点显式记录下来，由维护者决定是否提前。
 
@@ -175,10 +214,10 @@ Consul 的单个 ACL token、Nacos 的用户名/密码或 accessKey/secretKey �
 | [#434](https://github.com/philfanzhou/ServiceMantle/issues/434) | L02 | 远程日志投递中立契约迁入 `ServiceMantle.Logging` | #432 |
 | [#443](https://github.com/philfanzhou/ServiceMantle/issues/443) | L02 | OTLP 认证解析的中立契约迁入核心包 `ServiceMantle.Diagnostics` | #432 |
 | [#435](https://github.com/philfanzhou/ServiceMantle/issues/435) | L02 | 生命周期时间选项迁入核心包 `ServiceMantle.Discovery`（registrar/factory 移交 #481） | #432 |
-| [#481](https://github.com/philfanzhou/ServiceMantle/issues/481) | L02 | `IConsulClient`/`IConsulClientFactory` 中立化的受钉住部分：固定设计后迁移 | #432 |
+| [#481](https://github.com/philfanzhou/ServiceMantle/issues/481) | L02 | 注册传输 SPI 归入 B 类的 ADR 修订，不迁移类型 | #432 |
 | [#438](https://github.com/philfanzhou/ServiceMantle/issues/438) | L02 | `SerilogOptions` 级别与 scope 选项改用 MEL 词汇 | #432 |
 | [#436](https://github.com/philfanzhou/ServiceMantle/issues/436) | L02 | discovery 设置键中立化与迁移路径 | #432 |
-| [#437](https://github.com/philfanzhou/ServiceMantle/issues/437) | L03 | 中立性消费验证项目与 CI 断言（registrar 实现路径的断言覆盖取决于 #481 的结论） | #433 #434 #435 #436 #443 #481 |
+| [#437](https://github.com/philfanzhou/ServiceMantle/issues/437) | L03 | 中立性消费验证项目与 CI 断言（不含 registrar 实现路径） | #433 #434 #435 #436 #443 #481 |
 
 #436 与 #435 分开，是因为设置键是外部契约而非类型改名（`CONTRIBUTING.md` §6），需要自带
 迁移路径。#436 的开工盘点修正了上表最初的顺序假设：它只修改目录常量与设置加密 purpose，不引用
