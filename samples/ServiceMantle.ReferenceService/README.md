@@ -20,7 +20,7 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 | `ReferenceApplication` | 公开的组合接缝，一条骨架路由 | 由集成任务共享 |
 | `ReferenceDbContext` 与 `Data/Migrations` | 一张 workspace 表；迁移、保存与事务由调用方拥有 | #160 |
 | `Database/Sqlite/` | opt-in 的 SQLite 启动部署 gate 与消费方自有的迁移 executor | #112 / #113 |
-| `Database/PostgreSql/` | 消费方自有的 PostgreSQL 迁移 executor 与单事务初始化 executor（未接宿主） | #160 / #497 |
+| `Database/PostgreSql/` | 消费方自有的 PostgreSQL 迁移 executor、单事务初始化 executor 与 opt-in 启动部署 gate | #497 / #160 |
 | `ReferenceSetupContributor` | 只读校验与仅 staging 的示例；启动时绝不调用 | [#175](https://github.com/philfanzhou/ServiceMantle/issues/175) |
 | `ReferenceSettingDefinitions` | 只有默认值与约束；没有 store、HTTP 或激活 | #177 |
 | `ReferenceReadinessContributor` | 返回 `reference.health_not_integrated`；绝不声称就绪 | #156 |
@@ -80,6 +80,67 @@ staging 示例在每次显式调用 `RegisterAsync` 时创建一个新 workspace
 context。只有调用方能保存或提交这些 staged 变更；冒烟测试显式应用迁移并演示这一边界，包括
 staging 之前的回滚与取消。它们不调用完整的 setup 编排。
 
+<a id="explicit-postgresql-startup-deployment"></a>
+
+## 显式 PostgreSQL 启动部署
+
+```bash
+dotnet run --project samples/ServiceMantle.ReferenceService -- \
+  --ReferenceService:PostgreSqlStartup:Enabled true \
+  --ReferenceService:PostgreSqlStartup:ConnectionString \
+    'Host=127.0.0.1;Port=5432;Database=reference;Username=reference_runtime;Password=…' \
+  --ReferenceService:PostgreSqlStartup:PrepareIfMissing true \
+  --ReferenceService:PostgreSqlStartup:AdministrativeConnectionString \
+    'Host=127.0.0.1;Port=5432;Username=reference_admin;Password=…' \
+  --urls http://127.0.0.1:5080
+```
+
+`ReferenceService:PostgreSqlStartup:Enabled` 默认为 `false`；只有显式的 `true` 才会激活该
+gate。全部输入在 `Build` 之前读取并固定，不可用的输入在任何 provider、网络或 EF 调用之前
+失败，且失败信息只指出设置名，不回显读到的值。打开时：
+
+- `ReferenceService:PostgreSqlStartup:ConnectionString` 必填，是目标运行时连接。运行时
+  `DbContext`、迁移锁与迁移 executor 的检查连接都只用它；行政连接绝不进入这些组件。
+- `ReferenceService:PostgreSqlStartup:PrepareIfMissing` 默认为 `false`。只有显式的 `true`
+  才允许创建缺失的目标；无法解析的值会被拒绝。
+- `ReferenceService:PostgreSqlStartup:AdministrativeConnectionString` 只在
+  `PrepareIfMissing=true` 时必填，也只在那时被读取。行政连接只传给一次准备调用
+  （`CREATE DATABASE`，数据库 OWNER 为目标连接的账户），不持久化、不记录、不返回。
+
+该 gate 与 SQLite gate 互斥：两个 `Enabled` 同时为 `true` 时 `CreateBuilder` 在任何 gate
+注册或数据库副作用之前抛出，消息只含两个设置名。两个 gate 都未启用时，默认行为完全不变。
+固定预算：准备调用 10 秒，迁移锁获取 30 秒；迁移执行与启动总时长没有任何上界。
+
+gate 随后以固定顺序运行，每一步都失败关闭：
+
+1. 一次只读观察判定目标是否存在。缺失且未授权 → `TargetMissing`，数据库仍不存在；缺失且
+   已授权 → 一次准备调用创建空库，失败 → `PreparationFailed`。准备成功后不再重新观察，
+   空库与否则由锁内检查判定。
+2. 服务器不可达、目标存在但不可连接（含认证失败与权限拒绝），或观察抛出异常 →
+   `TargetUnavailable`。已存在但不可用的目标绝不创建、不迁移、不被接管。
+3. 迁移编排走 `PostgreSqlMigrationLockProvider` 的真实 session 级 advisory lock（没有部署
+   模式分支）。锁获取超时或失败 → `LockUnavailable`；锁内检查发现 `VersionTooNew` →
+   `VersionTooNew`；初始化或迁移失败、final state 无效、迁移作用域释放失败 →
+   `MigrationFailed`。执行器被调用之后租约丢失 → `LockUnavailable`
+   （`ExecutorWasCalled=true`），已提交的副作用保留。
+4. 编排成功后在同一迁移作用域内读取安装行：缺失 → `InstallationStateMissing`；行无效或
+   无法读取 → `InstallationStateInvalid`。两种情况都不创建、不修复、不接管，留给人工处置。
+   行有效 → `Ready`，并发布由该行解析出的启动阶段（`PendingSetup` 或 `Completed`）。
+
+结果只包含有限 `Outcome`、`ExecutorWasCalled` 与 Ready 时的启动阶段，不含连接串、密码、
+provider 消息或异常文本。只有 `Ready` 允许宿主完成启动——gate 在任何 hosted service 之前
+运行，因此不会有请求落在未迁移或未注册的数据库上；任何有限失败都会让 `StartAsync` 抛出固定
+消息并阻止宿主监听。调用方取消向上传播为调用方 token 的 `OperationCanceledException`，且
+不发布结果。
+
+本 gate **不**保证：不自动接管任意旧库（缺安装行或安装行无效一律关闭失败）；不回滚已提交的
+迁移或 `CREATE DATABASE`；不保证 gate 结果之后的状态新鲜度（实时健康归
+[#156](https://github.com/philfanzhou/ServiceMantle/issues/156)）；不签发 Setup Code（
+[#175](https://github.com/philfanzhou/ServiceMantle/issues/175)）；不做双实例最终 E2E（
+[#165](https://github.com/philfanzhou/ServiceMantle/issues/165)）；不保证行政连接端点的 TLS
+与网络信任。调用方责任：可信的 PostgreSQL 端点、最小权限的运行时账户、首次准备之后移除
+行政凭据、部署侧负责备份。
+
 ## PostgreSQL 单事务初始化 executor
 
 `Database/PostgreSql/` 下的 `ReferencePostgreSqlMigrationExecutor` 是 schema-only 的观察与
@@ -89,8 +150,9 @@ staging 之前的回滚与取消。它们不调用完整的 setup 编排。
 放进同一个 PostgreSQL 事务，只提交一次。commit 之前的任何失败、调用方取消或连接中断都
 不留下表、历史或安装行；commit 之后的取消以调用方 token 报告，但不代表回滚。观察到
 `PendingMigration` 的旧库只委托既有 schema executor 迁移，绝不补建安装行；没有合格观察就
-调用执行是固定失败的拒绝。该组件尚未接入宿主与 DI（归 #160），不签发 Setup Code，也不
-保存消费方业务数据；调用方负责用真实迁移锁串行化编排并为每次编排使用新的作用域。真库
+调用执行是固定失败的拒绝。该组件经上文的显式 PostgreSQL 启动部署 gate 接入宿主与 DI
+（[#160](https://github.com/philfanzhou/ServiceMantle/issues/160)），不签发 Setup Code，也不
+保存消费方业务数据；真实迁移锁的串行化由 gate 的编排完成，每次编排使用新的作用域。真库
 验收见
 [`ReferencePostgreSqlInstallationInitializationTests`](../../tests/ServiceMantle.ReferenceService.Tests/)。
 

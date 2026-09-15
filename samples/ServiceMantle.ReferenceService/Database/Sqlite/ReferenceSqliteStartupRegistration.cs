@@ -33,6 +33,20 @@ public static class ReferenceSqliteStartupRegistration
             return null;
         }
 
+        return services.AddReferenceSqliteStartup(options);
+    }
+
+    /// <summary>Adds the gate for already-read, fixed inputs.</summary>
+    /// <param name="services">The consuming service's container.</param>
+    /// <param name="options">The explicit inputs read before any registration.</param>
+    /// <returns>The inputs that were registered.</returns>
+    public static ReferenceSqliteStartupOptions AddReferenceSqliteStartup(
+        this IServiceCollection services,
+        ReferenceSqliteStartupOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+
         services.AddSingleton(options);
 
         // Registering the bootstrap provider does not by itself declare a preparation or a

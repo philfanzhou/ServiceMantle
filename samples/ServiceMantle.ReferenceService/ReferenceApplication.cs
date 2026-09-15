@@ -6,6 +6,7 @@ using ServiceMantle.Installation;
 using ServiceMantle.Management;
 using ServiceMantle.ReferenceService.Configuration;
 using ServiceMantle.ReferenceService.Data;
+using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.ReferenceService.Database.Sqlite;
 using ServiceMantle.ReferenceService.Health;
 using ServiceMantle.ReferenceService.Installation;
@@ -38,9 +39,27 @@ public static class ReferenceApplication
         // instrumentation. No exporter, no Prometheus endpoint, and no fixed phase metric is wired
         // here - those stay with the tasks that own them.
         mantle.AddReferenceTelemetry(builder.Configuration);
-        // Explicit and fixed before Build. When the switch is off nothing below changes, and an
-        // unusable input fails here - before a provider, a file, or EF is touched.
-        var sqliteStartup = builder.Services.AddReferenceSqliteStartup(builder.Configuration);
+        // Explicit and fixed before Build. When a switch is off nothing below changes, and an
+        // unusable input fails here - before a provider, a file, a network, or EF is touched. Both
+        // gates are read first so that enabling both is refused before any gate registration or
+        // database side effect, with a message naming only the two settings.
+        var sqliteOptions = ReferenceSqliteStartupOptions.Read(builder.Configuration);
+        var postgresqlOptions = ReferencePostgreSqlStartupOptions.Read(builder.Configuration);
+        if (sqliteOptions is not null && postgresqlOptions is not null)
+        {
+            throw new InvalidOperationException(
+                "The reference service refuses to run two startup deployment gates at once: '" +
+                ReferenceSqliteStartupOptions.EnabledKey + "' and '" +
+                ReferencePostgreSqlStartupOptions.EnabledKey + "' cannot both be true.");
+        }
+
+        var sqliteStartup = sqliteOptions is null
+            ? null
+            : builder.Services.AddReferenceSqliteStartup(sqliteOptions);
+        if (postgresqlOptions is not null)
+        {
+            builder.Services.AddReferencePostgreSqlStartup(postgresqlOptions);
+        }
         var databasePath = builder.Configuration["ReferenceService:DatabasePath"]
             ?? Path.Combine(builder.Environment.ContentRootPath, "reference.db");
         var connectionString = sqliteStartup?.TargetConnectionString

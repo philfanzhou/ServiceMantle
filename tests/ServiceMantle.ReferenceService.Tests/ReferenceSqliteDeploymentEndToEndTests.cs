@@ -293,9 +293,12 @@ public sealed class ReferenceSqliteDeploymentEndToEndTests
             "Microsoft.EntityFrameworkCore.Sqlite.dll",
             "Microsoft.Data.Sqlite.dll",
             // The sample also declares the PostgreSQL EF provider for its separate PostgreSQL
-            // context. No host path here uses it, and it brings no ServiceMantle provider package.
+            // context, and the opt-in PostgreSQL startup gate pulls the ServiceMantle PostgreSQL
+            // provider package. Both are static dependencies of the build output; neither is
+            // activated unless that gate is explicitly switched on.
             "Npgsql.EntityFrameworkCore.PostgreSQL.dll",
             "Npgsql.dll",
+            "ServiceMantle.Database.PostgreSql.dll",
         })
         {
             Assert.Contains(expected, files, StringComparer.Ordinal);
@@ -304,7 +307,6 @@ public sealed class ReferenceSqliteDeploymentEndToEndTests
         // No other database provider is on this path, so nothing here can be served by one.
         foreach (var forbidden in new[]
         {
-            "ServiceMantle.Database.PostgreSql",
             "ServiceMantle.Database.MySql",
             "ServiceMantle.Database.MariaDb",
             "ServiceMantle.Database.Oracle",
