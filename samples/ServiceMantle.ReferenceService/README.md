@@ -20,6 +20,7 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 | `ReferenceApplication` | 公开的组合接缝，一条骨架路由 | 由集成任务共享 |
 | `ReferenceDbContext` 与 `Data/Migrations` | 一张 workspace 表；迁移、保存与事务由调用方拥有 | #160 |
 | `Database/Sqlite/` | opt-in 的 SQLite 启动部署 gate 与消费方自有的迁移 executor | #112 / #113 |
+| `Database/PostgreSql/` | 消费方自有的 PostgreSQL 迁移 executor 与单事务初始化 executor（未接宿主） | #160 / #497 |
 | `ReferenceSetupContributor` | 只读校验与仅 staging 的示例；启动时绝不调用 | [#175](https://github.com/philfanzhou/ServiceMantle/issues/175) |
 | `ReferenceSettingDefinitions` | 只有默认值与约束；没有 store、HTTP 或激活 | #177 |
 | `ReferenceReadinessContributor` | 返回 `reference.health_not_integrated`；绝不声称就绪 | #156 |
@@ -78,6 +79,20 @@ staging 示例在每次显式调用 `RegisterAsync` 时创建一个新 workspace
 固定的演示显示名。它不是安装工作流，也不是幂等性契约。它要求单个调用方自有的 scoped
 context。只有调用方能保存或提交这些 staged 变更；冒烟测试显式应用迁移并演示这一边界，包括
 staging 之前的回滚与取消。它们不调用完整的 setup 编排。
+
+## PostgreSQL 单事务初始化 executor
+
+`Database/PostgreSql/` 下的 `ReferencePostgreSqlMigrationExecutor` 是 schema-only 的观察与
+迁移边界；`ReferencePostgreSqlInstallationInitializationExecutor` 在其上组合出新库初始化：
+当它在本次编排作用域内观察到 `Empty` 时，把本构建全部已知迁移的脚本（以
+`NoTransactions` 生成，包括 `__EFMigrationsHistory` 的写入）与初始 `PendingSetup` 安装行
+放进同一个 PostgreSQL 事务，只提交一次。commit 之前的任何失败、调用方取消或连接中断都
+不留下表、历史或安装行；commit 之后的取消以调用方 token 报告，但不代表回滚。观察到
+`PendingMigration` 的旧库只委托既有 schema executor 迁移，绝不补建安装行；没有合格观察就
+调用执行是固定失败的拒绝。该组件尚未接入宿主与 DI（归 #160），不签发 Setup Code，也不
+保存消费方业务数据；调用方负责用真实迁移锁串行化编排并为每次编排使用新的作用域。真库
+验收见
+[`ReferencePostgreSqlInstallationInitializationTests`](../../tests/ServiceMantle.ReferenceService.Tests/)。
 
 身份占位符不会为不可用的外部系统编造未认证成功的故事，不发出凭据、不联系网络服务、也不创建
 本地管理员。本样例中不存在本地管理员实体或预配路径。
