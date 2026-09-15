@@ -241,6 +241,35 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/consul-registration
 
+      # The source half of the provider-neutral assertion: the fixture itself must stay free of
+      # provider-named namespaces in every form - using directives, aliases, fully qualified
+      # names, and comments - and must rely on the Web SDK implicit usings rather than <Using>
+      # items, so the compile-time assertion cannot be quietly widened afterwards.
+      - name: Enforce provider-neutral consumer source boundary
+        run: |
+          set -euo pipefail
+          if grep -rnE 'ServiceMantle\.(Consul|Serilog|OpenTelemetry)' \
+            eng/tests/consumers/provider-neutral --include='*.cs'; then
+            echo "Provider-named namespaces must not appear in the provider-neutral consumer sources." >&2
+            exit 1
+          fi
+          if grep -rn '<Using' eng/tests/consumers/provider-neutral --include='*.csproj'; then
+            echo "The provider-neutral consumer must use the Web SDK implicit usings, not <Using> items." >&2
+            exit 1
+          fi
+
+      # The compile half of the provider-neutral assertion: one compilation unit referencing all
+      # three optional provider packages at once, naming every category-A-migrated contract
+      # through neutral namespaces only. A category-A type that regresses into a provider
+      # namespace, or that collides with a framework type in scope, fails here instead of in a
+      # consumer's build.
+      - name: Verify provider-neutral package consumption
+        run: >-
+          eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/provider-neutral
+
       - name: Upload packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
