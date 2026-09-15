@@ -18,23 +18,26 @@
 | 顺序 | 子系统 | 候选 ID | 唯一替换/集成门 | 跟踪 issue |
 |---:|---|---|---|---|
 | 1 | Migration | `migration-orchestration`、`installation-state-persistence` | #70、#71 | #128 |
-| 2 | Bootstrap | `bootstrap-file-lifecycle`、`bootstrap-management-mode`、`bootstrap-startup-branch` | `BootstrapFileStore`、#95、#116 | #129 |
-| 3 | Setup | `setup-lifecycle`、`setup-mode-gate` | #100、#116 | #130 |
-| 4 | Configuration | `configuration-catalog`、`configuration-snapshot-storage`、`configuration-management-api`、`legacy-configuration-upgrade` | #101 | #131 |
-| 5 | Audit | `management-audit-storage`、`management-audit-query-api` | `EfCoreManagementAuditWriter`、#98 | #132 |
-| 6 | Session | `admin-data-protection-key-store`、`admin-cookie-session` | #102 | #133 |
+| 2 | Session | `admin-data-protection-key-store`、`admin-cookie-session` | #102 | #133 |
+| 3 | Bootstrap | `bootstrap-file-lifecycle`、`bootstrap-management-mode`、`bootstrap-startup-branch` | `BootstrapFileStore`、#95、#116 | #129 |
+| 4 | Setup | `setup-lifecycle`、`setup-mode-gate` | #100、#116 | #130 |
+| 5 | Configuration | `configuration-catalog`、`configuration-snapshot-storage`、`configuration-management-api`、`legacy-configuration-upgrade` | #101 | #131 |
+| 6 | Audit | `management-audit-storage`、`management-audit-query-api` | `EfCoreManagementAuditWriter`、#98 | #132 |
 | 7 | Health | `phase-health-endpoints`、`signing-key-readiness` | #103 | #134 |
 | 8 | Consul | `consul-registration-lifecycle` | #104 | #135 |
 
-这八行按子系统对历史盘点进行分组；它们不是八个等量的工作单元。全部八个跟踪 issue 都是 [#106](https://github.com/philfanzhou/ServiceMantle/issues/106) 的原生子 issue，但其中三个——[#129](https://github.com/philfanzhou/ServiceMantle/issues/129)、[#131](https://github.com/philfanzhou/ServiceMantle/issues/131) 和 [#135](https://github.com/philfanzhou/ServiceMantle/issues/135)——是 Workstream，而不是任何人都可以领取的 issue。实现发生在它们最深层的任务中：
+2026-09-14 的开工审计确认 [#168](https://github.com/philfanzhou/ServiceMantle/issues/168)（共享 Bootstrap 更新条目强制管理 cookie 会话策略）真实依赖 [#133](https://github.com/philfanzhou/ServiceMantle/issues/133) 的会话切换，而按原顺序 #133 又被 Bootstrap 批次经“每批被前一批阻塞”阻塞，清理主线成环；维护者当日决定把 Session 批次提前到 Migration 之后（顺序 2）破环，GitHub 原生依赖关系已同步调整。
+
+这八行按子系统对历史盘点进行分组；它们不是八个等量的工作单元。全部八个跟踪 issue 都是 [#106](https://github.com/philfanzhou/ServiceMantle/issues/106) 的原生子 issue，但其中四个——[#129](https://github.com/philfanzhou/ServiceMantle/issues/129)、[#131](https://github.com/philfanzhou/ServiceMantle/issues/131)、[#133](https://github.com/philfanzhou/ServiceMantle/issues/133) 和 [#135](https://github.com/philfanzhou/ServiceMantle/issues/135)——是 Workstream，而不是任何人都可以领取的 issue。实现发生在它们最深层的任务中：
 
 | Workstream | 可领取的最深层任务 |
 | --- | --- |
 | [#129](https://github.com/philfanzhou/ServiceMantle/issues/129)（Bootstrap） | [#163](https://github.com/philfanzhou/ServiceMantle/issues/163)、[#168](https://github.com/philfanzhou/ServiceMantle/issues/168)、[#162](https://github.com/philfanzhou/ServiceMantle/issues/162) |
 | [#131](https://github.com/philfanzhou/ServiceMantle/issues/131)（Configuration） | [#143](https://github.com/philfanzhou/ServiceMantle/issues/143)、[#144](https://github.com/philfanzhou/ServiceMantle/issues/144)、[#145](https://github.com/philfanzhou/ServiceMantle/issues/145)、[#146](https://github.com/philfanzhou/ServiceMantle/issues/146) |
+| [#133](https://github.com/philfanzhou/ServiceMantle/issues/133)（Session） | [#490](https://github.com/philfanzhou/ServiceMantle/issues/490)、[#491](https://github.com/philfanzhou/ServiceMantle/issues/491) |
 | [#135](https://github.com/philfanzhou/ServiceMantle/issues/135)（Consul） | [#147](https://github.com/philfanzhou/ServiceMantle/issues/147)、[#148](https://github.com/philfanzhou/ServiceMantle/issues/148) |
 
-其余五行——[#128](https://github.com/philfanzhou/ServiceMantle/issues/128)、[#130](https://github.com/philfanzhou/ServiceMantle/issues/130)、[#132](https://github.com/philfanzhou/ServiceMantle/issues/132)、[#133](https://github.com/philfanzhou/ServiceMantle/issues/133) 和 [#134](https://github.com/philfanzhou/ServiceMantle/issues/134)——是可直接实现的任务。
+其余四行——[#128](https://github.com/philfanzhou/ServiceMantle/issues/128)、[#130](https://github.com/philfanzhou/ServiceMantle/issues/130)、[#132](https://github.com/philfanzhou/ServiceMantle/issues/132) 和 [#134](https://github.com/philfanzhou/ServiceMantle/issues/134)——是可直接实现的任务。
 
 GitHub 原生的 `Sub-issues` 和 `Blocked by` 关系是执行依赖的事实来源；本文的表格不是。这些关系把能力前置条件与前一个删除批次混在一起，并且每个 Workstream 的 `Blocked by` 集合恰好是它自己的子 issue，因此 Workstream 在依赖图中是透明的，而不是独立的一步。
 
