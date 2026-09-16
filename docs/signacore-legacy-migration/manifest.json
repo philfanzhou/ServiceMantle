@@ -123,7 +123,12 @@
         "src/SignaCore.Host/Middleware/BootstrapModeGateMiddleware.cs",
         "src/SignaCore.Host/Startup/BootstrapModeHost.cs"
       ],
-      "legacySymbols": [],
+      "legacySymbols": [
+        "SignaCore.Host.Program: Bootstrap Configuration Mode branch",
+        "SignaCore.Host.Startup.StartupBanner.WriteBootstrapCode",
+        "SignaCore.Host.Startup.StartupBanner.WriteBootstrapModeNotice",
+        "SignaCore.Host.Program: StartupBanner.WriteRestartInstruction call on the bootstrap path"
+      ],
       "callSites": [
         "src/SignaCore.Admin/src/composables/useBootstrap.ts",
         "src/SignaCore.Admin/src/components/admin/AdminBootstrapSettingsPanel.vue"
@@ -146,10 +151,10 @@
         }
       ],
       "replacement": {
-        "reference": "#95",
+        "reference": "#506",
         "state": "planned"
       },
-      "prerequisites": ["#95", "#133"],
+      "prerequisites": ["#95", "#133", "#502", "#503", "#504", "#505"],
       "coverageGaps": [],
       "disposition": "blocked",
       "batch": "bootstrap"
@@ -158,11 +163,9 @@
       "id": "bootstrap-startup-branch",
       "subsystem": "Bootstrap",
       "legacyPaths": [
-        "src/SignaCore.Host/Startup/BootstrapPhase.cs",
-        "src/SignaCore.Host/Startup/StartupBanner.cs"
+        "src/SignaCore.Host/Startup/BootstrapPhase.cs"
       ],
       "legacySymbols": [
-        "SignaCore.Host.Program: Bootstrap Configuration Mode branch",
         "SignaCore.Host.Program: Bootstrap phase branch"
       ],
       "callSites": ["src/SignaCore.Host/Program.cs"],
@@ -182,7 +185,7 @@
         "reference": "#116",
         "state": "planned"
       },
-      "prerequisites": ["#71", "#95", "#116"],
+      "prerequisites": ["#71", "#95", "#116", "#505"],
       "coverageGaps": [],
       "disposition": "blocked",
       "batch": "bootstrap"
@@ -321,9 +324,14 @@
       "legacyPaths": [
         "src/SignaCore.Host/Middleware/SetupModeGateMiddleware.cs",
         "src/SignaCore.Host/Startup/SetupModeControllerConvention.cs",
-        "src/SignaCore.Host/Startup/SetupModeHost.cs"
+        "src/SignaCore.Host/Startup/SetupModeHost.cs",
+        "src/SignaCore.Host/Startup/StartupBanner.cs"
       ],
-      "legacySymbols": ["SignaCore.Host.Program: Setup Mode branch"],
+      "legacySymbols": [
+        "SignaCore.Host.Program: Setup Mode branch",
+        "SignaCore.Host.Startup.StartupBanner.WriteSetupCode",
+        "SignaCore.Host.Startup.StartupBanner.WriteSetupModeNotice"
+      ],
       "callSites": ["src/SignaCore.Host/Program.cs"],
       "evidence": [
         {
@@ -1125,7 +1133,7 @@
       "id": "bootstrap",
       "subsystem": "Bootstrap",
       "candidateIds": ["bootstrap-file-lifecycle", "bootstrap-management-mode", "bootstrap-startup-branch"],
-      "prerequisites": ["#70", "#71", "#95", "#105", "#116", "#128", "#133"],
+      "prerequisites": ["#70", "#71", "#95", "#105", "#116", "#128", "#133", "#502", "#503", "#504", "#505"],
       "trackingIssue": 129,
       "proposedTitle": "[SignaCore 清理][Bootstrap] 切换本地引导与管理模式并删除重复实现"
     },

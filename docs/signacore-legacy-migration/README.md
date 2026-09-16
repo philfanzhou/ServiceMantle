@@ -19,7 +19,7 @@
 |---:|---|---|---|---|
 | 1 | Migration | `migration-orchestration`、`installation-state-persistence` | #70、#71 | #128 |
 | 2 | Session | `admin-data-protection-key-store`、`admin-cookie-session` | #102 | #133 |
-| 3 | Bootstrap | `bootstrap-file-lifecycle`、`bootstrap-management-mode`、`bootstrap-startup-branch` | `BootstrapFileStore`、#95、#116 | #129 |
+| 3 | Bootstrap | `bootstrap-file-lifecycle`、`bootstrap-management-mode`、`bootstrap-startup-branch` | `BootstrapFileStore`、#506、#116 | #129 |
 | 4 | Setup | `setup-lifecycle`、`setup-mode-gate` | #100、#116 | #130 |
 | 5 | Configuration | `configuration-catalog`、`configuration-snapshot-storage`、`configuration-management-api`、`legacy-configuration-upgrade` | #101 | #131 |
 | 6 | Audit | `management-audit-storage`、`management-audit-query-api` | `EfCoreManagementAuditWriter`、#98 | #132 |
@@ -28,11 +28,13 @@
 
 2026-09-14 的开工审计确认 [#168](https://github.com/philfanzhou/ServiceMantle/issues/168)（共享 Bootstrap 更新条目强制管理 cookie 会话策略）真实依赖 [#133](https://github.com/philfanzhou/ServiceMantle/issues/133) 的会话切换，而按原顺序 #133 又被 Bootstrap 批次经“每批被前一批阻塞”阻塞，清理主线成环；维护者当日决定把 Session 批次提前到 Migration 之后（顺序 2）破环，GitHub 原生依赖关系已同步调整。
 
+2026-09-16 的开工审计（[#505](https://github.com/philfanzhou/ServiceMantle/issues/505)）重切了 Bootstrap 批次内部的删除归属。SignaCore `Program.cs` 的 Bootstrap Configuration Mode 分支，其全部内容是 `BootstrapCodeAuthority`、`BootstrapModeHost` 与 `StartupBanner` 的 bootstrap 侧输出（`WriteBootstrapCode`、`WriteBootstrapModeNotice`，以及 bootstrap 路径上对 `WriteRestartInstruction` 的调用），而承载这些类型正是 `bootstrap-management-mode` 候选的范围。维护者当日决定：该分支与 bootstrap code 输出的归属从 #162 移交 #168 的子 task [#506](https://github.com/philfanzhou/ServiceMantle/issues/506)；[#162](https://github.com/philfanzhou/ServiceMantle/issues/162) 只保留预宿主阶段计算（`BootstrapPhase` 与 phase 分支）。`StartupBanner` 的 setup 侧成员（`WriteSetupCode`、`WriteSetupModeNotice`）与其文件本体移入 Setup 批次的 `setup-mode-gate` 候选（#130）：该文件要等 bootstrap 与 setup 两侧的成员都被删除之后才消失，按批次顺序它落在 Setup 批次。方法级拆分按决策规则 4 显式记录符号，不从文件名推断。重切只重新分配了既有的路径与符号并补写显式符号，删除范围整体不变；#168 已拆为 Workstream，其可领取实现是 #506 与 #507。
+
 这八行按子系统对历史盘点进行分组；它们不是八个等量的工作单元。全部八个跟踪 issue 都是 [#106](https://github.com/philfanzhou/ServiceMantle/issues/106) 的原生子 issue，但其中四个——[#129](https://github.com/philfanzhou/ServiceMantle/issues/129)、[#131](https://github.com/philfanzhou/ServiceMantle/issues/131)、[#133](https://github.com/philfanzhou/ServiceMantle/issues/133) 和 [#135](https://github.com/philfanzhou/ServiceMantle/issues/135)——是 Workstream，而不是任何人都可以领取的 issue。实现发生在它们最深层的任务中：
 
 | Workstream | 可领取的最深层任务 |
 | --- | --- |
-| [#129](https://github.com/philfanzhou/ServiceMantle/issues/129)（Bootstrap） | [#163](https://github.com/philfanzhou/ServiceMantle/issues/163)、[#168](https://github.com/philfanzhou/ServiceMantle/issues/168)、[#162](https://github.com/philfanzhou/ServiceMantle/issues/162) |
+| [#129](https://github.com/philfanzhou/ServiceMantle/issues/129)（Bootstrap） | [#163](https://github.com/philfanzhou/ServiceMantle/issues/163)、[#162](https://github.com/philfanzhou/ServiceMantle/issues/162)、[#506](https://github.com/philfanzhou/ServiceMantle/issues/506)、[#507](https://github.com/philfanzhou/ServiceMantle/issues/507) |
 | [#131](https://github.com/philfanzhou/ServiceMantle/issues/131)（Configuration） | [#143](https://github.com/philfanzhou/ServiceMantle/issues/143)、[#144](https://github.com/philfanzhou/ServiceMantle/issues/144)、[#145](https://github.com/philfanzhou/ServiceMantle/issues/145)、[#146](https://github.com/philfanzhou/ServiceMantle/issues/146) |
 | [#133](https://github.com/philfanzhou/ServiceMantle/issues/133)（Session） | [#490](https://github.com/philfanzhou/ServiceMantle/issues/490)、[#491](https://github.com/philfanzhou/ServiceMantle/issues/491) |
 | [#135](https://github.com/philfanzhou/ServiceMantle/issues/135)（Consul） | [#147](https://github.com/philfanzhou/ServiceMantle/issues/147)、[#148](https://github.com/philfanzhou/ServiceMantle/issues/148) |

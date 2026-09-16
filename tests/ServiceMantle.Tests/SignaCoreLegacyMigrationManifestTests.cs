@@ -320,6 +320,98 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         Assert.Equal("blocked", legacyUpgrade.Disposition);
     }
 
+    /// <summary>
+    /// Fixes the intent of the 2026-09-16 Bootstrap ownership re-slice (#505): the paths and
+    /// symbols listed before it are only re-distributed, never dropped, and the single permitted
+    /// addition is the five explicitly written StartupBanner member symbols that decision rule 4
+    /// requires for the method-level split.
+    /// </summary>
+    [Fact]
+    public void BootstrapReSliceRedistributesTheDeletionScopeAndOnlyAddsExplicitBannerSymbols()
+    {
+        var manifest = LoadManifest();
+        string[] reSliceScopeIds =
+        [
+            "bootstrap-file-lifecycle",
+            "bootstrap-management-mode",
+            "bootstrap-startup-branch",
+            "setup-lifecycle",
+            "setup-mode-gate",
+        ];
+        var current = manifest.Candidates
+            .Where(candidate => reSliceScopeIds.Contains(candidate.Id))
+            .SelectMany(candidate => candidate.LegacyPaths.Concat(candidate.LegacySymbols))
+            .ToArray();
+
+        // The union recorded immediately before the re-slice, when the StartupBanner members were
+        // still only implicitly covered by the whole-file path inside bootstrap-startup-branch.
+        string[] beforeReSlice =
+        [
+            "src/SignaCore.Host/Bootstrap/BootstrapConfiguration.cs",
+            "src/SignaCore.Host/Bootstrap/BootstrapFile.cs",
+            "src/SignaCore.Host/Bootstrap/BootstrapFileWriter.cs",
+            "src/SignaCore.Host/Bootstrap/BootstrapLoader.cs",
+            "src/SignaCore.Host/Bootstrap/BootstrapDiagnostics.cs",
+            "src/SignaCore.Host/Bootstrap/MasterKeyFactory.cs",
+            "src/SignaCore.Host/Bootstrap/BootstrapCodeAuthority.cs",
+            "src/SignaCore.Host/Bootstrap/BootstrapDatabaseRequestBinder.cs",
+            "src/SignaCore.Host/Bootstrap/BootstrapProviderCatalog.cs",
+            "src/SignaCore.Host/Bootstrap/BootstrapResponseMapper.cs",
+            "src/SignaCore.Host/Bootstrap/BootstrapTargetInspector.cs",
+            "src/SignaCore.Host/Controllers/BootstrapController.cs",
+            "src/SignaCore.Host/Controllers/AdminBootstrapController.cs",
+            "src/SignaCore.Host/Models/BootstrapModels.cs",
+            "src/SignaCore.Host/Middleware/BootstrapModeGateMiddleware.cs",
+            "src/SignaCore.Host/Startup/BootstrapModeHost.cs",
+            "src/SignaCore.Host/Startup/BootstrapPhase.cs",
+            "src/SignaCore.Host/Startup/StartupBanner.cs",
+            "src/SignaCore.Host/Installation/InstallationPhase.cs",
+            "src/SignaCore.Host/Installation/InstallationRuntimeState.cs",
+            "src/SignaCore.Host/Installation/InstallationSetupService.cs",
+            "src/SignaCore.Host/Installation/InstallationStateLock.cs",
+            "src/SignaCore.Host/Installation/InstallationStateResolver.cs",
+            "src/SignaCore.Host/Installation/SetupCode.cs",
+            "src/SignaCore.Host/Controllers/SetupController.cs",
+            "src/SignaCore.Host/Models/SetupModels.cs",
+            "src/SignaCore.Host/Middleware/SetupModeGateMiddleware.cs",
+            "src/SignaCore.Host/Startup/SetupModeControllerConvention.cs",
+            "src/SignaCore.Host/Startup/SetupModeHost.cs",
+            "SignaCore.Host.Program: Bootstrap Configuration Mode branch",
+            "SignaCore.Host.Program: Bootstrap phase branch",
+            "SignaCore.Host.Program: Setup Mode branch",
+        ];
+        string[] explicitlyAddedByReSlice =
+        [
+            "SignaCore.Host.Startup.StartupBanner.WriteBootstrapCode",
+            "SignaCore.Host.Startup.StartupBanner.WriteBootstrapModeNotice",
+            "SignaCore.Host.Program: StartupBanner.WriteRestartInstruction call on the bootstrap path",
+            "SignaCore.Host.Startup.StartupBanner.WriteSetupCode",
+            "SignaCore.Host.Startup.StartupBanner.WriteSetupModeNotice",
+        ];
+
+        // Nothing left the deletion scope, and nothing appeared beyond the explicit member split.
+        Assert.All(beforeReSlice, item => Assert.Contains(item, current));
+        Assert.Equal(
+            beforeReSlice.Concat(explicitlyAddedByReSlice).Order(StringComparer.Ordinal).ToArray(),
+            current.Order(StringComparer.Ordinal).ToArray());
+
+        // The re-sliced ownership matches the 2026-09-16 decision recorded in #505.
+        var managementMode = Assert.Single(manifest.Candidates, candidate => candidate.Id == "bootstrap-management-mode");
+        Assert.Equal(
+            new[] { "SignaCore.Host.Program: Bootstrap Configuration Mode branch" }
+                .Concat(explicitlyAddedByReSlice[..3]).Order(StringComparer.Ordinal).ToArray(),
+            managementMode.LegacySymbols.Order(StringComparer.Ordinal).ToArray());
+        var startupBranch = Assert.Single(manifest.Candidates, candidate => candidate.Id == "bootstrap-startup-branch");
+        Assert.Equal(["src/SignaCore.Host/Startup/BootstrapPhase.cs"], startupBranch.LegacyPaths);
+        Assert.Equal(["SignaCore.Host.Program: Bootstrap phase branch"], startupBranch.LegacySymbols);
+        var setupGate = Assert.Single(manifest.Candidates, candidate => candidate.Id == "setup-mode-gate");
+        Assert.Contains("src/SignaCore.Host/Startup/StartupBanner.cs", setupGate.LegacyPaths);
+        Assert.Equal(
+            new[] { "SignaCore.Host.Program: Setup Mode branch" }
+                .Concat(explicitlyAddedByReSlice[3..]).Order(StringComparer.Ordinal).ToArray(),
+            setupGate.LegacySymbols.Order(StringComparer.Ordinal).ToArray());
+    }
+
     [Fact]
     public void SnapshotEntitySetsPartitionEveryProviderSymbolExactlyOnce()
     {
