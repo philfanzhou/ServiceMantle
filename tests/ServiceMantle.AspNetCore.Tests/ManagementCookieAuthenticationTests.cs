@@ -173,7 +173,8 @@ public sealed class ManagementCookieAuthenticationTests
     [Fact]
     public async Task SessionResponses_DistinguishMissingExpiredAndForbiddenWithoutSensitiveMaterial()
     {
-        await using var application = await StartWebApplicationAsync(TimeSpan.FromSeconds(1));
+        var clock = new MutableTimeProvider(TimeProvider.System.GetUtcNow());
+        await using var application = await StartWebApplicationAsync(TimeSpan.FromMinutes(1), clock);
         using var client = CreateClient(application);
 
         using var missing = await client.GetAsync(
@@ -199,7 +200,7 @@ public sealed class ManagementCookieAuthenticationTests
             Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
         }
 
-        await Task.Delay(TimeSpan.FromMilliseconds(1500), TestContext.Current.CancellationToken);
+        clock.Advance(TimeSpan.FromMinutes(2));
         using var expired = await SendWithCookieAsync(client, "/management/protected", adminCookie);
         Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
         Assert.Equal(
@@ -227,13 +228,21 @@ public sealed class ManagementCookieAuthenticationTests
         return host;
     }
 
-    private static async Task<WebApplication> StartWebApplicationAsync(TimeSpan expiration)
+    private static async Task<WebApplication> StartWebApplicationAsync(
+        TimeSpan expiration,
+        TimeProvider? cookieClock = null)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services
             .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
             .AddManagementCookieAuthentication(options => options.ExpireTimeSpan = expiration);
+        if (cookieClock is not null)
+        {
+            builder.Services.PostConfigure<CookieAuthenticationOptions>(
+                ManagementSessionDefaults.AuthenticationScheme,
+                options => options.TimeProvider = cookieClock);
+        }
 
         var application = builder.Build();
         application.UseAuthentication();
@@ -332,6 +341,32 @@ public sealed class ManagementCookieAuthenticationTests
 
     private static bool ContainsOrdinal(string message, string? value) =>
         value is not null && message.Contains(value, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Drives the management cookie scheme's expiration without real time: the test thread
+    /// advances the clock while the server thread reads it, so all access is lock-synchronized.
+    /// </summary>
+    private sealed class MutableTimeProvider(DateTimeOffset initialUtcNow) : TimeProvider
+    {
+        private readonly object gate = new();
+        private DateTimeOffset utcNow = initialUtcNow;
+
+        public void Advance(TimeSpan delta)
+        {
+            lock (gate)
+            {
+                utcNow += delta;
+            }
+        }
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            lock (gate)
+            {
+                return utcNow;
+            }
+        }
+    }
 
     private sealed class RecordingLoggerProvider : ILoggerProvider
     {
