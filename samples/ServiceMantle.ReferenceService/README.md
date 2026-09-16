@@ -25,7 +25,7 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 | `ReferenceSettingDefinitions` | 只有默认值与约束；没有 store、HTTP 或激活 | #177 |
 | `ReferenceReadinessContributor` | gate 关闭路径的唯一占位 contributor，返回 `reference.health_not_integrated`；绝不声称就绪 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 在 PostgreSQL 路径改接业务 contributor |
 | `Health/PostgreSql/` | 仅当 PostgreSQL 启动 gate 打开时接线：`ReferencePostgreSqlHealthSnapshotSource` 每次请求重读安装行，`ReferencePostgreSqlWorkspaceReadinessContributor` 提供业务就绪否决 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) / [#388](https://github.com/philfanzhou/ServiceMantle/issues/388) 交付 |
-| `ExternalManagementIdentityPlaceholder` | 以安全的未配置 provider 错误码返回 Failed | 未来的外部身份集成 |
+| `ExternalManagementIdentityPlaceholder` | gate 关闭路径的未配置 provider；PostgreSQL 路径改用 `ReferenceExternalManagementIdentityProvider`（部署配置的操作员目录） | 由 [#109](https://github.com/philfanzhou/ServiceMantle/issues/109) 交付 |
 | `Logging/` | opt-in 的 Serilog Console 接线与一行已清理的请求日志 | 由 [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) 交付 |
 | `Telemetry/` | opt-in 的基础 ASP.NET Core、HttpClient 与运行时插桩；没有 exporter | [#158](https://github.com/philfanzhou/ServiceMantle/issues/158) |
 
@@ -142,7 +142,44 @@ provider 消息或异常文本。只有 `Ready` 允许宿主完成启动——ga
 与网络信任。调用方责任：可信的 PostgreSQL 端点、最小权限的运行时账户、首次准备之后移除
 行政凭据、部署侧负责备份。
 
-<a id="postgresql-live-ready-health"></a>
+<a id="postgresql-management-session"></a>
+
+## 管理会话与外部身份接线
+
+当且仅当 PostgreSQL 启动 gate 被显式打开时，样例在同一个分支内接线共享管理会话。gate 关闭
+的所有路径逐字不变：没有 cookie 方案、没有管理路由、placeholder provider 仍是唯一的身份注册。
+
+外部身份来自部署配置，不是服务自建的本地管理员：
+
+| 配置键 | 说明 |
+| --- | --- |
+| `ReferenceService:Management:RootKey` | **必填**。管理 cookie 共享 key ring 的根密钥，至少 32 个字符；缺失或过短则组合失败（fail closed），绝不回落到进程内随机值。经由安全通道提供；轮换根密钥意味着既有 cookie 全部失效。 |
+| `ReferenceService:Management:Operators:0:Id` | 操作员标识（登录用户名）。 |
+| `ReferenceService:Management:Operators:0:DisplayName` | 可选显示名。 |
+| `ReferenceService:Management:Operators:0:Permissions` | 逗号分隔的权限名，如 `management.read,management.admin`。 |
+| `ReferenceService:Management:Operators:0:Credential` | 操作员共享秘密。与用户名都经 SHA-256 摘要后做固定时间比较。 |
+
+操作员目录是**部署提供的外部事实**——样例不发明网络认证协议、不自建账户存储、也没有「首次运行
+创建管理员」路径。未配置目录时 provider 返回 `reference.external_identity_not_configured`，
+登录一律失败（HTTP 表现为固定的 `503 management.session.unavailable`）。
+
+登录走共享条目 `POST {v1}/session/login`：请求体是严格解析的
+`{"username":"…","secret":"…"}` JSON 信封（`application/json`，未知成员、重复成员与非字符串一律
+拒绝）；凭据只存在于本次请求的 scoped accessor 与 provider 之间。共享 key ring 经
+`PersistKeysToServiceMantleEfCore` 落在 gate 的同一 PostgreSQL 目标
+（`service_data_protection_keys` 表，由第三个迁移创建，密文存储），因此指向同一数据库、使用同一
+根密钥的多个实例接受同一张 cookie，进程重启后同样有效。`GET {v1}/session` 读当前会话，
+`POST {v1}/session/logout` 本地登出——已复制的 ticket 在过期前仍然有效，这是共享契约声明的非保
+证，不是样例可以加强的。
+
+明确不保证与不在范围：操作员凭据与根密钥的机密性由部署来源负责（样例只保证它们不进入日志、响
+应、异常与诊断）；目录条目不是生产身份体系；不做密钥轮换或已签发 cookie 的重加密；Consul、遥测
+exporter 与配置管理 API 属于各自的后续任务。调用方责任：通过安全通道分发凭据与根密钥、生产部署
+使用 HTTPS、备份 Bootstrap 与数据库中的 key ring。
+
+真库验收见 [`ReferenceManagementSessionTests`](../../tests/ServiceMantle.ReferenceService.Tests/)
+与双实例进程验收
+[`ReferenceManagementCrossInstanceTests`](../../tests/ServiceMantle.ReferenceService.Tests/)。
 
 ## 阶段 Live/Ready 健康接线
 

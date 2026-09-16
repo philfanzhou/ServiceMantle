@@ -22,11 +22,21 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
 {
     private const string WorkspaceMigration = "20260910000000_InitialReferencePostgreSqlWorkspace";
     private const string InstallationMigration = "20260912000000_AddReferencePostgreSqlInstallation";
-    private const string FutureMigration = "20260913000000_FutureReferenceStep";
-    private const string LaterMigration = "20260914000000_LaterReferenceStep";
+    private const string DataProtectionMigration = "20260916000000_AddReferencePostgreSqlDataProtectionKeys";
+    // Synthetic ids dated after every real migration, so the applied history stays a strict prefix
+    // of the test-owned known set.
+    private const string FutureMigration = "20260917000000_FutureReferenceStep";
+    private const string LaterMigration = "20260918000000_LaterReferenceStep";
     private const string HistoryTable = "__EFMigrationsHistory";
     private const string WorkspaceTable = "reference_workspaces";
     private const string InstallationTable = "service_installations";
+    private const string DataProtectionTable = "service_data_protection_keys";
+
+    private static string[] KnownSet(params string[] extra) =>
+        new[] { WorkspaceMigration, InstallationMigration, DataProtectionMigration }
+            .Concat(extra)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     // The ServiceMantle installation table's columns, as named by the public EF Core persistence
     // package's own mapping; each missing one must independently refuse the observation.
@@ -96,7 +106,7 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         Assert.Equal(MigrationObservationState.CurrentVersionCompatible, afterExecution);
         Assert.Equal(MigrationObservationState.CurrentVersionCompatible, afterRepeatedInspection);
         // The repeated observation did not migrate again, and both fixed versions are recorded.
-        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
+        Assert.Equal(KnownSet(), await ReadHistoryAsync(target));
         Assert.False(context.Database.HasPendingModelChanges());
         Assert.Empty(await context.Database.GetPendingMigrationsAsync(Token));
     }
@@ -118,6 +128,10 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         await ExecuteAsync(target, $"""
             DELETE FROM public."{HistoryTable}" WHERE "MigrationId" = '{InstallationMigration}'
             """);
+        await ExecuteAsync(target, $"""DROP TABLE public."{DataProtectionTable}" """);
+        await ExecuteAsync(target, $"""
+            DELETE FROM public."{HistoryTable}" WHERE "MigrationId" = '{DataProtectionMigration}'
+            """);
         await using var context = CreateContext(target);
         var executor = new ReferencePostgreSqlMigrationExecutor(context, target);
 
@@ -129,8 +143,32 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         Assert.Equal(MigrationObservationState.CurrentVersionCompatible, await executor.InspectAsync(Token));
         Assert.Equal(["kept"], await ReadWorkspaceNamesAsync(target));
         // The upgrade created the installation table but initialised no installation row.
-        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
+        Assert.Equal(KnownSet(), await ReadHistoryAsync(target));
         Assert.Empty(await ReadInstallationServiceIdsAsync(target));
+    }
+
+    [Fact]
+    public async Task A_two_migration_target_is_a_pending_upgrade_and_the_key_table_is_added()
+    {
+        var target = await CreateTargetAsync("two_migration_upgrade");
+        await MigrateAsync(target);
+        // Roll the schema back to exactly what a build without the data-protection migration left
+        // behind: the key table and its history record are gone, both earlier tables remain.
+        await ExecuteAsync(target, $"""DROP TABLE public."{DataProtectionTable}" """);
+        await ExecuteAsync(target, $"""
+            DELETE FROM public."{HistoryTable}" WHERE "MigrationId" = '{DataProtectionMigration}'
+            """);
+        await using var context = CreateContext(target);
+        var executor = new ReferencePostgreSqlMigrationExecutor(context, target);
+
+        Assert.Equal(MigrationObservationState.PendingMigration, await executor.InspectAsync(Token));
+        await executor.ExecuteAsync(Token);
+
+        Assert.Equal(MigrationObservationState.CurrentVersionCompatible, await executor.InspectAsync(Token));
+        Assert.Equal(KnownSet(), await ReadHistoryAsync(target));
+        // The upgrade created the key table and touched no earlier data.
+        Assert.Contains(DataProtectionTable, await ReadRelationNamesAsync(target));
+        Assert.False(context.Database.HasPendingModelChanges());
     }
 
     [Fact]
@@ -223,7 +261,7 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         var executor = new ReferencePostgreSqlMigrationExecutor(
             context,
             target,
-            [WorkspaceMigration, InstallationMigration, FutureMigration]);
+            KnownSet(FutureMigration));
 
         Assert.Equal(MigrationObservationState.PendingMigration, await executor.InspectAsync(Token));
     }
@@ -252,7 +290,7 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         var executor = new ReferencePostgreSqlMigrationExecutor(
             context,
             target,
-            [WorkspaceMigration, InstallationMigration, FutureMigration, LaterMigration]);
+            KnownSet(FutureMigration, LaterMigration));
 
         Assert.Equal(MigrationObservationState.InspectionFailed, await executor.InspectAsync(Token));
     }
@@ -425,7 +463,7 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
 
         // The role can read the catalog but was granted nothing on the tables themselves.
         Assert.Equal(MigrationObservationState.InspectionFailed, await executor.InspectAsync(Token));
-        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
+        Assert.Equal(KnownSet(), await ReadHistoryAsync(target));
     }
 
     [Fact]

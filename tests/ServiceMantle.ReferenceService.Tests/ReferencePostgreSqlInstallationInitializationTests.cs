@@ -34,6 +34,7 @@ public sealed class ReferencePostgreSqlInstallationInitializationTests : IAsyncL
 {
     private const string WorkspaceMigration = "20260910000000_InitialReferencePostgreSqlWorkspace";
     private const string InstallationMigration = "20260912000000_AddReferencePostgreSqlInstallation";
+    private const string DataProtectionMigration = "20260916000000_AddReferencePostgreSqlDataProtectionKeys";
     private const string HistoryTable = "__EFMigrationsHistory";
     private const string InstallationTable = "service_installations";
     private const string InitializationFailureMessage =
@@ -91,7 +92,7 @@ public sealed class ReferencePostgreSqlInstallationInitializationTests : IAsyncL
         // The schema the initialization committed is judged compatible by the schema executor the
         // composite delegates to, not by the composite's own word.
         Assert.Equal(MigrationObservationState.CurrentVersionCompatible, final);
-        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
+        Assert.Equal([WorkspaceMigration, InstallationMigration, DataProtectionMigration], await ReadHistoryAsync(target));
         await using (var verify = CreateContext(target))
         {
             Assert.Empty(await verify.Database.GetPendingMigrationsAsync(Token));
@@ -215,7 +216,7 @@ public sealed class ReferencePostgreSqlInstallationInitializationTests : IAsyncL
         Assert.Equal(abort.Token, failure.CancellationToken);
         // A cancelled initialization is not a rolled-back one: the persisted result is exactly the
         // successful initialization's.
-        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
+        Assert.Equal([WorkspaceMigration, InstallationMigration, DataProtectionMigration], await ReadHistoryAsync(target));
         var row = Assert.Single(await ReadInstallationRowsAsync(target));
         Assert.Equal(serviceId.Value, row.ServiceId);
         Assert.Equal((int)InstallationStatus.PendingSetup, row.Status);
@@ -237,13 +238,17 @@ public sealed class ReferencePostgreSqlInstallationInitializationTests : IAsyncL
         await ExecuteAsync(target, $"""
             DELETE FROM public."{HistoryTable}" WHERE "MigrationId" = '{InstallationMigration}'
             """);
+        await ExecuteAsync(target, $"""DROP TABLE public."service_data_protection_keys" """);
+        await ExecuteAsync(target, $"""
+            DELETE FROM public."{HistoryTable}" WHERE "MigrationId" = '{DataProtectionMigration}'
+            """);
         var serviceId = ServiceId.Parse("reference-init");
 
         var result = await OrchestrateAsync(target, serviceId);
 
         Assert.True(result.Succeeded);
         Assert.True(result.ExecutorWasCalled);
-        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
+        Assert.Equal([WorkspaceMigration, InstallationMigration, DataProtectionMigration], await ReadHistoryAsync(target));
         Assert.Empty(await ReadInstallationRowsAsync(target));
         await using (var verify = CreateContext(target))
         {
@@ -286,7 +291,7 @@ public sealed class ReferencePostgreSqlInstallationInitializationTests : IAsyncL
         var row = Assert.Single(await ReadInstallationRowsAsync(target));
         Assert.Equal(serviceId.Value, row.ServiceId);
         Assert.Equal((int)InstallationStatus.PendingSetup, row.Status);
-        Assert.Equal([WorkspaceMigration, InstallationMigration], await ReadHistoryAsync(target));
+        Assert.Equal([WorkspaceMigration, InstallationMigration, DataProtectionMigration], await ReadHistoryAsync(target));
     }
 
     [Fact]
@@ -310,7 +315,7 @@ public sealed class ReferencePostgreSqlInstallationInitializationTests : IAsyncL
             Assert.All(commands, command => Assert.False(command.TransactionSuppressed));
         }
 
-        Assert.Equal(2, inspected);
+        Assert.Equal(3, inspected);
     }
 
     private static ReferencePostgreSqlInstallationInitializationExecutor CreateExecutor(

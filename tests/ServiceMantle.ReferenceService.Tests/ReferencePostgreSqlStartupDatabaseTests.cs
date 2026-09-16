@@ -7,6 +7,7 @@ using Npgsql;
 using ServiceMantle.Installation;
 using ServiceMantle.ReferenceService;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
+using ServiceMantle.ReferenceService.Management;
 using ServiceMantle.Testing;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -483,6 +484,8 @@ public sealed class ReferencePostgreSqlStartupDatabaseTests : IAsyncLifetime
             "--" + ReferencePostgreSqlStartupOptions.ConnectionStringKey, target,
             "--" + ReferencePostgreSqlStartupOptions.PrepareIfMissingKey,
             prepareIfMissing ? "true" : "false",
+            // The management session rides the gate, so the root key is a required input here too.
+            "--" + ReferenceManagementOptions.RootKeySetting, "synthetic-reference-management-root-key",
         };
         if (administrative is not null)
         {

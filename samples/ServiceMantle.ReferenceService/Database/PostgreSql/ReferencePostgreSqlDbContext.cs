@@ -46,5 +46,8 @@ public sealed class ReferencePostgreSqlDbContext(DbContextOptions<ReferencePostg
                 .HasColumnType("character varying(120)");
         });
         modelBuilder.AddServiceMantleInstallation();
+        // The shared management cookie key ring: mapping the table is schema only, and the keys are
+        // written only by the data-protection repository the management wiring registers.
+        modelBuilder.AddServiceMantleDataProtectionKeys();
     }
 }
