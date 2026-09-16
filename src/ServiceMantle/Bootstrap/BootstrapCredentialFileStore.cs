@@ -15,7 +15,7 @@ namespace ServiceMantle.Bootstrap;
 /// token is observed at each boundary, but a synchronous file operation already in progress cannot
 /// be interrupted, and no wall-clock bound is promised for it.
 /// </remarks>
-public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IBootstrapCredentialVerifier
+public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IBootstrapCredentialVerifier, IBootstrapCredentialReissuer
 {
     /// <summary>The current credential record format version.</summary>
     public const int FormatVersion = 1;
@@ -41,6 +41,7 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
 
     private readonly TimeProvider timeProvider;
     private readonly Func<string, FileStream> openBootstrapProbe;
+    private readonly Func<string, byte[], string, bool> tryReplaceRecord;
 
     /// <summary>Initializes a store using the default paths or explicit paths.</summary>
     /// <param name="serviceId">The service the credential belongs to.</param>
@@ -64,20 +65,25 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
 
     /// <summary>
     /// Initializes a store whose Bootstrap existence probe opens through
-    /// <paramref name="openBootstrapProbe"/>.
+    /// <paramref name="openBootstrapProbe"/> and whose record replacement goes through
+    /// <paramref name="tryReplaceRecord"/>.
     /// </summary>
     /// <remarks>
     /// The probe's open is the one seam in this store, so the finite set of answers the existence
     /// classification is defined over - proven absence, a denied open, a failed open - can be
     /// covered on every platform rather than only where the file system happens to produce them.
-    /// The production constructor always passes the real open.
+    /// The production constructor always passes the real open. The replacement seam exists for the
+    /// same reason: a staging write or a replacing move that fails is a distinct classification
+    /// from a successful replacement, and the failure has to leave the old record byte-for-byte
+    /// unchanged. The production constructor always passes the real atomic replacement.
     /// </remarks>
     internal BootstrapCredentialFileStore(
         ServiceId serviceId,
         string? filePath,
         string? bootstrapFilePath,
         TimeProvider? timeProvider,
-        Func<string, FileStream> openBootstrapProbe)
+        Func<string, FileStream> openBootstrapProbe,
+        Func<string, byte[], string, bool>? tryReplaceRecord = null)
     {
         ArgumentNullException.ThrowIfNull(serviceId);
         ArgumentNullException.ThrowIfNull(openBootstrapProbe);
@@ -86,6 +92,7 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
         BootstrapFilePath = BootstrapFileStore.ResolveFilePath(serviceId, bootstrapFilePath);
         this.timeProvider = timeProvider ?? TimeProvider.System;
         this.openBootstrapProbe = openBootstrapProbe;
+        this.tryReplaceRecord = tryReplaceRecord ?? ReplaceRecordAtomically;
     }
 
     /// <summary>Gets the service the credential belongs to.</summary>
@@ -155,6 +162,16 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
     {
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(Verify(candidate, cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public ValueTask<BootstrapCredentialProvisionResult> ReissueAsync(
+        BootstrapCredentialLifetime lifetime,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(lifetime);
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Reissue(lifetime, cancellationToken));
     }
 
     /// <summary>
@@ -242,6 +259,94 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
+            return BootstrapCredentialProvisionResult.Rejected(
+                WellKnownBootstrapCredentialErrorCodes.Unavailable);
+        }
+
+        return BootstrapCredentialProvisionResult.Provisioned(credential, issuedAtUtc, expiresAtUtc);
+    }
+
+    /// <summary>
+    /// Reissues one credential, atomically replacing a readable record. The same existence evidence
+    /// rule as provisioning applies, a record that cannot be read and parsed is never touched, and
+    /// the caller's token is observed only at the boundaries before the replacement.
+    /// </summary>
+    private BootstrapCredentialProvisionResult Reissue(
+        BootstrapCredentialLifetime lifetime,
+        CancellationToken cancellationToken)
+    {
+        var presence = ProbeBootstrapFile();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (presence == BootstrapFilePresence.Present)
+        {
+            return BootstrapCredentialProvisionResult.Rejected(
+                WellKnownBootstrapCredentialErrorCodes.BootstrapConfigured);
+        }
+
+        if (presence == BootstrapFilePresence.Unknown)
+        {
+            // Same rule as provisioning: only proven absence authorizes an issuance, and the
+            // credential record is neither read nor modified while existence is unestablished.
+            return BootstrapCredentialProvisionResult.Rejected(
+                WellKnownBootstrapCredentialErrorCodes.Unavailable);
+        }
+
+        byte[]? content;
+        try
+        {
+            content = TryReadRecord(FilePath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return BootstrapCredentialProvisionResult.Rejected(
+                WellKnownBootstrapCredentialErrorCodes.Unavailable);
+        }
+
+        // No record behaves exactly like a provision, including the exclusive create and the
+        // already_exists answer a race loser observes.
+        if (content is null)
+        {
+            return Provision(lifetime, cancellationToken);
+        }
+
+        // A record that cannot be parsed by the file protocol - corrupt, oversized, or otherwise
+        // illegal - is never repaired and never replaced; it stays byte-for-byte unchanged.
+        if (!TryParseRecord(content, out _))
+        {
+            return BootstrapCredentialProvisionResult.Rejected(
+                WellKnownBootstrapCredentialErrorCodes.Unavailable);
+        }
+
+        // The boundary after the record is parsed: a cancellation that already arrived is honored
+        // before anything is generated or written, and produces no file change.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var credential = BootstrapCredential.Generate();
+        var issuedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var expiresAtUtc = issuedAtUtc + lifetime.Value;
+        var payload = Serialize(BootstrapCredentialDigest.Compute(credential), issuedAtUtc, expiresAtUtc);
+
+        // The last boundary before the write. Everything above only observed; everything below
+        // changes the record path, and once the replacement completes the result is returned
+        // without further cancellation checks, because it is the only copy of the new plaintext.
+        cancellationToken.ThrowIfCancellationRequested();
+        var stagingPath = Path.Combine(
+            Path.GetDirectoryName(FilePath)!,
+            $".{Path.GetFileName(FilePath)}.{Path.GetRandomFileName()}.reissue");
+        try
+        {
+            EnsurePrivateDirectory(Path.GetDirectoryName(FilePath)!);
+            if (!tryReplaceRecord(stagingPath, payload, FilePath))
+            {
+                TryDelete(stagingPath);
+                return BootstrapCredentialProvisionResult.Rejected(
+                    WellKnownBootstrapCredentialErrorCodes.Unavailable);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            TryDelete(stagingPath);
             return BootstrapCredentialProvisionResult.Rejected(
                 WellKnownBootstrapCredentialErrorCodes.Unavailable);
         }
@@ -638,6 +743,24 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
                 directoryPath,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
+    }
+
+    /// <summary>
+    /// Replaces the record through an exclusively created staging file in the same directory and an
+    /// overwriting move, so the record path only ever holds the old record or the complete new one.
+    /// </summary>
+    private static bool ReplaceRecordAtomically(string stagingPath, byte[] payload, string filePath)
+    {
+        using (var stream = OpenExclusiveCreate(stagingPath))
+        {
+            stream.Write(payload);
+            stream.Flush(flushToDisk: true);
+        }
+
+        // On Windows this is MoveFileExW with MOVEFILE_REPLACE_EXISTING; on Unix it is rename(2).
+        // Both leave either the old file or the fully written staging file at the record path.
+        File.Move(stagingPath, filePath, overwrite: true);
+        return true;
     }
 
     private static FileStream OpenExclusiveCreate(string path)

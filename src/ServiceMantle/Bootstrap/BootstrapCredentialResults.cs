@@ -362,6 +362,75 @@ public sealed class BootstrapCredentialVerificationResult
 }
 
 /// <summary>
+/// Reissues the instance-local one-time Bootstrap creation credential, replacing the existing
+/// record.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Reissue is a store-owned recovery action for operators: it exists so a consumer can print a
+/// fresh plaintext on every Bootstrap-mode start, or after an unconsumed credential expired or the
+/// process restarted, without touching the record files by hand. Like provisioning it is an
+/// explicit local operations action; no ServiceMantle management endpoint reissues a credential.
+/// </para>
+/// <para>
+/// The existence evidence rule is the same as <see cref="IBootstrapCredentialStore.ProvisionAsync"/>:
+/// only a proven absence of the Bootstrap file authorizes an issuance. A proven existence reports
+/// <see cref="WellKnownBootstrapCredentialErrorCodes.BootstrapConfigured"/> and an unestablished
+/// existence reports <see cref="WellKnownBootstrapCredentialErrorCodes.Unavailable"/>, and neither
+/// reads nor modifies the credential record.
+/// </para>
+/// <para>
+/// When no record exists, reissue behaves exactly like provisioning, including the exclusive create
+/// and the <see cref="WellKnownBootstrapCredentialErrorCodes.AlreadyExists"/> answer a concurrent
+/// race loser observes. When a record exists and parses by the file protocol - whether expired or
+/// not - it is replaced atomically: the new record is written to an exclusively created staging file
+/// in the same directory, flushed to disk, and moved over the record path, so that path only ever
+/// holds the old record or the complete new one. A record that cannot be read or parsed - corrupt,
+/// oversized, or otherwise illegal - is never repaired and never replaced; the operation reports
+/// <see cref="WellKnownBootstrapCredentialErrorCodes.Unavailable"/> and the record stays
+/// byte-for-byte unchanged.
+/// </para>
+/// <para>
+/// The plaintext appears only in the returned
+/// <see cref="BootstrapCredentialProvisionResult.Provisioned"/> result; staging files, exceptions,
+/// and diagnostics never carry it or the digest. A successful replacement invalidates the previous
+/// plaintext immediately: its verification and consumption both classify as
+/// <see cref="WellKnownBootstrapCredentialErrorCodes.Invalid"/> because the stored digest no longer
+/// matches.
+/// </para>
+/// <para>
+/// The caller's cancellation token is observed only at the boundaries before the write - entry,
+/// after the existence probe, after the record is parsed, and immediately before the replacement
+/// begins - and a cancellation at those boundaries produces no file change. Once the replacement
+/// completes, the result is returned without further cancellation checks, because it is the only
+/// copy of the new plaintext.
+/// </para>
+/// <para>
+/// Not guaranteed: ordering against a concurrent consumption or reissue. Concurrent reissues are
+/// last-writer-wins - only the plaintext of the replacement that completed last stays valid, and
+/// earlier returned plaintexts may already be invalid. A consumption whose claim completes after a
+/// replacement claims the new record, fails its digest re-check with
+/// <see cref="WellKnownBootstrapCredentialErrorCodes.Invalid"/>, and leaves the new record consumed,
+/// requiring another reissue. Behavior against external exclusive handles, antivirus software,
+/// arbitrary ACLs, or killed processes follows the store's existing non-guarantees, and power-loss
+/// durability goes no further than the flush-to-disk semantics of the replacement.
+/// </para>
+/// </remarks>
+public interface IBootstrapCredentialReissuer
+{
+    /// <summary>
+    /// Issues a fresh credential and atomically replaces a readable existing record, or provisions
+    /// one when no record exists.
+    /// </summary>
+    /// <param name="lifetime">The validated lifetime applied to the new credential.</param>
+    /// <param name="cancellationToken">The caller's cancellation token.</param>
+    /// <exception cref="OperationCanceledException">The caller cancelled the operation.</exception>
+    ValueTask<BootstrapCredentialProvisionResult> ReissueAsync(
+        BootstrapCredentialLifetime lifetime,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Validates a Bootstrap creation credential candidate without consuming it.
 /// </summary>
 /// <remarks>
