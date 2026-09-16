@@ -29,8 +29,10 @@ internal sealed class PhaseGateMiddleware(RequestDelegate next, PhaseGateState s
             return;
         }
         var markers = endpoint.Metadata.GetOrderedMetadata<ManagementSurfaceMetadata>();
+        var admissions = endpoint.Metadata.GetOrderedMetadata<PhaseAdmissionMetadata>();
         var surface = markers.Count == 1 ? markers[0].Surface : (ManagementSurface?)null;
-        if (markers.Count > 1 || surface is not null && !PhaseGateState.Matches(path, configuration.Prefix, surface.Value) ||
+        if (markers.Count > 1 || admissions.Count > 1 || surface is not null && admissions.Count > 0 ||
+            surface is not null && !PhaseGateState.Matches(path, configuration.Prefix, surface.Value) ||
             surface is null && PhaseGateState.Under(path, configuration.Prefix))
         {
             await RejectAsync(context).ConfigureAwait(false);
@@ -84,7 +86,7 @@ internal sealed class PhaseGateMiddleware(RequestDelegate next, PhaseGateState s
             snapshot = null;
         }
         if (cancellationToken.IsCancellationRequested) throw CancelledByCaller(linked, cancellationToken);
-        if (snapshot is null || !Allows(entry, surface, snapshot))
+        if (snapshot is null || !Allows(entry, surface, admissions.Count == 1 ? admissions[0] : null, snapshot))
         {
             await RejectAsync(context).ConfigureAwait(false);
             return;
@@ -130,7 +132,7 @@ internal sealed class PhaseGateMiddleware(RequestDelegate next, PhaseGateState s
     }
 
     private static bool Allows(ManagementEntryDefinition? entry, ManagementSurface? surface,
-        ServiceHealthSnapshot snapshot)
+        PhaseAdmissionMetadata? admission, ServiceHealthSnapshot snapshot)
     {
         if (snapshot.MigrationStatus is ServiceMigrationReadinessState.Running or ServiceMigrationReadinessState.Failed) return false;
         if (entry is not null) return entry.Kind switch
@@ -154,7 +156,11 @@ internal sealed class PhaseGateMiddleware(RequestDelegate next, PhaseGateState s
             ManagementSurface.Setup => snapshot.Phase == ServiceStartupPhase.PendingSetup &&
                 snapshot.MigrationStatus == ServiceMigrationReadinessState.Succeeded &&
                 snapshot.DatabaseStatus == ServiceDatabaseReadinessState.Reachable,
-            null or ManagementSurface.Management => ServiceHealthEvaluator.Evaluate(snapshot).IsReady,
+            // A consumer endpoint outside the management prefix is admitted by phase membership in
+            // its declared set; without the marker it stays admitted only once the service is ready.
+            null or ManagementSurface.Management => admission is not null
+                ? admission.Phases.Contains(snapshot.Phase)
+                : ServiceHealthEvaluator.Evaluate(snapshot).IsReady,
             _ => false
         };
     }
