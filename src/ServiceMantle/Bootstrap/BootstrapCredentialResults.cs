@@ -283,6 +283,118 @@ public sealed class BootstrapCredentialStatusResult
 }
 
 /// <summary>
+/// The closed outcome of validating a Bootstrap creation credential candidate without consuming it.
+/// </summary>
+public enum BootstrapCredentialVerificationState
+{
+    /// <summary>The candidate parses, matches the stored digest, and the record has not expired.</summary>
+    Valid = 0,
+
+    /// <summary>
+    /// The candidate is expired, malformed, mismatched, already consumed, or no credential is
+    /// provisioned at all. These outcomes are indistinguishable.
+    /// </summary>
+    Invalid = 1,
+
+    /// <summary>
+    /// The credential record is corrupt, oversized, inaccessible, or failed with an I/O error.
+    /// </summary>
+    Unavailable = 2,
+}
+
+/// <summary>
+/// The closed result of the non-consuming validation of a Bootstrap creation credential candidate.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A valid outcome is one observation: it holds no reservation, lease, or ordering guarantee
+/// against a concurrent consumer, expiry, or replacement. The single successful consumer of a
+/// credential stays decided by <see cref="IBootstrapCredentialStore.ConsumeAsync"/> alone.
+/// </para>
+/// <para>
+/// Neither the state, the error code, nor <see cref="ToString"/> ever includes the plaintext
+/// candidate, the digest, or a file path.
+/// </para>
+/// </remarks>
+public sealed class BootstrapCredentialVerificationResult
+{
+    private static readonly BootstrapCredentialVerificationResult ValidResult =
+        new(BootstrapCredentialVerificationState.Valid, errorCode: null);
+    private static readonly BootstrapCredentialVerificationResult InvalidResult =
+        new(BootstrapCredentialVerificationState.Invalid, WellKnownBootstrapCredentialErrorCodes.Invalid);
+    private static readonly BootstrapCredentialVerificationResult UnavailableResult =
+        new(BootstrapCredentialVerificationState.Unavailable, WellKnownBootstrapCredentialErrorCodes.Unavailable);
+
+    private BootstrapCredentialVerificationResult(
+        BootstrapCredentialVerificationState state,
+        string? errorCode)
+    {
+        State = state;
+        ErrorCode = errorCode;
+    }
+
+    /// <summary>Gets the closed verification outcome.</summary>
+    public BootstrapCredentialVerificationState State { get; }
+
+    /// <summary>
+    /// Gets the safe error code of a non-valid outcome, or null when the candidate is valid.
+    /// </summary>
+    /// <remarks>
+    /// The code is fixed by the state: <see cref="BootstrapCredentialVerificationState.Invalid"/> is
+    /// always <see cref="WellKnownBootstrapCredentialErrorCodes.Invalid"/> and
+    /// <see cref="BootstrapCredentialVerificationState.Unavailable"/> is always
+    /// <see cref="WellKnownBootstrapCredentialErrorCodes.Unavailable"/>.
+    /// </remarks>
+    public string? ErrorCode { get; }
+
+    /// <summary>Creates the valid outcome.</summary>
+    public static BootstrapCredentialVerificationResult Valid() => ValidResult;
+
+    /// <summary>Creates the invalid outcome.</summary>
+    public static BootstrapCredentialVerificationResult Invalid() => InvalidResult;
+
+    /// <summary>Creates the unavailable outcome.</summary>
+    public static BootstrapCredentialVerificationResult Unavailable() => UnavailableResult;
+
+    /// <summary>Returns a safe projection that never includes the candidate, the digest, or a path.</summary>
+    public override string ToString() =>
+        $"BootstrapCredentialVerificationResult(State={State}, ErrorCode={ErrorCode})";
+}
+
+/// <summary>
+/// Validates a Bootstrap creation credential candidate without consuming it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The verification changes no persistent state: it never claims, deletes, rewrites, or extends the
+/// credential record, and it writes no file. Its only observable effect is the returned result.
+/// </para>
+/// <para>
+/// Its classification is the same closed set as consumption, and it leaks no more than consumption
+/// does: an expired, malformed, mismatched, already consumed, or never provisioned candidate is
+/// indistinguishable, all reporting <see cref="WellKnownBootstrapCredentialErrorCodes.Invalid"/>.
+/// Corrupt, oversized, denied, or failed storage reports
+/// <see cref="WellKnownBootstrapCredentialErrorCodes.Unavailable"/>.
+/// </para>
+/// <para>
+/// A valid result is not an authorization. It says only that the candidate parses, matches, and has
+/// not expired at the moment of the observation; the single successful consumer remains decided by
+/// the atomic claim in <see cref="IBootstrapCredentialStore.ConsumeAsync"/>. Callers exposing this
+/// operation own its rate limiting and minimal disclosure.
+/// </para>
+/// </remarks>
+public interface IBootstrapCredentialVerifier
+{
+    /// <summary>Validates a candidate without consuming the credential record.</summary>
+    /// <param name="candidate">The caller-supplied plaintext candidate.</param>
+    /// <param name="cancellationToken">The caller's cancellation token.</param>
+    /// <exception cref="OperationCanceledException">The caller cancelled the operation.</exception>
+    ValueTask<BootstrapCredentialVerificationResult> VerifyAsync(
+        string? candidate,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Provisions, observes, and atomically consumes the instance-local one-time Bootstrap creation
 /// credential.
 /// </summary>
