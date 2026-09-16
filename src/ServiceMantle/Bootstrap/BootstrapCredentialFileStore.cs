@@ -15,7 +15,7 @@ namespace ServiceMantle.Bootstrap;
 /// token is observed at each boundary, but a synchronous file operation already in progress cannot
 /// be interrupted, and no wall-clock bound is promised for it.
 /// </remarks>
-public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
+public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IBootstrapCredentialVerifier
 {
     /// <summary>The current credential record format version.</summary>
     public const int FormatVersion = 1;
@@ -146,6 +146,58 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore
     {
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(Consume(candidate, cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public ValueTask<BootstrapCredentialVerificationResult> VerifyAsync(
+        string? candidate,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Verify(candidate, cancellationToken));
+    }
+
+    /// <summary>
+    /// Validates a candidate through the same read, parse, and fixed-time comparison path as
+    /// consumption, without claiming anything: the record is only read, never moved or rewritten.
+    /// </summary>
+    private BootstrapCredentialVerificationResult Verify(
+        string? candidate,
+        CancellationToken cancellationToken)
+    {
+        byte[]? content;
+        try
+        {
+            content = TryReadRecord(FilePath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return BootstrapCredentialVerificationResult.Unavailable();
+        }
+
+        if (content is null)
+        {
+            // Never provisioned or already consumed: indistinguishable from any other invalid input.
+            return BootstrapCredentialVerificationResult.Invalid();
+        }
+
+        if (!TryParseRecord(content, out var record))
+        {
+            return BootstrapCredentialVerificationResult.Unavailable();
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!BootstrapCredential.TryParse(candidate, out var parsed) || parsed is null)
+        {
+            return BootstrapCredentialVerificationResult.Invalid();
+        }
+
+        // The same fixed-time comparison as the consume path runs, so a verification never leaks
+        // more than consumption does and never leaves any persistent state behind.
+        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+        return record!.Digest.Matches(parsed) && nowUtc < record.ExpiresAtUtc
+            ? BootstrapCredentialVerificationResult.Valid()
+            : BootstrapCredentialVerificationResult.Invalid();
     }
 
     private BootstrapCredentialProvisionResult Provision(
