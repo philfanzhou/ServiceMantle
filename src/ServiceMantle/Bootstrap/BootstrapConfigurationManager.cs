@@ -1,3 +1,5 @@
+using System.Buffers.Text;
+using System.Security.Cryptography;
 using ServiceMantle;
 
 namespace ServiceMantle.Bootstrap;
@@ -7,6 +9,9 @@ namespace ServiceMantle.Bootstrap;
 /// </summary>
 public sealed class BootstrapConfigurationManager
 {
+    /// <summary>The number of cryptographically secure random bytes behind a generated master key.</summary>
+    internal const int GeneratedMasterKeyEntropyByteCount = 32;
+
     private readonly BootstrapFileStore fileStore;
     private readonly InstanceId instanceId;
     private readonly IBootstrapCandidateValidator candidateValidator;
@@ -66,6 +71,12 @@ public sealed class BootstrapConfigurationManager
     /// Validates and creates the instance-local Bootstrap file without overwriting it.
     /// </summary>
     /// <param name="request">The complete Bootstrap creation request.</param>
+    /// <remarks>
+    /// When the request was built with the single-parameter constructor, the master key is generated
+    /// here from cryptographically secure randomness, validated, and written along the same path as
+    /// a caller-supplied key. The generated value never reaches a result, an exception, or a log;
+    /// only the Bootstrap file holds it.
+    /// </remarks>
     /// <param name="cancellationToken">The cancellation token for the operation.</param>
     /// <returns>A safe result describing the completed creation.</returns>
     /// <exception cref="BootstrapException">The target file cannot be created.</exception>
@@ -82,10 +93,17 @@ public sealed class BootstrapConfigurationManager
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // A generated key is produced inside this same call, ahead of the validation and the
+            // write, and then follows exactly the path a caller-supplied key follows. A later
+            // rejection or failure leaves no file, and the generated value is not retained.
+            var masterKey = request.ServerGeneratesMasterKey
+                ? GenerateMasterKey()
+                : request.MasterKey;
+
             var candidate = new BootstrapConfiguration(
                 fileStore.ServiceId,
                 request.Database,
-                request.MasterKey);
+                masterKey);
 
             await ValidateCandidateAsync(candidate, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
@@ -101,6 +119,17 @@ public sealed class BootstrapConfigurationManager
         {
             modificationGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Generates a master key from cryptographically secure randomness, encoded as unpadded
+    /// Base64URL so it survives being copied through a shell, a YAML file, or an environment file.
+    /// </summary>
+    private static string GenerateMasterKey()
+    {
+        Span<byte> entropy = stackalloc byte[GeneratedMasterKeyEntropyByteCount];
+        RandomNumberGenerator.Fill(entropy);
+        return Base64Url.EncodeToString(entropy);
     }
 
     /// <summary>

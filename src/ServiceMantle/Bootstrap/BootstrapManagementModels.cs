@@ -106,6 +106,28 @@ public sealed class BootstrapCreateRequest
 
         Database = database;
         MasterKey = masterKey;
+        ServerGeneratesMasterKey = false;
+    }
+
+    /// <summary>
+    /// Initializes a bootstrap creation request whose master key the manager generates.
+    /// </summary>
+    /// <param name="database">The complete database replacement.</param>
+    /// <remarks>
+    /// The generated key comes from 256 bits of cryptographically secure randomness encoded as
+    /// unpadded Base64URL, so it survives being copied through a shell, a YAML file, or an
+    /// environment file. It then goes through exactly the same candidate validation and file write
+    /// as a caller-supplied key. It is never returned to any caller, result, exception, or log
+    /// line: the operator reads it from the Bootstrap file, and a restart is still required. A
+    /// validation or write failure leaves no file and discards the generated value.
+    /// </remarks>
+    public BootstrapCreateRequest(BootstrapDatabaseConfiguration database)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+
+        Database = database;
+        MasterKey = null!;
+        ServerGeneratesMasterKey = true;
     }
 
     /// <summary>
@@ -114,9 +136,18 @@ public sealed class BootstrapCreateRequest
     public BootstrapDatabaseConfiguration Database { get; }
 
     /// <summary>
-    /// Gets the master key to validate and create.
+    /// Gets the master key to validate and create, or null when the manager generates one.
     /// </summary>
+    /// <remarks>
+    /// The value is null only for a request built with the single-parameter constructor; the
+    /// two-parameter constructor rejects a null key, and nothing else can make this property null.
+    /// </remarks>
     public string MasterKey { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the manager generates the master key for this request.
+    /// </summary>
+    internal bool ServerGeneratesMasterKey { get; }
 
     /// <summary>
     /// Returns safe request information without secret values.

@@ -45,7 +45,7 @@ public sealed class BootstrapRequestTests
         { "duplicate-master-key", """{"database":{"provider":"P","connectionString":"c"},"masterKey":"a","masterKey":"b"}""" },
         { "escaped-duplicate-master-key", """{"database":{"provider":"P","connectionString":"c"},"masterKey":"a","masterKey":"b"}""" },
         { "missing-database", """{"masterKey":"k"}""" },
-        { "missing-master-key", """{"database":{"provider":"P","connectionString":"c"}}""" },
+        { "empty-master-key", """{"database":{"provider":"P","connectionString":"c"},"masterKey":""}""" },
         { "null-database", """{"database":null,"masterKey":"k"}""" },
         { "null-master-key", """{"database":{"provider":"P","connectionString":"c"},"masterKey":null}""" },
         { "blank-master-key", """{"database":{"provider":"P","connectionString":"c"},"masterKey":"   "}""" },
@@ -253,6 +253,85 @@ public sealed class BootstrapRequestTests
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.Null(Load(fixture).Database.ServerVersion);
+    }
+
+    [Fact]
+    public async Task An_omitted_master_key_is_generated_by_the_server_and_never_returned()
+    {
+        await using var fixture = await BootstrapManagementHostFixture.StartAsync();
+        var credential = await fixture.ProvisionAsync();
+
+        using var response = await fixture.PostAsync(
+            credential,
+            """{"database":{"provider":"PostgreSQL","connectionString":"Host=db;Password=p"}}""");
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("{\"restartRequired\":true}", await response.Content.ReadAsStringAsync(Token));
+        var masterKey = Load(fixture).MasterKey;
+        Assert.NotNull(masterKey);
+        // Invariant 4: 256 bits of entropy as unpadded Base64URL.
+        Assert.Equal(43, masterKey.Length);
+        Assert.DoesNotContain('=', masterKey);
+        Assert.All(masterKey, character => Assert.True(
+            character is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_' or '-'));
+        // The generated key went through the same validator as a supplied one.
+        Assert.Equal(1, fixture.Validator.Calls);
+        Assert.Equal(masterKey, fixture.Validator.LastMasterKey);
+        // The key reaches neither the response body nor any log line this group produced.
+        Assert.DoesNotContain(masterKey, await response.Content.ReadAsStringAsync(Token), StringComparison.Ordinal);
+        Assert.All(fixture.Logs, line => Assert.DoesNotContain(masterKey, line, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Two_omitted_key_creations_generate_two_different_keys()
+    {
+        await using var first = await BootstrapManagementHostFixture.StartAsync();
+        await using var second = await BootstrapManagementHostFixture.StartAsync();
+
+        using var firstResponse = await first.PostAsync(
+            await first.ProvisionAsync(),
+            """{"database":{"provider":"PostgreSQL","connectionString":"Host=db;Password=p"}}""");
+        using var secondResponse = await second.PostAsync(
+            await second.ProvisionAsync(),
+            """{"database":{"provider":"PostgreSQL","connectionString":"Host=db;Password=p"}}""");
+
+        Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, secondResponse.StatusCode);
+        Assert.NotEqual(Load(first).MasterKey, Load(second).MasterKey);
+    }
+
+    [Fact]
+    public async Task An_omitted_key_creation_still_consumes_the_credential_first()
+    {
+        await using var fixture = await BootstrapManagementHostFixture.StartAsync();
+        // No provisioning at all: the store has nothing, so the candidate is invalid.
+        using var response = await fixture.PostAsync(
+            BootstrapCredential.Generate().Reveal(),
+            """{"database":{"provider":"PostgreSQL","connectionString":"Host=db;Password=p"}}""");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("management.bootstrap.credential_invalid", await ErrorCodeAsync(response));
+        Assert.Equal(0, fixture.Validator.Calls);
+        Assert.False(File.Exists(fixture.BootstrapPath));
+    }
+
+    [Fact]
+    public async Task An_update_still_never_generates_a_master_key_when_it_is_omitted()
+    {
+        await using var fixture = await BootstrapManagementHostFixture.StartAsync();
+        using var created = await fixture.PostAsync(
+            await fixture.ProvisionAsync(),
+            """{"database":{"provider":"PostgreSQL","connectionString":"Host=original"},"masterKey":"original-key"}""");
+        fixture.Snapshot.Current = BootstrapManagementHostFixture.Ready;
+        var before = await File.ReadAllBytesAsync(fixture.BootstrapPath, Token);
+
+        using var databaseOnly = await fixture.PutAsync(
+            fixture.Cookie(ManagementPermission.Admin),
+            """{"database":{"provider":"PostgreSQL","connectionString":"Host=replaced"}}""");
+
+        Assert.Equal(HttpStatusCode.OK, databaseOnly.StatusCode);
+        Assert.Equal("original-key", Load(fixture).MasterKey);
+        Assert.NotEqual(before, await File.ReadAllBytesAsync(fixture.BootstrapPath, Token));
     }
 
     [Theory]

@@ -51,6 +51,7 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
     private static readonly ServiceId Service = ServiceId.Parse("catalog");
 
     private readonly string directory;
+    private readonly RecordingLoggerProvider logger;
     private WebApplication? application;
     private HttpClient? client;
 
@@ -59,10 +60,12 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         string directory,
         string root,
         RecordingValidator validator,
-        MutableSnapshot snapshot)
+        MutableSnapshot snapshot,
+        RecordingLoggerProvider logger)
     {
         this.application = application;
         this.directory = directory;
+        this.logger = logger;
         Root = root;
         Validator = validator;
         Snapshot = snapshot;
@@ -73,6 +76,9 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
     internal RecordingValidator Validator { get; }
 
     internal MutableSnapshot Snapshot { get; }
+
+    /// <summary>Every formatted log line the host produced, for secret-output assertions.</summary>
+    internal IReadOnlyList<string> Logs => logger.Lines;
 
     internal string BootstrapPath => Path.Combine(directory, "catalog.bootstrap.json");
 
@@ -108,11 +114,13 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         var credentialPath = Path.Combine(directory, "catalog.bootstrap-credential.json");
         var validator = new RecordingValidator();
         var source = new MutableSnapshot(snapshot ?? BeforeConfiguration);
+        var recordingLogger = new RecordingLoggerProvider();
 
         var builder = WebApplication.CreateSlimBuilder(
             new WebApplicationOptions { EnvironmentName = "Production" });
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
+        builder.Logging.AddProvider(recordingLogger);
         builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
         var mantle = builder.Services.AddServiceMantle(
             Service,
@@ -185,7 +193,8 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
             directory,
             resolvedRoot,
             validator,
-            source);
+            source,
+            recordingLogger);
     }
 
     internal static async Task<BootstrapManagementHostFixture> StartAsync(
@@ -400,6 +409,51 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         public ValueTask<ServiceHealthSnapshot> GetSnapshotAsync(
             CancellationToken cancellationToken = default) =>
             ValueTask.FromResult(Current);
+    }
+
+    /// <summary>Records every formatted log line, including exception text, for secret checks.</summary>
+    internal sealed class RecordingLoggerProvider : ILoggerProvider
+    {
+        private readonly List<string> lines = [];
+
+        internal IReadOnlyList<string> Lines
+        {
+            get
+            {
+                lock (lines)
+                {
+                    return lines.ToArray();
+                }
+            }
+        }
+
+        public ILogger CreateLogger(string categoryName) => new RecordingLogger(categoryName, lines);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class RecordingLogger(string categoryName, List<string> lines) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                lock (lines)
+                {
+                    lines.Add(
+                        $"{categoryName}: {formatter(state, exception)}" +
+                        (exception is null ? string.Empty : " " + exception));
+                }
+            }
+        }
     }
 
     /// <summary>A consuming service's own scheme that authenticates a management administrator.</summary>
