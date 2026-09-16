@@ -14,6 +14,7 @@ using Npgsql;
 using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Health;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
+using ServiceMantle.ReferenceService.Management;
 using ServiceMantle.ReferenceService.Health.PostgreSql;
 using ServiceMantle.Testing;
 using Testcontainers.PostgreSql;
@@ -461,6 +462,8 @@ public sealed class ReferencePostgreSqlHealthTests : IAsyncLifetime
             "--" + ReferencePostgreSqlStartupOptions.EnabledKey, "true",
             "--" + ReferencePostgreSqlStartupOptions.ConnectionStringKey, Target(database),
             "--" + ReferencePostgreSqlStartupOptions.PrepareIfMissingKey, "false",
+            // The management session rides the gate, so the root key is a required input here too.
+            "--" + ReferenceManagementOptions.RootKeySetting, "synthetic-reference-management-root-key",
         };
         if (environment is not null)
         {

@@ -15,12 +15,16 @@ using ServiceMantle.ReferenceService.Installation;
 using ServiceMantle.ReferenceService.Logging;
 using ServiceMantle.ReferenceService.Management;
 using ServiceMantle.ReferenceService.Telemetry;
+using ServiceMantle.Persistence.EntityFrameworkCore;
 
 namespace ServiceMantle.ReferenceService;
 
 /// <summary>Composes the consumer-owned reference host without activating downstream capabilities.</summary>
 public static class ReferenceApplication
 {
+    /// <summary>The service identity the composition uses, shared by the management key ring.</summary>
+    internal static readonly ServiceId Service = ServiceId.Parse("reference-service");
+
     public static WebApplicationBuilder CreateBuilder(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
@@ -29,7 +33,10 @@ public static class ReferenceApplication
             InstanceId.Parse("reference-local"));
         // The switch is explicit and fixed before Build: a missing or unparsable value leaves the
         // ServiceMantle Serilog host, the sensitive Header registry, and the request log unwired.
-        if (bool.TryParse(builder.Configuration[ReferenceLoggingDefaults.EnabledKey], out var logging) && logging)
+        var logging = bool.TryParse(
+            builder.Configuration[ReferenceLoggingDefaults.EnabledKey],
+            out var loggingEnabled) && loggingEnabled;
+        if (logging)
         {
             builder.Services.AddSingleton<ReferenceLoggingRegistration>();
             builder.AddServiceMantleSerilog();
@@ -74,6 +81,30 @@ public static class ReferenceApplication
                 ReferencePostgreSqlHealthSnapshotSource>();
             mantle.AddServiceMantleHealthEndpoints();
             mantle.AddServiceReadinessContributor<ReferencePostgreSqlWorkspaceReadinessContributor>();
+            // The management session rides the same gate: the external identity comes from the
+            // deployment's operator directory, and the shared cookie key ring is persisted to the
+            // same PostgreSQL target through the gate's context factory. The root key is a required
+            // deployment input - a missing or short one fails here, before any database, network, or
+            // file side effect, and there is no process-local random fallback.
+            var management = ReferenceManagementOptions.Read(builder.Configuration);
+            builder.Services.AddSingleton(management);
+            builder.Services.AddDataProtection()
+                .PersistKeysToServiceMantleEfCore<ReferencePostgreSqlDbContext>(Service, _ => management.RootKey);
+            // The sensitive-header registry is required by the composed pipeline; the logging
+            // switch may already have registered it with one denied name, which is kept.
+            if (!logging)
+            {
+                mantle.AddSensitiveHeaders();
+            }
+            mantle.AddSecurityResponseHeaders();
+            mantle.AddRateLimiting();
+            // Registered last among the data-protection configurators so its application name - the
+            // discriminator two instances must agree on - is the effective one.
+            mantle.AddManagementCookieAuthentication();
+            mantle.AddServiceMantleManagementApiV1();
+            mantle.AddServiceMantleManagementEntries();
+            builder.Services.AddScoped<ReferenceOperatorCredentialAccessor>();
+            builder.Services.AddScoped<IManagementIdentityProvider, ReferenceExternalManagementIdentityProvider>();
         }
 
         var databasePath = builder.Configuration["ReferenceService:DatabasePath"]
@@ -87,19 +118,38 @@ public static class ReferenceApplication
         builder.Services.AddScoped<IServiceSetupContributor, ReferenceSetupContributor>();
         if (postgresqlOptions is null)
         {
-            // With the PostgreSQL gate off, the placeholder stays the single readiness contributor and
-            // never claims ready; no health endpoint or snapshot source is registered on this path.
+            // With the PostgreSQL gate off, the placeholder stays the single readiness contributor
+            // and never claims ready; no health endpoint, snapshot source, or management capability
+            // is registered on this path, and login stays the fixed not-configured failure.
             builder.Services.AddSingleton<IServiceReadinessContributor, ReferenceReadinessContributor>();
+            builder.Services.AddScoped<IManagementIdentityProvider, ExternalManagementIdentityPlaceholder>();
         }
 
-        builder.Services.AddScoped<IManagementIdentityProvider, ExternalManagementIdentityPlaceholder>();
         return builder;
     }
 
     public static WebApplication Build(WebApplicationBuilder builder)
     {
         var app = builder.Build();
-        if (app.Services.GetService<ReferenceLoggingRegistration>() is not null)
+        var loggingActive = app.Services.GetService<ReferenceLoggingRegistration>() is not null;
+        // The PostgreSQL gate carries the composed ServiceMantle pipeline and the management
+        // session: correlation, Problem Details, routing, the security-header baseline, the phase
+        // gate, authentication, rate limiting, and authorization run in their fixed order, and the
+        // three shared session entries are mapped beside the protected group, never inside it.
+        if (app.Services.GetService<ReferencePostgreSqlStartupOptions>() is not null)
+        {
+            app.UseServiceMantlePipeline();
+            if (loggingActive)
+            {
+                // Inside the composed pipeline the request log still observes the mapped result:
+                // it runs downstream of Problem Details and upstream of the endpoints.
+                app.UseMiddleware<ReferenceRequestLoggingMiddleware>();
+            }
+
+            app.MapServiceMantleManagementSession(ReferenceManagementLoginAdapter.AdaptAsync);
+            app.MapServiceMantleHealthEndpoints();
+        }
+        else if (loggingActive)
         {
             // Correlation stays outside Problem Details, so the same identifier enriches the whole
             // downstream scope. The request log observes the mapped result rather than the raw
@@ -109,15 +159,8 @@ public static class ReferenceApplication
             app.UseServiceMantleProblemDetails();
         }
 
-        // The fixed live and readiness endpoints are mapped if and only if the PostgreSQL startup
-        // gate registered its options, exactly matching the capability registered in CreateBuilder.
-        // No Phase Gate, management API, or installation status endpoint is wired here.
-        if (app.Services.GetService<ReferencePostgreSqlStartupOptions>() is not null)
-        {
-            app.MapServiceMantleHealthEndpoints();
-        }
-
-        // No database creation, migration, setup, administrator provisioning, or management routes.
+        // No database creation, migration, setup, administrator provisioning, or business
+        // management routes of the sample's own.
         app.MapGet("/", () => Results.Ok(new { service = "reference-service", status = "skeleton" }));
         return app;
     }

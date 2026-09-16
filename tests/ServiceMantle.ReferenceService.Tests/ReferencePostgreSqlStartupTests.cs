@@ -169,13 +169,15 @@ public sealed class ReferencePostgreSqlStartupTests
         Assert.Null(options.AdministrativeConnectionString);
 
         // The composition root accepts the same inputs: an unusable administrative value is not an
-        // input failure when preparation was not permitted.
+        // input failure when preparation was not permitted. The management session rides the gate,
+        // so its required root key is supplied here as well.
         var builder = ReferenceApplication.CreateBuilder(
         [
             "--" + ReferencePostgreSqlStartupOptions.EnabledKey, "true",
             "--" + ReferencePostgreSqlStartupOptions.ConnectionStringKey, UsableTarget,
             "--" + ReferencePostgreSqlStartupOptions.PrepareIfMissingKey, "false",
             "--" + ReferencePostgreSqlStartupOptions.AdministrativeConnectionStringKey, "DefinitelyNotAKeyword=1",
+            "--ReferenceService:Management:RootKey", "synthetic-reference-management-root-key",
         ]);
         Assert.NotNull(builder.Services);
     }
