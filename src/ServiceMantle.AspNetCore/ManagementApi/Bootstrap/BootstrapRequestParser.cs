@@ -70,13 +70,14 @@ internal static class BootstrapRequestParser
     /// Reads and parses the request body, or returns null for every unusable shape.
     /// </summary>
     /// <param name="context">The current management request.</param>
-    /// <param name="requireBoth">
-    /// True for the creation entry, where both properties must be present; false for the update
-    /// entry, where at least one must be.
+    /// <param name="databaseRequired">
+    /// True for the creation entry, where the database must be present; false for the update entry,
+    /// where at least one property must be. The master key is never required: on creation its
+    /// absence means the manager generates it, and on update its absence retains the stored one.
     /// </param>
     internal static async ValueTask<BootstrapRequest?> ParseAsync(
         HttpContext context,
-        bool requireBoth)
+        bool databaseRequired)
     {
         var request = context.Request;
         if (request.QueryString.HasValue ||
@@ -114,7 +115,7 @@ internal static class BootstrapRequestParser
                 body.Write(rented.AsSpan(0, read));
             }
 
-            return Parse(body.WrittenMemory, requireBoth);
+            return Parse(body.WrittenMemory, databaseRequired);
         }
         finally
         {
@@ -124,7 +125,7 @@ internal static class BootstrapRequestParser
         }
     }
 
-    private static BootstrapRequest? Parse(ReadOnlyMemory<byte> body, bool requireBoth)
+    private static BootstrapRequest? Parse(ReadOnlyMemory<byte> body, bool databaseRequired)
     {
         // A byte order mark is not part of a JSON document on the wire and is refused rather than
         // skipped.
@@ -173,8 +174,10 @@ internal static class BootstrapRequestParser
                 }
             }
 
-            if (requireBoth
-                ? !databasePresent || !masterKeyPresent
+            // Creation needs the database; the master key may be absent so the manager generates
+            // it. Update needs at least one of the two so it never becomes a no-op.
+            if (databaseRequired
+                ? !databasePresent
                 : !databasePresent && !masterKeyPresent)
             {
                 return null;

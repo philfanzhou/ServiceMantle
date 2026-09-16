@@ -36,7 +36,7 @@ internal static class BootstrapHandlers
     {
         ObserveCallerCancellation(context);
 
-        var parsed = await ParseAsync(context, requireBoth: true).ConfigureAwait(false);
+        var parsed = await ParseAsync(context, databaseRequired: true).ConfigureAwait(false);
         if (parsed is null)
         {
             return ManagementApiResults.InvalidRequest();
@@ -85,12 +85,15 @@ internal static class BootstrapHandlers
                 : BootstrapResult.Unavailable;
         }
 
-        // From here the credential is gone. Nothing below restores it.
+        // From here the credential is gone. Nothing below restores it. An absent master key means
+        // the manager generates one; it is never echoed back by any result.
         var manager = context.RequestServices.GetRequiredService<BootstrapConfigurationManager>();
         return await PublishAsync(
             context,
             () => manager.CreateAsync(
-                new BootstrapCreateRequest(parsed.Database!, parsed.MasterKey!),
+                parsed.MasterKey is null
+                    ? new BootstrapCreateRequest(parsed.Database!)
+                    : new BootstrapCreateRequest(parsed.Database!, parsed.MasterKey),
                 context.RequestAborted),
             BootstrapResult.Created).ConfigureAwait(false);
     }
@@ -100,7 +103,7 @@ internal static class BootstrapHandlers
     {
         ObserveCallerCancellation(context);
 
-        var parsed = await ParseAsync(context, requireBoth: false).ConfigureAwait(false);
+        var parsed = await ParseAsync(context, databaseRequired: false).ConfigureAwait(false);
         if (parsed is null)
         {
             return ManagementApiResults.InvalidRequest();
@@ -118,13 +121,13 @@ internal static class BootstrapHandlers
 
     private static async ValueTask<BootstrapRequest?> ParseAsync(
         HttpContext context,
-        bool requireBoth)
+        bool databaseRequired)
     {
         BootstrapRequest? parsed;
         try
         {
             parsed = await BootstrapRequestParser
-                .ParseAsync(context, requireBoth)
+                .ParseAsync(context, databaseRequired)
                 .ConfigureAwait(false);
         }
         catch

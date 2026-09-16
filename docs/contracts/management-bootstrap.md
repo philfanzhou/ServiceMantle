@@ -62,13 +62,29 @@ cookie 认证方案缺失时，宿主启动失败。没有映射该组的宿主�
 | `database.provider` | string | 必填、非空白。修剪后 1-64 个字符，以 ASCII 字母或数字开头，随后为字母、数字、`.`、`-` 或 `_`。 |
 | `database.connectionString` | string | 必填、非空白。按既有核心规则修剪。 |
 | `database.serverVersion` | string 或 null | 可选。省略和显式 `null` 都表示不存在；显式空白字符串会被拒绝。 |
-| `masterKey` | string | `POST` 必填、非空白。按既有核心规则修剪。 |
+| `masterKey` | string | 可选。`POST` 上省略该属性表示由服务端生成；`PUT` 上省略表示保留既有 key。一旦出现就必须是非空字符串（`POST` 与 `PUT` 同规则）。 |
 
-`POST` 要求 `database` 和 `masterKey` 两者。`PUT` 至少要求其中之一，并保留未发送的内容。显式
-`null` 或空白 `masterKey` 在两个方法上都会被拒绝，因此核心的“空白表示保留”规则绝不会让 HTTP
-语义产生歧义。未知的、大小写不同的以及仅存在于磁盘上的名称——`serviceId`、`instanceId`、
-`formatVersion`、`path`、`restartRequired`——都会被拒绝，重复名称也一样，包括用转义写成、解码后
-与另一个名称相同的情况。
+`POST` 要求 `database`；`masterKey` 可省略。`PUT` 至少要求两者之一，并保留未发送的内容。「省略」
+只指属性不出现：显式 `null` 或空白 `masterKey` 在两个方法上都会被拒绝，因此核心的“空白表示保留”
+规则绝不会让 HTTP 语义产生歧义。未知的、大小写不同的以及仅存在于磁盘上的名称——
+`serviceId`、`instanceId`、`formatVersion`、`path`、`restartRequired`——都会被拒绝，重复名称也一样，
+包括用转义写成、解码后与另一个名称相同的情况。
+
+### 省略即由服务端生成
+
+创建请求省略 `masterKey` 时，根密钥由 manager 在同一次 `CreateAsync` 调用内生成：256 位来自
+`RandomNumberGenerator` 的密码学安全熵，编码为 43 字符无填充 Base64URL，可安全地经由 shell、
+YAML 与环境文件复制。生成值随后走与调用方提供值**完全相同**的候选校验与文件写入路径，没有第二
+套规则或第二条写入分支。
+
+- 生成值绝不被返回：不出现在响应体、`BootstrapChangeResult`、`ToString()`、异常消息或任何日志行
+  中。创建成功的响应仍然只有 `201 {"restartRequired":true}`，操作员从 Bootstrap 文件读取 key。
+- 失败不留下部分状态：校验失败、写入失败或调用方取消都不产生文件，生成值被丢弃。
+- 更新条目省略 `masterKey` 的语义完全不变：保留既有 key，绝不生成新 key。
+
+调用方责任：备份 Bootstrap 文件；理解根密钥丢失等于全部受保护数据不可读；在需要「操作员自带
+key」的场景（迁移、恢复）继续显式提供 key。生成值的备份、分发与保管属于运维，ServiceMantle 不提
+供找回、轮换或导出。
 
 结构检查只构建既有的请求值并应用上述规则。它不调用任何 provider。provider 是否已注册、是否
 需要 server version、数据库是否可达，都在之后由 manager 的既有校验器决定——对创建而言，只在
