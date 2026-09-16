@@ -27,7 +27,7 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 | `Health/PostgreSql/` | 仅当 PostgreSQL 启动 gate 打开时接线：`ReferencePostgreSqlHealthSnapshotSource` 每次请求重读安装行，`ReferencePostgreSqlWorkspaceReadinessContributor` 提供业务就绪否决 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) / [#388](https://github.com/philfanzhou/ServiceMantle/issues/388) 交付 |
 | `ExternalManagementIdentityPlaceholder` | gate 关闭路径的未配置 provider；PostgreSQL 路径改用 `ReferenceExternalManagementIdentityProvider`（部署配置的操作员目录） | 由 [#109](https://github.com/philfanzhou/ServiceMantle/issues/109) 交付 |
 | `Logging/` | opt-in 的 Serilog Console 接线与一行已清理的请求日志 | 由 [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) 交付 |
-| `Telemetry/` | opt-in 的基础 ASP.NET Core、HttpClient 与运行时插桩（#158）；opt-in 的阶段指标发布（#521） | 见下文 |
+| `Telemetry/` | opt-in 的基础 ASP.NET Core、HttpClient 与运行时插桩（#158）；opt-in 的阶段指标发布（#521）；opt-in 的管理员会话授权 Prometheus 抓取端点（#520） | 见下文 |
 
 EF SQLite 是消费方的模型载体。启动 gate 关闭时，ServiceMantle 的 SQLite provider 完全不注册：
 默认文件是内容根目录下的 `reference.db`，`ReferenceService:DatabasePath` 可以更改它，而且仅仅
@@ -306,9 +306,9 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- \
 高基数维度，也不读取任何 Header、body、查询或连接字段。
 
 这个开关**不**做的事：不接 OTLP exporter、不接 Prometheus endpoint、不接 `ServiceMetrics`、
-不接健康 endpoint、不接任何服务或安装阶段指标，也不伪造阶段。开关打开时 `/metrics`、
-`/health` 与 `/management` 仍返回 404。这里不创建任何远程导出目标，因此没有注册 exporter 时
-收集到的信号无处可去。那些能力仍属于
+不接健康 endpoint、不接任何服务或安装阶段指标，也不伪造阶段。开关打开时 `/health` 与
+`/management` 仍返回 404；`/metrics` 由下文的独立开关决定。这里不创建任何远程导出目标，因此
+没有注册 exporter 时收集到的信号无处可去。那些能力仍属于
 [#158](https://github.com/philfanzhou/ServiceMantle/issues/158) 及拥有它们的任务。
 
 样例现在对 `ServiceMantle.OpenTelemetry` 及其插桩包是**静态**依赖：无论开关是否打开，它们都
@@ -346,4 +346,32 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- \
   --ReferenceService:PostgreSqlStartup:ConnectionString 'Host=...;Database=...;Username=...;Password=...' \
   --ReferenceService:Management:RootKey '<32+ 字符部署密钥>' \
   --ReferenceService:Telemetry:PhaseMetrics:Enabled true --urls http://127.0.0.1:5080
+```
+
+### Prometheus 抓取端点
+
+`ReferenceService:Telemetry:Prometheus:Enabled` 是第三个显式布尔开关，默认为 `false`，只能与
+PostgreSQL 启动 gate 一起打开——抓取由 gate 注册的管理会话授权，没有 gate 时 `CreateBuilder`
+在任何注册与副作用之前拒绝并只点名两个配置键。
+
+打开时映射包默认的 `/metrics`，授权为既有的 `ServiceMantle.ManagementAdmin` 管理策略：管理员
+通过 `POST /management/v1/session/login` 登录后以会话 cookie 抓取，匿名与只读操作员分别得到
+401 与 403；安装未完成时 phase gate 在认证之前返回 503。关闭时端点不映射（404），容器中没有
+Prometheus 服务。与基础遥测开关互相独立：基础遥测关闭时抓取成功但输出不含任何序列。
+
+不保证：真实 Prometheus 服务器可直接使用本样例抓取（管理 cookie 是样例的授权选择，不是生产
+抓取方案）；`completed` 之前的指标可抓取；指标内容与基数。部署方若要生产抓取，需自行提供适
+合机器身份的认证方案并替换策略名。验收矩阵见
+[`docs/testing/reference-telemetry.md`](../../docs/testing/reference-telemetry.md)。
+
+```bash
+dotnet run --project samples/ServiceMantle.ReferenceService -- \
+  --ReferenceService:PostgreSqlStartup:Enabled true \
+  --ReferenceService:PostgreSqlStartup:ConnectionString 'Host=...;Database=...;Username=...;Password=...' \
+  --ReferenceService:Management:RootKey '<32+ 字符部署密钥>' \
+  --ReferenceService:Management:Operators:0:Id ops-admin \
+  --ReferenceService:Management:Operators:0:Permissions management.read,management.admin \
+  --ReferenceService:Management:Operators:0:Credential '<操作员凭据>' \
+  --ReferenceService:Telemetry:Enabled true \
+  --ReferenceService:Telemetry:Prometheus:Enabled true --urls http://127.0.0.1:5080
 ```

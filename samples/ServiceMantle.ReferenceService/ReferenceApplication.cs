@@ -77,6 +77,21 @@ public static class ReferenceApplication
                 ReferencePostgreSqlStartupOptions.EnabledKey + "' to be true.");
         }
 
+        // Fixed before Build, on the same shape as the other switches: only a value that parses to
+        // true registers the Prometheus scrape endpoint.
+        var prometheus = bool.TryParse(
+            builder.Configuration[ReferenceTelemetryDefaults.PrometheusEnabledKey],
+            out var prometheusEnabled) && prometheusEnabled;
+        if (prometheus && postgresqlOptions is null)
+        {
+            // The scrape is authorized by the management session the gate registers; without the
+            // gate there is no session to authorize with, and anonymous scraping is never opened.
+            throw new InvalidOperationException(
+                "The reference Prometheus endpoint requires the management session: '" +
+                ReferenceTelemetryDefaults.PrometheusEnabledKey + "' needs '" +
+                ReferencePostgreSqlStartupOptions.EnabledKey + "' to be true.");
+        }
+
         var sqliteStartup = sqliteOptions is null
             ? null
             : builder.Services.AddReferenceSqliteStartup(sqliteOptions);
@@ -133,6 +148,19 @@ public static class ReferenceApplication
             mantle.AddServiceMantleManagementEntries();
             builder.Services.AddScoped<ReferenceOperatorCredentialAccessor>();
             builder.Services.AddScoped<IManagementIdentityProvider, ReferenceExternalManagementIdentityProvider>();
+            if (prometheus)
+            {
+                // The authorized scrape endpoint: the path stays the package default /metrics, and
+                // the authorization stays the existing admin policy - no new authentication scheme
+                // or policy of the sample's own, and never anonymous scraping.
+                builder.Services.AddSingleton<ReferencePrometheusRegistration>();
+                mantle.AddOpenTelemetryPrometheusEndpoint(options =>
+                {
+                    options.Enabled = true;
+                    options.AuthorizationPolicyName =
+                        ServiceMantle.AspNetCore.Management.ManagementAuthorizationDefaults.AdminPolicyName;
+                });
+            }
         }
 
         var databasePath = builder.Configuration["ReferenceService:DatabasePath"]
@@ -176,6 +204,12 @@ public static class ReferenceApplication
 
             app.MapServiceMantleManagementSession(ReferenceManagementLoginAdapter.AdaptAsync);
             app.MapServiceMantleHealthEndpoints();
+            if (app.Services.GetService<ReferencePrometheusRegistration>() is not null)
+            {
+                // Mapped only when the switch authorized the registration above; calling the mapper
+                // without that registration would itself throw at startup.
+                app.MapServiceMantlePrometheusEndpoint();
+            }
         }
         else if (loggingActive)
         {
