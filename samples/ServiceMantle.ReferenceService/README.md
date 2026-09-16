@@ -27,7 +27,7 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 | `Health/PostgreSql/` | 仅当 PostgreSQL 启动 gate 打开时接线：`ReferencePostgreSqlHealthSnapshotSource` 每次请求重读安装行，`ReferencePostgreSqlWorkspaceReadinessContributor` 提供业务就绪否决 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) / [#388](https://github.com/philfanzhou/ServiceMantle/issues/388) 交付 |
 | `ExternalManagementIdentityPlaceholder` | gate 关闭路径的未配置 provider；PostgreSQL 路径改用 `ReferenceExternalManagementIdentityProvider`（部署配置的操作员目录） | 由 [#109](https://github.com/philfanzhou/ServiceMantle/issues/109) 交付 |
 | `Logging/` | opt-in 的 Serilog Console 接线与一行已清理的请求日志 | 由 [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) 交付 |
-| `Telemetry/` | opt-in 的基础 ASP.NET Core、HttpClient 与运行时插桩；没有 exporter | [#158](https://github.com/philfanzhou/ServiceMantle/issues/158) |
+| `Telemetry/` | opt-in 的基础 ASP.NET Core、HttpClient 与运行时插桩（#158）；opt-in 的阶段指标发布（#521） | 见下文 |
 
 EF SQLite 是消费方的模型载体。启动 gate 关闭时，ServiceMantle 的 SQLite provider 完全不注册：
 默认文件是内容根目录下的 `reference.db`，`ReferenceService:DatabasePath` 可以更改它，而且仅仅
@@ -320,4 +320,30 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- \
 
 ```bash
 dotnet test --project tests/ServiceMantle.ReferenceService.Tests -c Release
+```
+
+### 安装阶段指标
+
+`ReferenceService:Telemetry:PhaseMetrics:Enabled` 是第二个显式布尔开关，默认为 `false`，只能与
+PostgreSQL 启动 gate 一起打开——没有 gate 就没有权威阶段，`CreateBuilder` 会在任何注册与副作用
+之前拒绝并只点名两个配置键。
+
+打开时，样例注册宿主拥有的 `ServiceMetrics` 发布器，并把权威健康 source
+`ReferencePostgreSqlHealthSnapshotSource` 包进透明的装饰器
+`ReferencePhaseMetricsSnapshotSource`：phase gate 与健康 endpoint 的每次读取都顺带发布阶段指标。
+成功观察发布观察到的阶段；任何非调用方取消的失败（gate 未 Ready、行缺失、数据库不可达）发布
+`unknown`，因此失败后绝不残留 `completed`；调用方取消不发布、保留上次值；宿主已释放发布器时忽略
+其异常。指标是**最后一次**观察：没有轮询、没有缓存、没有后台刷新，部署方需要新鲜值时自行安排
+周期性健康探测（例如 `/health/ready`）。
+
+关闭时注册与之前逐字一致，容器中没有 `ServiceMetrics`，`IServiceHealthSnapshotSource` 仍直接
+解析为权威 source。与基础遥测开关互相独立：阶段指标开启会注册自己的 meter provider，不要求
+`ReferenceService:Telemetry:Enabled`。
+
+```bash
+dotnet run --project samples/ServiceMantle.ReferenceService -- \
+  --ReferenceService:PostgreSqlStartup:Enabled true \
+  --ReferenceService:PostgreSqlStartup:ConnectionString 'Host=...;Database=...;Username=...;Password=...' \
+  --ReferenceService:Management:RootKey '<32+ 字符部署密钥>' \
+  --ReferenceService:Telemetry:PhaseMetrics:Enabled true --urls http://127.0.0.1:5080
 ```

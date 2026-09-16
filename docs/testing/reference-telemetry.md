@@ -17,8 +17,8 @@ OpenTelemetry resource 是被复用的，而不是新建的：它就是 `AddServ
 
 ## 没有接入、也不被暗示的内容
 
-没有 OTLP exporter，没有 Prometheus endpoint 或授权，没有 `ServiceMetrics`，没有健康
-endpoint，没有健康 source，没有 Consul，也没有固定的服务或安装阶段指标。这个开关不制造任何
+没有 OTLP exporter，没有 Prometheus endpoint 或授权，没有健康 endpoint，没有 Consul；固定的
+服务与安装阶段指标由独立开关接入（见下节），不随本开关注册。这个开关不制造任何
 阶段，也不会把示例变成一个报告就绪的服务。无论开关是开还是关，`/metrics`、`/health` 和
 `/management` 都返回 404。这些能力仍然留在
 [#158](https://github.com/philfanzhou/ServiceMantle/issues/158)、
@@ -28,6 +28,35 @@ endpoint，没有健康 source，没有 Consul，也没有固定的服务或安�
 
 既有的日志开关未被触动。日志开启时，关联和 Problem Details 的行为与之前完全一致，遥测不会
 引入第二套认证策略，也不会引入伪造的 `Ready`。
+
+## 阶段指标（#521）
+
+`ReferenceService:Telemetry:PhaseMetrics:Enabled` 是第二个显式布尔开关，默认 `false`，与基础遥测
+开关互相独立，且**只能在 PostgreSQL 启动 gate 下开启**：权威阶段来自 gate 的安装行，没有 gate
+时 `CreateBuilder` 在任何注册与副作用之前抛出 `InvalidOperationException`，消息只点名两个配置键。
+
+打开时注册宿主拥有的 `ServiceMetrics` 发布器（`servicemantle.service.info` 与 one-hot 的
+`servicemantle.installation.phase`），并把权威 source 注册为自身单例、`IServiceHealthSnapshotSource`
+解析为透明装饰器 `ReferencePhaseMetricsSnapshotSource`——phase gate 与健康 endpoint 的每次读取都
+经过它，发布只是副作用。样例中没有其他代码调用 `SetPhase` / `SetUnknown`。
+
+| 观察结果 | 发布 |
+| --- | --- |
+| 成功快照 | `SetPhase(snapshot.Phase)`，同一快照原样返回 |
+| 固定不可用异常或任何其他非取消异常 | `SetUnknown`，同一异常原样抛出 |
+| 调用方取消（`OperationCanceledException` 且调用方 token 已请求取消） | 不发布，保留上次观察，同一异常原样抛出 |
+| 发布器已被宿主释放（`ObjectDisposedException`） | 忽略，观察结果照常返回或抛出 |
+
+关闭时注册与之前逐字一致：无 `ServiceMetrics`、无装饰器，`IServiceHealthSnapshotSource` 仍直接
+解析为 `ReferencePostgreSqlHealthSnapshotSource`（既有注册形状测试不改）。
+
+不保证：指标新鲜度（最后一次观察，没有请求就不刷新，需要新鲜值的部署方自行安排周期性健康探
+测）；并发观察的发布顺序与数据库提交顺序一致（并发读取以任意顺序写入，one-hot 形状仍完整）；
+进程重启后保留上次值（初始为 `unknown`）；导出成功（#522）或可被抓取（#520）。
+
+`ReferencePhaseMetricsTests` 在真实 PostgreSQL 上验收本节矩阵（开关、拒绝、M1–M8、并发 one-hot、
+标签与秘密负向），运行需要 `RUN_SERVICEMANTLE_POSTGRES_TESTS=true` 与 Docker；它加入
+`ReferenceTelemetryCollection` 串行集合，因为 meter 监听状态是进程级的。
 
 ## 矩阵
 
@@ -77,6 +106,8 @@ dotnet test --project tests/ServiceMantle.ReferenceService.Tests -c Release --no
 ```
 
 不需要容器、不需要环境变量、除回环外不需要网络，且这些测试从不被跳过。
+`ReferencePhaseMetricsTests` 例外：它是真实 PostgreSQL 测试类，需要
+`RUN_SERVICEMANTLE_POSTGRES_TESTS=true` 与运行中的 Docker。
 
 单独运行本验收：
 
