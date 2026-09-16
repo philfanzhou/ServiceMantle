@@ -14,12 +14,15 @@ context，其迁移是针对 SQLite 自己的存储类型编写的。`ReferenceP
 
 - `ReferencePostgreSqlDbContext`，把共享的 `ReferenceWorkspace` 业务实体映射到
   `public.reference_workspaces`（存储类型为 `uuid` 和 `character varying(120)`），并通过公开
-  EF Core 持久化包自己的 `AddServiceMantleInstallation` 映射 ServiceMantle 安装表
-  `public.service_installations`——该表的存储类型、长度、默认值与 version 并发 token 由持久化
-  包拥有，示例不复制其映射。
-- 两个迁移：`20260910000000_InitialReferencePostgreSqlWorkspace`（只建 workspace 表）与
-  `20260912000000_AddReferencePostgreSqlInstallation`（只建**空**安装表），以及各自冻结的
-  target model 和最新模型快照。
+  EF Core 持久化包自己的 `AddServiceMantleInstallation`、`AddServiceMantleDataProtectionKeys`、
+  `AddServiceMantleSettings` 与 `AddServiceMantleManagementAudit(PostgreSql)` 映射共享的安装、
+  数据保护 key、配置与管理审计表——这些表的存储类型、长度、默认值、检查约束、索引与 version
+  并发 token 由持久化包拥有，示例不复制其映射。
+- 四个迁移：`20260910000000_InitialReferencePostgreSqlWorkspace`（只建 workspace 表）、
+  `20260912000000_AddReferencePostgreSqlInstallation`（只建**空**安装表）、
+  `20260916000000_AddReferencePostgreSqlDataProtectionKeys`（只建空 key 表）与
+  `20260917000000_AddReferencePostgreSqlSettingsAndAudit`（只建空配置与审计表），以及各自冻结
+  的 target model 和最新模型快照。
 - `ReferencePostgreSqlMigrationExecutor`，一个 `IDatabaseMigrationExecutor`，其观察是只读的，
   其执行是仅涉及 schema 的。
 
@@ -47,6 +50,25 @@ context，其迁移是针对 SQLite 自己的存储类型编写的。`ReferenceP
 `ReferencePostgreSqlInstallationSchemaTests`）；`version` 列是 EF 乐观并发 token，两个独立
 context 以过期 version 保存同一行时，第二个保存得到 EF 并发冲突。那是一次行版本冲突，不是
 双实例 Setup 唯一成功者的证明。
+
+## 配置与审计表交付的精确边界
+
+`20260917000000_AddReferencePostgreSqlSettingsAndAudit` 建立的是两张**空**表，仅此而已。
+`service_settings`（六列、主键、`ck_service_settings_version`）与 `service_audit_logs`（十三列、
+主键、十二个 `ck_service_audit_logs_*` 检查约束、六个 `ix_service_audit_logs_*` 索引）的每个
+facet 都由公开持久化包的映射决定。迁移不插入任何 `service_settings` 行——版本 0 表示「从未保
+存」，这是公开 store 的语义——也不写任何审计行。注册 `IServiceSettingStore`、root-key source、
+设置快照、查询或更新 endpoint、审计 writer 与操作员解析属于后续切片（#518、#519）。
+
+检查器的兼容矩阵不因此扩张：`CurrentVersionCompatible` 仍只检查 `reference_workspaces` 与
+`service_installations` 的列可读性。历史完整但 `service_settings` 或 `service_audit_logs` 被外
+部删除或改动的目标**不属于**矩阵保证，测试不据此判定任何状态；这不是 bug，是声明的非保证。已
+知迁移集合来自 `context.Database.GetMigrations()`，executor 代码无需改动。
+
+三迁移（当前 main 的库）目标被识别为 `PendingMigration`，显式升级后既有 workspace、安装与 key
+行保留，配置与审计表为空。已应用新迁移的库回滚到旧 build 时，旧 build 因未知历史 id 报
+`VersionTooNew` 并拒绝启动（既有 fail-closed 语义）；需要回退的环境须先由运维执行 `Down` 或恢
+复备份。
 
 ## 所有权
 

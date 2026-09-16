@@ -23,20 +23,34 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
     private const string WorkspaceMigration = "20260910000000_InitialReferencePostgreSqlWorkspace";
     private const string InstallationMigration = "20260912000000_AddReferencePostgreSqlInstallation";
     private const string DataProtectionMigration = "20260916000000_AddReferencePostgreSqlDataProtectionKeys";
+    private const string SettingsAuditMigration = "20260917000000_AddReferencePostgreSqlSettingsAndAudit";
     // Synthetic ids dated after every real migration, so the applied history stays a strict prefix
     // of the test-owned known set.
-    private const string FutureMigration = "20260917000000_FutureReferenceStep";
-    private const string LaterMigration = "20260918000000_LaterReferenceStep";
+    private const string FutureMigration = "20260918000000_FutureReferenceStep";
+    private const string LaterMigration = "20260919000000_LaterReferenceStep";
     private const string HistoryTable = "__EFMigrationsHistory";
     private const string WorkspaceTable = "reference_workspaces";
     private const string InstallationTable = "service_installations";
     private const string DataProtectionTable = "service_data_protection_keys";
+    private const string SettingsTable = "service_settings";
+    private const string AuditTable = "service_audit_logs";
 
     private static string[] KnownSet(params string[] extra) =>
-        new[] { WorkspaceMigration, InstallationMigration, DataProtectionMigration }
+        new[] { WorkspaceMigration, InstallationMigration, DataProtectionMigration, SettingsAuditMigration }
             .Concat(extra)
             .Order(StringComparer.Ordinal)
             .ToArray();
+
+    // Rolls a fully migrated target back to the exact schema a build without the settings and
+    // audit migration left behind: both new tables and their history record are gone.
+    private async Task RollBackSettingsAndAuditAsync(string target)
+    {
+        await ExecuteAsync(target, $"""DROP TABLE public."{AuditTable}" """);
+        await ExecuteAsync(target, $"""DROP TABLE public."{SettingsTable}" """);
+        await ExecuteAsync(target, $"""
+            DELETE FROM public."{HistoryTable}" WHERE "MigrationId" = '{SettingsAuditMigration}'
+            """);
+    }
 
     // The ServiceMantle installation table's columns, as named by the public EF Core persistence
     // package's own mapping; each missing one must independently refuse the observation.
@@ -132,6 +146,7 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         await ExecuteAsync(target, $"""
             DELETE FROM public."{HistoryTable}" WHERE "MigrationId" = '{DataProtectionMigration}'
             """);
+        await RollBackSettingsAndAuditAsync(target);
         await using var context = CreateContext(target);
         var executor = new ReferencePostgreSqlMigrationExecutor(context, target);
 
@@ -158,6 +173,7 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         await ExecuteAsync(target, $"""
             DELETE FROM public."{HistoryTable}" WHERE "MigrationId" = '{DataProtectionMigration}'
             """);
+        await RollBackSettingsAndAuditAsync(target);
         await using var context = CreateContext(target);
         var executor = new ReferencePostgreSqlMigrationExecutor(context, target);
 
@@ -169,6 +185,164 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         // The upgrade created the key table and touched no earlier data.
         Assert.Contains(DataProtectionTable, await ReadRelationNamesAsync(target));
         Assert.False(context.Database.HasPendingModelChanges());
+    }
+
+    [Fact]
+    public async Task A_three_migration_target_is_a_pending_upgrade_and_the_settings_and_audit_tables_are_added()
+    {
+        var target = await CreateTargetAsync("three_migration_upgrade");
+        await MigrateAsync(target);
+        // Roll the schema back to exactly what the current main build left behind: workspace,
+        // installation, and key tables with their history, no settings or audit tables.
+        await RollBackSettingsAndAuditAsync(target);
+        var kept = new ReferenceWorkspace { Id = Guid.NewGuid(), DisplayName = "kept" };
+        await using (var seed = CreateContext(target))
+        {
+            seed.Workspaces.Add(kept);
+            await seed.SaveChangesAsync(Token);
+        }
+
+        await using var context = CreateContext(target);
+        var executor = new ReferencePostgreSqlMigrationExecutor(context, target);
+
+        Assert.Equal(MigrationObservationState.PendingMigration, await executor.InspectAsync(Token));
+        await executor.ExecuteAsync(Token);
+
+        Assert.Equal(MigrationObservationState.CurrentVersionCompatible, await executor.InspectAsync(Token));
+        Assert.Equal(KnownSet(), await ReadHistoryAsync(target));
+        var relations = await ReadRelationNamesAsync(target);
+        Assert.Contains(SettingsTable, relations);
+        Assert.Contains(AuditTable, relations);
+        // The upgrade kept earlier data and wrote no settings or audit rows.
+        Assert.Equal(["kept"], await ReadWorkspaceNamesAsync(target));
+        await using (var probe = CreateContext(target))
+        {
+            await probe.Database.OpenConnectionAsync(Token);
+            await using var auditCount = probe.Database.GetDbConnection().CreateCommand();
+            auditCount.CommandText = $"""
+                SELECT (SELECT count(*) FROM public."{SettingsTable}"), (SELECT count(*) FROM public."{AuditTable}")
+                """;
+            await using var reader = await auditCount.ExecuteReaderAsync(Token);
+            Assert.True(await reader.ReadAsync(Token));
+            Assert.Equal(0L, reader.GetInt64(0));
+            Assert.Equal(0L, reader.GetInt64(1));
+        }
+
+        Assert.False(context.Database.HasPendingModelChanges());
+    }
+
+    [Fact]
+    public async Task The_settings_and_audit_schema_matches_the_runtime_model()
+    {
+        var target = await CreateTargetAsync("settings_audit_schema");
+        await MigrateAsync(target);
+
+        var settingsColumns = await ReadColumnFacetsAsync(target, SettingsTable);
+        var auditColumns = await ReadColumnFacetsAsync(target, AuditTable);
+
+        Assert.Equal(
+            new Dictionary<string, (string Type, bool Nullable, int? MaxLength)>
+            {
+                ["service_id"] = ("character varying", false, 128),
+                ["values_json"] = ("text", false, null),
+                ["version"] = ("bigint", false, null),
+                ["updated_at_utc"] = ("timestamp with time zone", false, null),
+                ["updated_by"] = ("character varying", false, 256),
+                ["restart_required"] = ("boolean", false, null),
+            },
+            settingsColumns);
+        Assert.Equal(
+            new Dictionary<string, (string Type, bool Nullable, int? MaxLength)>
+            {
+                ["id"] = ("character varying", false, 36),
+                ["operator_id"] = ("character varying", true, 256),
+                ["operator_display_name"] = ("character varying", true, 256),
+                ["operator_source"] = ("character varying", false, 100),
+                ["action"] = ("character varying", false, 200),
+                ["target_type"] = ("character varying", false, 200),
+                ["target_id"] = ("character varying", false, 256),
+                ["outcome"] = ("integer", false, null),
+                ["occurred_at_utc"] = ("timestamp with time zone", false, null),
+                ["client_ip"] = ("character varying", true, 64),
+                ["correlation_id"] = ("character varying", true, 128),
+                ["security_description"] = ("character varying", true, 4000),
+                ["metadata_json"] = ("character varying", true, 262144),
+            },
+            auditColumns);
+
+        var constraints = await ReadStringsAsync(
+            target,
+            """
+            SELECT con.conname
+            FROM pg_catalog.pg_constraint AS con
+            JOIN pg_catalog.pg_class AS class ON class.oid = con.conrelid
+            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = class.relnamespace
+            WHERE namespace.nspname = 'public'
+                AND class.relname IN ('service_settings', 'service_audit_logs')
+            ORDER BY con.conname
+            """);
+        Assert.Contains("ck_service_settings_version", constraints);
+        // The audit table owns 13 columns and 12 check constraints: the not-empty id check plus 11
+        // byte-length checks, exactly the set the public package's mapping declares.
+        var auditChecks = constraints.Where(name => name.StartsWith("ck_service_audit_logs_", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(12, auditChecks.Length);
+
+        var indexes = await ReadStringsAsync(
+            target,
+            """
+            SELECT indexname
+            FROM pg_catalog.pg_indexes
+            WHERE schemaname = 'public' AND tablename = 'service_audit_logs'
+            ORDER BY indexname
+            """);
+        var auditIndexes = indexes
+            .Where(name => name.StartsWith("ix_service_audit_logs_", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(6, auditIndexes.Length);
+    }
+
+    [Fact]
+    public async Task The_settings_and_audit_check_constraints_hold_at_the_database_layer()
+    {
+        var target = await CreateTargetAsync("settings_audit_constraints");
+        await MigrateAsync(target);
+
+        await using var connection = new NpgsqlConnection(target);
+        await connection.OpenAsync(Token);
+        await using var transaction = await connection.BeginTransactionAsync(Token);
+
+        // Each probe runs against its own savepoint, because a failed PostgreSQL statement aborts
+        // the rest of an unprotected transaction (25P02) before its own SQLSTATE can be observed.
+        var zeroVersion = connection.CreateCommand();
+        zeroVersion.Transaction = transaction;
+        zeroVersion.CommandText = """
+            INSERT INTO public."service_settings"
+                (service_id, values_json, version, updated_at_utc, updated_by, restart_required)
+            VALUES ('constraint-probe', '{}', 0, '2026-09-17T00:00:00Z', 'probe', false)
+            """;
+        await transaction.SaveAsync("settings_probe", Token);
+        var zeroVersionFailure = await Assert.ThrowsAsync<PostgresException>(
+            () => zeroVersion.ExecuteNonQueryAsync(Token));
+        Assert.Equal("23514", zeroVersionFailure.SqlState);
+        await transaction.RollbackAsync("settings_probe", Token);
+
+        var emptyId = connection.CreateCommand();
+        emptyId.Transaction = transaction;
+        emptyId.CommandText = """
+            INSERT INTO public."service_audit_logs"
+                (id, operator_source, action, target_type, target_id, outcome, occurred_at_utc)
+            VALUES ('00000000-0000-0000-0000-000000000000', 'probe', 'probe', 'probe', 'probe', 0, '2026-09-17T00:00:00Z')
+            """;
+        await transaction.SaveAsync("audit_probe", Token);
+        var emptyIdFailure = await Assert.ThrowsAsync<PostgresException>(
+            () => emptyId.ExecuteNonQueryAsync(Token));
+        Assert.Equal("23514", emptyIdFailure.SqlState);
+        await transaction.RollbackAsync("audit_probe", Token);
+
+        // The probe statements all failed, so the rollback leaves both tables empty.
+        await transaction.RollbackAsync(Token);
+        Assert.Empty(await ReadStringsAsync(target, $"""SELECT service_id FROM public."{SettingsTable}" """));
+        Assert.Empty(await ReadStringsAsync(target, $"""SELECT id FROM public."{AuditTable}" """));
     }
 
     [Fact]
@@ -654,6 +828,33 @@ public sealed class ReferencePostgreSqlMigrationTests : IAsyncLifetime
         }
 
         return values;
+    }
+
+    private async Task<Dictionary<string, (string Type, bool Nullable, int? MaxLength)>> ReadColumnFacetsAsync(
+        string connectionString,
+        string tableName)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(Token);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT column_name, data_type, is_nullable, character_maximum_length
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = $1
+            ORDER BY ordinal_position
+            """;
+        command.Parameters.AddWithValue(tableName);
+        var columns = new Dictionary<string, (string Type, bool Nullable, int? MaxLength)>(StringComparer.Ordinal);
+        await using var reader = await command.ExecuteReaderAsync(Token);
+        while (await reader.ReadAsync(Token))
+        {
+            columns[reader.GetString(0)] = (
+                reader.GetString(1),
+                string.Equals(reader.GetString(2), "YES", StringComparison.Ordinal),
+                reader.IsDBNull(3) ? null : reader.GetInt32(3));
+        }
+
+        return columns;
     }
 
     private async Task<Dictionary<string, string>> ReadWorkspaceColumnTypesAsync(string connectionString)

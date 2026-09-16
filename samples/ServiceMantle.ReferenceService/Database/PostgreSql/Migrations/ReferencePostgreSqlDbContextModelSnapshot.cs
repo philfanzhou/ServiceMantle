@@ -7,5 +7,5 @@ namespace ServiceMantle.ReferenceService.Database.PostgreSql.Migrations;
 public sealed class ReferencePostgreSqlDbContextModelSnapshot : ModelSnapshot
 {
     protected override void BuildModel(ModelBuilder modelBuilder) =>
-        CurrentReferencePostgreSqlModelWithProtectionKeys.Build(modelBuilder);
+        CurrentReferencePostgreSqlModelWithSettingsAndAudit.Build(modelBuilder);
 }
