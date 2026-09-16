@@ -156,7 +156,9 @@ public sealed class ServiceSettingUpdateCancellationTests
         };
         var service = CreateService(transaction);
 
-        var result = await service.UpdateAsync(Command(0, ("product.name", "B")));
+        var result = await service.UpdateAsync(
+            Command(0, ("product.name", "B")),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ServiceSettingUpdateStatus.StorageFailed, result.Status);
         Assert.Equal(0, transaction.ApplyCalls);
@@ -172,7 +174,9 @@ public sealed class ServiceSettingUpdateCancellationTests
         };
         var service = CreateService(transaction);
 
-        var result = await service.UpdateAsync(Command(0, ("product.name", "B")));
+        var result = await service.UpdateAsync(
+            Command(0, ("product.name", "B")),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ServiceSettingUpdateStatus.StorageFailed, result.Status);
     }
@@ -195,7 +199,9 @@ public sealed class ServiceSettingUpdateCancellationTests
 
         Assert.Equal(
             ServiceSettingUpdateStatus.StorageFailed,
-            (await updateService.UpdateAsync(Command(0, ("product.name", "B")))).Status);
+            (await updateService.UpdateAsync(
+                Command(0, ("product.name", "B")),
+                TestContext.Current.CancellationToken)).Status);
 
         transaction.Snapshot = new ServiceSettingStoreSnapshot(
             service,
@@ -206,7 +212,9 @@ public sealed class ServiceSettingUpdateCancellationTests
             restartRequired: false);
         Assert.Equal(
             ServiceSettingUpdateStatus.VersionConflict,
-            (await updateService.UpdateAsync(Command(0, ("product.name", "B")))).Status);
+            (await updateService.UpdateAsync(
+                Command(0, ("product.name", "B")),
+                TestContext.Current.CancellationToken)).Status);
 
         transaction.Snapshot = new ServiceSettingStoreSnapshot(
             service,
@@ -217,7 +225,9 @@ public sealed class ServiceSettingUpdateCancellationTests
             restartRequired: false);
         Assert.Equal(
             ServiceSettingUpdateStatus.VersionExhausted,
-            (await updateService.UpdateAsync(Command(long.MaxValue, ("product.name", "B")))).Status);
+            (await updateService.UpdateAsync(
+                Command(long.MaxValue, ("product.name", "B")),
+                TestContext.Current.CancellationToken)).Status);
     }
 
     [Fact]
@@ -260,7 +270,9 @@ public sealed class ServiceSettingUpdateCancellationTests
         var transaction = new FakeTransaction();
         var service = CreateService(transaction, rootKeySource, sensitive: true);
 
-        var result = await service.UpdateAsync(Command(0, ("product.secret", "raw-value")));
+        var result = await service.UpdateAsync(
+            Command(0, ("product.secret", "raw-value")),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ServiceSettingUpdateStatus.ProtectionFailed, result.Status);
         Assert.Equal(0, transaction.ApplyCalls);
@@ -309,7 +321,9 @@ public sealed class ServiceSettingUpdateCancellationTests
         var transaction = new FakeTransaction();
         var service = CreateService(transaction);
 
-        var result = await service.UpdateAsync(Command(0, ("product.name", "B"), ("count", "not-a-number")));
+        var result = await service.UpdateAsync(
+            Command(0, ("product.name", "B"), ("count", "not-a-number")),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ServiceSettingUpdateStatus.ValidationFailed, result.Status);
         Assert.Equal(1, transaction.LoadCalls);
@@ -334,7 +348,9 @@ public sealed class ServiceSettingUpdateCancellationTests
 
         var firstTask = Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             firstService.UpdateAsync(Command(0, ("product.name", "B")), firstCts.Token).AsTask());
-        var secondResult = await secondService.UpdateAsync(Command(0, ("product.name", "C")));
+        var secondResult = await secondService.UpdateAsync(
+            Command(0, ("product.name", "C")),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(firstCts.Token, (await firstTask).CancellationToken);
         Assert.Equal(ServiceSettingUpdateStatus.Applied, secondResult.Status);

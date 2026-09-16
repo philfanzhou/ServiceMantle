@@ -117,18 +117,24 @@ public sealed class ManagementIdentityCancellationTests
     {
         var identity = Authenticated().Identity!;
         var authenticated = await ManagementIdentityProviderInvoker.InvokeAsync(
-            new TrackingProvider(_ => ValueTask.FromResult(ManagementIdentityResult.Authenticated(identity))));
+            new TrackingProvider(_ => ValueTask.FromResult(ManagementIdentityResult.Authenticated(identity))),
+            TestContext.Current.CancellationToken);
         var unauthenticated = await ManagementIdentityProviderInvoker.InvokeAsync(
-            new TrackingProvider(_ => ValueTask.FromResult(ManagementIdentityResult.Unauthenticated())));
+            new TrackingProvider(_ => ValueTask.FromResult(ManagementIdentityResult.Unauthenticated())),
+            TestContext.Current.CancellationToken);
         var failed = await ManagementIdentityProviderInvoker.InvokeAsync(
-            new TrackingProvider(_ => ValueTask.FromResult(ManagementIdentityResult.Failed("upstream.unavailable"))));
+            new TrackingProvider(_ => ValueTask.FromResult(ManagementIdentityResult.Failed("upstream.unavailable"))),
+            TestContext.Current.CancellationToken);
         var nullResult = await ManagementIdentityProviderInvoker.InvokeAsync(
-            new TrackingProvider(_ => ValueTask.FromResult<ManagementIdentityResult>(null!)));
+            new TrackingProvider(_ => ValueTask.FromResult<ManagementIdentityResult>(null!)),
+            TestContext.Current.CancellationToken);
         var thrown = await ManagementIdentityProviderInvoker.InvokeAsync(
-            new TrackingProvider(_ => throw new InvalidOperationException(Canary)));
+            new TrackingProvider(_ => throw new InvalidOperationException(Canary)),
+            TestContext.Current.CancellationToken);
         using var internalCts = new CancellationTokenSource();
         var internalCancel = await ManagementIdentityProviderInvoker.InvokeAsync(
-            new TrackingProvider(_ => throw new OperationCanceledException(internalCts.Token)));
+            new TrackingProvider(_ => throw new OperationCanceledException(internalCts.Token)),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(ManagementIdentityStatus.Authenticated, authenticated.Status);
         Assert.Same(identity, authenticated.Identity);

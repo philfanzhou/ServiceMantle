@@ -504,8 +504,10 @@ public sealed class ManagementSessionCompletionCancellationTests
 
         internal Func<ManagementCurrentOperatorResult?>? OnResolve { get; set; }
 
-        public ManagementCurrentOperatorResult? Resolve(ClaimsPrincipal? principal) =>
-            OnResolve is { } onResolve ? onResolve() : Result;
+        // Forwards a scripted null on purpose: the tests drive a resolver that violates the
+        // non-null contract to prove the handler never delivers it after cancellation.
+        public ManagementCurrentOperatorResult Resolve(ClaimsPrincipal? principal) =>
+            (OnResolve is { } onResolve ? onResolve() : Result)!;
     }
 
     /// <summary>A response whose header dictionary and started flag the test drives directly.</summary>
@@ -771,14 +773,14 @@ public sealed class ManagementSessionCompletionCancellationTests
     {
         private readonly WebApplication application;
         private readonly HttpClient client;
-        private readonly Func<string[]> observedSetCookie;
+        private readonly Func<string?[]> observedSetCookie;
         private readonly Func<CancellationToken?> observedCancellation;
         private readonly Func<CancellationToken> requestToken;
 
         private CompletionHostFixture(
             WebApplication application,
             HttpClient client,
-            Func<string[]> observedSetCookie,
+            Func<string?[]> observedSetCookie,
             Func<CancellationToken?> observedCancellation,
             Func<CancellationToken> requestToken)
         {
@@ -791,7 +793,7 @@ public sealed class ManagementSessionCompletionCancellationTests
 
         internal CancellationToken RequestToken => requestToken();
 
-        internal string[] ObservedSetCookie => observedSetCookie();
+        internal string?[] ObservedSetCookie => observedSetCookie();
 
         internal CancellationToken? ObservedCancellation => observedCancellation();
 
@@ -799,7 +801,7 @@ public sealed class ManagementSessionCompletionCancellationTests
 
         internal static async Task<CompletionHostFixture> StartAsync(bool cancelOnSignedIn)
         {
-            string[] observed = [];
+            string?[] observed = [];
             CancellationToken? surfaced = null;
             // The session handler captures RequestAborted once at entry, so the fixture must swap
             // the token before the pipeline runs, not inside the sign-in callback.
