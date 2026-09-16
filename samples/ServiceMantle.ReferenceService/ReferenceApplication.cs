@@ -48,6 +48,9 @@ public static class ReferenceApplication
         // instrumentation. No exporter, no Prometheus endpoint, and no fixed phase metric is wired
         // here - those stay with the tasks that own them.
         mantle.AddReferenceTelemetry(builder.Configuration);
+        // Explicit and fixed before Build, independent of the base instrumentation switch: the
+        // OTLP exporters register only for the signals whose own Enabled key parses to true.
+        mantle.AddReferenceOtlp(builder.Configuration, builder.Environment);
         // Explicit and fixed before Build. When a switch is off nothing below changes, and an
         // unusable input fails here - before a provider, a file, a network, or EF is touched. Both
         // gates are read first so that enabling both is refused before any gate registration or
