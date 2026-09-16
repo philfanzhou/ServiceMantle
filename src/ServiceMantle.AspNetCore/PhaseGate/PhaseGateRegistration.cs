@@ -39,7 +39,17 @@ internal sealed class PhaseGateState(IEnumerable<PhaseGateRegistration> registra
         {
             var path = endpoint.RoutePattern.RawText ?? "";
             var markers = endpoint.Metadata.GetOrderedMetadata<ManagementSurfaceMetadata>();
+            var admissions = endpoint.Metadata.GetOrderedMetadata<PhaseAdmissionMetadata>();
             if (markers.Count > 1 || markers.Any(marker => !Enum.IsDefined(marker.Surface))) throw Failure();
+            // A phase admission marker belongs to consumer endpoints outside the management prefix
+            // only: exactly one marker, a non-empty set, and defined phase values.
+            if (admissions.Count > 1 ||
+                admissions.Count == 1 && (Under(path, configuration.Prefix) ||
+                    admissions[0].Phases.Count == 0 ||
+                    admissions[0].Phases.Any(phase => !Enum.IsDefined(phase))))
+            {
+                throw Failure();
+            }
             if (markers.Count == 1)
             {
                 if (!Matches(path, configuration.Prefix, markers[0].Surface)) throw Failure();
