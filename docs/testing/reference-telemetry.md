@@ -17,8 +17,8 @@ OpenTelemetry resource 是被复用的，而不是新建的：它就是 `AddServ
 
 ## 没有接入、也不被暗示的内容
 
-没有 OTLP exporter，没有健康 endpoint，没有 Consul；固定的服务与安装阶段指标与 Prometheus
-抓取端点分别由独立开关接入（见下文各节），不随本开关注册。这个开关不制造任何
+没有健康 endpoint，没有 Consul；固定的服务与安装阶段指标、Prometheus 抓取端点与 OTLP 导出
+分别由独立开关或配置键接入（见下文各节），不随本开关注册。这个开关不制造任何
 阶段，也不会把示例变成一个报告就绪的服务。仅打开本开关时，`/metrics`、`/health` 和
 `/management` 仍返回 404。这些能力仍然留在
 [#158](https://github.com/philfanzhou/ServiceMantle/issues/158)、
@@ -93,6 +93,44 @@ PostgreSQL 启动 gate 下开启**：抓取由 gate 注册的管理会话授权�
 `ReferencePrometheusTests` 在真实 PostgreSQL 上验收本节矩阵（真实登录夹具、P3–P10 全行、秘密
 负向、停止与释放），运行需要 `RUN_SERVICEMANTLE_POSTGRES_TESTS=true` 与 Docker；它加入
 `ReferenceTelemetryCollection` 串行集合。
+
+## OTLP 导出（#522）
+
+`ReferenceService:Telemetry:Otlp:` 下的一组显式配置键，Build 前一次性读取，不热更新：
+
+- `Traces:Enabled` / `Traces:Protocol` / `Traces:Endpoint`，`Metrics:Enabled` / `Metrics:Protocol` /
+  `Metrics:Endpoint`（Protocol 只接受 `Grpc` 或 `HttpProtobuf`，区分大小写，缺省 `Grpc`）；
+- `Authentication:HeaderName` / `Authentication:HeaderValue`（值是秘密，两者必须同时存在或同时
+  缺失）；
+- `AllowInsecureLoopbackForTesting`（仅 Development 生效，其他环境忽略）。
+
+两个信号的 `Enabled` 都不为 `true` 时不调用 `AddOpenTelemetryOtlpExporter`，也不注册解析器，
+容器中没有 `ServiceMantle.OpenTelemetry.Otlp` 命名空间的服务。样例只做解析：无法识别的
+`Protocol`、非绝对 URI 的 `Endpoint`、只有一半的认证键都在 `CreateBuilder` 失败且不回显值；缺
+失的 `Endpoint` 传 `null`，由包在启动时报 `otlp.endpoint_required`；HTTPS、超时与批量边界全部交
+给包的启动校验，样例不暴露也不改动批量配置。认证齐全时注册样例内解析器（只认查找名
+`reference-otlp`），头名与头值的合法性归包。OTLP 与基础遥测开关相互独立：基础遥测关闭时启用
+OTLP 合法，只是没有数据可导出。
+
+| 配置 | 环境 | 结果 |
+| --- | --- | --- |
+| 两个 `Enabled` 都不为 true | 任意 | 无 OTLP 注册、无解析器，宿主正常启动 |
+| Traces 开、HttpProtobuf、回环端点、回环开关、完整认证 | Development | 启动成功；请求后 `ForceFlush`，collector 收到 `POST /v1/traces`（`application/x-protobuf`、配置的 `Authorization`、非空体） |
+| Metrics 开、HttpProtobuf、回环端点、基础遥测开 | Development | `MeterProvider.ForceFlush` 后收到 `POST /v1/metrics` |
+| 同上 Traces 配置 | Production | `StartAsync` 以 `OtlpConfigurationException`（`otlp.insecure_endpoint`）失败，`ApplicationStarted` 未触发 |
+| `Protocol = http` 等无法识别值 | 任意 | `CreateBuilder` 抛 `InvalidOperationException`，只点名对应 `Protocol` 键 |
+| `Endpoint = not a uri` | 任意 | `CreateBuilder` 抛 `InvalidOperationException`，只点名对应 `Endpoint` 键 |
+| 缺 `Endpoint` | 任意 | 启动失败 `otlp.endpoint_required` |
+| 只有 `HeaderName` 或只有 `HeaderValue` | 任意 | `CreateBuilder` 抛 `InvalidOperationException`，只点名两个认证键 |
+| collector 端口无人监听 | Development | 启动成功；`GET /` 200；`StopAsync` 在宿主关闭超时内完成；不重试 |
+| 启动前 token 已取消 | Development | `StartAsync` 抛取消，`ApplicationStarted` 未触发，解析器未被调用 |
+
+不保证：导出成功、送达、顺序或无丢失（包与上游 SDK 的既有非保证）；collector 不可达时的重
+试；上游 exporter 自身日志的脱敏；非 Development 环境下的任何测试便利。调用方责任：生产环境提
+供 HTTPS collector 与认证头，不要在部署配置中设置回环测试开关。
+
+`ReferenceOtlpTests` 验收本节矩阵（回环 collector 沿用 OTLP 包测试的写法），不需要容器，CI 常规
+测试即可；它加入 `ReferenceTelemetryCollection` 串行集合。
 
 ## 矩阵
 

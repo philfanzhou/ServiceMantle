@@ -27,7 +27,7 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 | `Health/PostgreSql/` | 仅当 PostgreSQL 启动 gate 打开时接线：`ReferencePostgreSqlHealthSnapshotSource` 每次请求重读安装行，`ReferencePostgreSqlWorkspaceReadinessContributor` 提供业务就绪否决 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) / [#388](https://github.com/philfanzhou/ServiceMantle/issues/388) 交付 |
 | `ExternalManagementIdentityPlaceholder` | gate 关闭路径的未配置 provider；PostgreSQL 路径改用 `ReferenceExternalManagementIdentityProvider`（部署配置的操作员目录） | 由 [#109](https://github.com/philfanzhou/ServiceMantle/issues/109) 交付 |
 | `Logging/` | opt-in 的 Serilog Console 接线与一行已清理的请求日志 | 由 [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) 交付 |
-| `Telemetry/` | opt-in 的基础 ASP.NET Core、HttpClient 与运行时插桩（#158）；opt-in 的阶段指标发布（#521）；opt-in 的管理员会话授权 Prometheus 抓取端点（#520） | 见下文 |
+| `Telemetry/` | opt-in 的基础 ASP.NET Core、HttpClient 与运行时插桩（#158）；opt-in 的阶段指标发布（#521）；opt-in 的管理员会话授权 Prometheus 抓取端点（#520）；opt-in 的 OTLP traces/metrics 导出（#522） | 见下文 |
 
 EF SQLite 是消费方的模型载体。启动 gate 关闭时，ServiceMantle 的 SQLite provider 完全不注册：
 默认文件是内容根目录下的 `reference.db`，`ReferenceService:DatabasePath` 可以更改它，而且仅仅
@@ -305,10 +305,10 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- \
 `AddServiceMantle` 已注册的身份——服务名、服务版本与实例 ID——因此样例不贡献任何属性、任何
 高基数维度，也不读取任何 Header、body、查询或连接字段。
 
-这个开关**不**做的事：不接 OTLP exporter、不接 Prometheus endpoint、不接 `ServiceMetrics`、
-不接健康 endpoint、不接任何服务或安装阶段指标，也不伪造阶段。开关打开时 `/health` 与
-`/management` 仍返回 404；`/metrics` 由下文的独立开关决定。这里不创建任何远程导出目标，因此
-没有注册 exporter 时收集到的信号无处可去。那些能力仍属于
+这个开关**不**做的事：不接 OTLP exporter（见下文的独立配置键）、不接 Prometheus endpoint、
+不接 `ServiceMetrics`、不接健康 endpoint、不接任何服务或安装阶段指标，也不伪造阶段。开关打开时
+`/health` 与 `/management` 仍返回 404；`/metrics` 由下文的独立开关决定。这里不创建任何远程导出
+目标，因此没有注册 exporter 时收集到的信号无处可去。那些能力仍属于
 [#158](https://github.com/philfanzhou/ServiceMantle/issues/158) 及拥有它们的任务。
 
 样例现在对 `ServiceMantle.OpenTelemetry` 及其插桩包是**静态**依赖：无论开关是否打开，它们都
@@ -375,3 +375,32 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- \
   --ReferenceService:Telemetry:Enabled true \
   --ReferenceService:Telemetry:Prometheus:Enabled true --urls http://127.0.0.1:5080
 ```
+
+### OTLP 导出
+
+`ReferenceService:Telemetry:Otlp:` 下的一组显式配置键（Build 前一次性读取，不热更新）：
+
+- `Traces:Enabled` / `Metrics:Enabled`（默认关）；`Traces:Protocol` / `Metrics:Protocol` 只接受
+  `Grpc` 或 `HttpProtobuf`（区分大小写，缺省 `Grpc`）；`Traces:Endpoint` / `Metrics:Endpoint`
+  必须是绝对 URI，缺失由包在启动时报 `otlp.endpoint_required`；
+- `Authentication:HeaderName` / `Authentication:HeaderValue`（值是秘密，两者同时存在或同时缺
+  失；齐全时已启用信号带查找名 `reference-otlp`）；
+- `AllowInsecureLoopbackForTesting`：仅 Development 生效，其他环境忽略并由包拒绝回环 HTTP。
+
+两个信号都未启用时不注册任何 exporter 或解析器。OTLP 与基础遥测开关相互独立：基础遥测关闭时
+启用 OTLP 合法，只是没有数据可导出。样例不暴露超时与批量配置，HTTPS 与头部合法性归公开包的
+启动校验；头值不出现在样例自己的日志、异常或 `ToString()` 中。
+
+```bash
+dotnet run --project samples/ServiceMantle.ReferenceService -- \
+  --ReferenceService:Telemetry:Enabled true \
+  --ReferenceService:Telemetry:Otlp:Traces:Enabled true \
+  --ReferenceService:Telemetry:Otlp:Traces:Protocol HttpProtobuf \
+  --ReferenceService:Telemetry:Otlp:Traces:Endpoint https://collector.example/v1/traces \
+  --ReferenceService:Telemetry:Otlp:Authentication:HeaderName Authorization \
+  --ReferenceService:Telemetry:Otlp:Authentication:HeaderValue '<部署提供的认证头>' \
+  --urls http://127.0.0.1:5080
+```
+
+验收矩阵见
+[`docs/testing/reference-telemetry.md`](../../docs/testing/reference-telemetry.md)。
