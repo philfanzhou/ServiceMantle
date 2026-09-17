@@ -17,10 +17,10 @@ OpenTelemetry resource 是被复用的，而不是新建的：它就是 `AddServ
 
 ## 没有接入、也不被暗示的内容
 
-没有 OTLP exporter，没有 Prometheus endpoint 或授权，没有健康 endpoint，没有 Consul；固定的
-服务与安装阶段指标由独立开关接入（见下节），不随本开关注册。这个开关不制造任何
-阶段，也不会把示例变成一个报告就绪的服务。无论开关是开还是关，`/metrics`、`/health` 和
-`/management` 都返回 404。这些能力仍然留在
+没有 OTLP exporter，没有健康 endpoint，没有 Consul；固定的服务与安装阶段指标与 Prometheus
+抓取端点分别由独立开关接入（见下文各节），不随本开关注册。这个开关不制造任何
+阶段，也不会把示例变成一个报告就绪的服务。仅打开本开关时，`/metrics`、`/health` 和
+`/management` 仍返回 404。这些能力仍然留在
 [#158](https://github.com/philfanzhou/ServiceMantle/issues/158)、
 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 和
 [#109](https://github.com/philfanzhou/ServiceMantle/issues/109) 中；这里的内容不能作为
@@ -57,6 +57,42 @@ OpenTelemetry resource 是被复用的，而不是新建的：它就是 `AddServ
 `ReferencePhaseMetricsTests` 在真实 PostgreSQL 上验收本节矩阵（开关、拒绝、M1–M8、并发 one-hot、
 标签与秘密负向），运行需要 `RUN_SERVICEMANTLE_POSTGRES_TESTS=true` 与 Docker；它加入
 `ReferenceTelemetryCollection` 串行集合，因为 meter 监听状态是进程级的。
+
+## Prometheus 抓取端点（#520）
+
+`ReferenceService:Telemetry:Prometheus:Enabled` 是第三个显式布尔开关，默认 `false`，**只能在
+PostgreSQL 启动 gate 下开启**：抓取由 gate 注册的管理会话授权，没有 gate 时 `CreateBuilder` 在
+任何注册与副作用之前抛出 `InvalidOperationException`，消息只点名两个配置键（与双启动门拒绝同
+形状）。
+
+打开时在管理注册之后调用 `AddOpenTelemetryPrometheusEndpoint`：路径固定为包默认 `/metrics`（不
+暴露路径配置），授权固定为既有 `ServiceMantle.ManagementAdmin` 策略——样例不新建认证方案或策
+略，不开放匿名抓取，测试不直接签发 cookie，必须走 `POST /management/v1/session/login`。开关状
+态经样例内注册标记 `ReferencePrometheusRegistration` 传递，`Build` 只在标记存在时调用
+`MapServiceMantlePrometheusEndpoint()`。`/metrics` 不加阶段放行标记，仍受 phase gate 约束：未就
+绪时 gate 在认证之前返回 503。
+
+| 入口与状态 | `GET /metrics` 结果 |
+| --- | --- |
+| Prometheus 关（缺失/false/空/yes/1） | 404，容器无 `ServiceMantle.OpenTelemetry.Prometheus` 服务 |
+| Prometheus 开、PostgreSQL 关 | `CreateBuilder` 抛 `InvalidOperationException`，无副作用 |
+| gate 未 Ready 或安装 Pending | 503 `{"errorCode":"service.phase.unavailable"}`（gate，认证之前） |
+| Completed，无 cookie | 401 |
+| Completed，`management.read` 操作员 | 403 `{"errorCode":"management.session.forbidden"}`，不含任何指标文本 |
+| Completed，`management.admin`，基础遥测开 | 200，Prometheus 文本格式，含 `dotnet_` 运行时序列 |
+| Completed，`management.admin`，基础遥测关 | 200，无任何序列 |
+| 同上身份，`HEAD` / `POST` | 200 无体 / 405 |
+| 调用方中止请求 | 以调用方取消结束，宿主继续服务下一个请求 |
+| 宿主停止中 | 503 空响应（包的 stopping 语义） |
+
+不保证：真实 Prometheus 服务器可直接使用本样例抓取（它需要管理 cookie，这是样例的授权选择，
+不是生产抓取方案）；`completed` 之前的指标可抓取；指标内容与基数（归上游插桩）。包的 4 并发
+抓取上限已由 #88 验收，样例不重复验证。部署方若要生产抓取，需自行提供适合机器身份的认证方
+案与策略并替换策略名。
+
+`ReferencePrometheusTests` 在真实 PostgreSQL 上验收本节矩阵（真实登录夹具、P3–P10 全行、秘密
+负向、停止与释放），运行需要 `RUN_SERVICEMANTLE_POSTGRES_TESTS=true` 与 Docker；它加入
+`ReferenceTelemetryCollection` 串行集合。
 
 ## 矩阵
 
@@ -106,7 +142,7 @@ dotnet test --project tests/ServiceMantle.ReferenceService.Tests -c Release --no
 ```
 
 不需要容器、不需要环境变量、除回环外不需要网络，且这些测试从不被跳过。
-`ReferencePhaseMetricsTests` 例外：它是真实 PostgreSQL 测试类，需要
+`ReferencePhaseMetricsTests` 与 `ReferencePrometheusTests` 例外：它们是真实 PostgreSQL 测试类，需要
 `RUN_SERVICEMANTLE_POSTGRES_TESTS=true` 与运行中的 Docker。
 
 单独运行本验收：

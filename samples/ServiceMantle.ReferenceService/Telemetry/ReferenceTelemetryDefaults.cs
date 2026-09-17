@@ -20,4 +20,14 @@ public static class ReferenceTelemetryDefaults
     /// comes from that gate's installation row.
     /// </remarks>
     public const string PhaseMetricsEnabledKey = "ReferenceService:Telemetry:PhaseMetrics:Enabled";
+
+    /// <summary>The explicit boolean switch that maps the authorized Prometheus scrape endpoint.</summary>
+    /// <remarks>
+    /// The switch defaults to <c>false</c>. A missing, empty, or unparsable value leaves the
+    /// endpoint unmapped, so <c>/metrics</c> stays a 404 and no Prometheus-owned service is
+    /// registered. The value is read before the host is built, is fixed, and is never reloaded. It
+    /// can only be enabled together with the PostgreSQL startup gate, because the scrape is
+    /// authorized by the management session that gate registers.
+    /// </remarks>
+    public const string PrometheusEnabledKey = "ReferenceService:Telemetry:Prometheus:Enabled";
 }
