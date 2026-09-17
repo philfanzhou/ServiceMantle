@@ -62,6 +62,21 @@ public static class ReferenceApplication
                 ReferencePostgreSqlStartupOptions.EnabledKey + "' cannot both be true.");
         }
 
+        // Fixed before Build, on the same shape as the other switches: only a value that parses to
+        // true registers the ServiceMetrics publisher and the publishing snapshot decorator.
+        var phaseMetrics = bool.TryParse(
+            builder.Configuration[ReferenceTelemetryDefaults.PhaseMetricsEnabledKey],
+            out var phaseMetricsEnabled) && phaseMetricsEnabled;
+        if (phaseMetrics && postgresqlOptions is null)
+        {
+            // The authoritative phase comes from the gate's installation row; without the gate
+            // there is nothing authoritative to publish, and no second phase source is invented.
+            throw new InvalidOperationException(
+                "The reference phase metric requires the PostgreSQL startup gate: '" +
+                ReferenceTelemetryDefaults.PhaseMetricsEnabledKey + "' needs '" +
+                ReferencePostgreSqlStartupOptions.EnabledKey + "' to be true.");
+        }
+
         var sqliteStartup = sqliteOptions is null
             ? null
             : builder.Services.AddReferenceSqliteStartup(sqliteOptions);
@@ -76,9 +91,22 @@ public static class ReferenceApplication
             // registered here is the business one; the placeholder contributor below is deliberately
             // not registered, because both share Order 100 and the health validator refuses a
             // duplicate order at startup.
-            builder.Services.AddSingleton<
-                IServiceHealthSnapshotSource,
-                ReferencePostgreSqlHealthSnapshotSource>();
+            if (phaseMetrics)
+            {
+                // The single publishing point: the host-owned ServiceMetrics publisher, fed by every
+                // observation of the authoritative source. The source itself stays the registered
+                // implementation; IServiceHealthSnapshotSource resolves to the transparent
+                // decorator, so the phase gate and the health endpoints observe through it too.
+                mantle.AddServiceMantleMetrics();
+                builder.Services.AddSingleton<ReferencePostgreSqlHealthSnapshotSource>();
+                builder.Services.AddSingleton<IServiceHealthSnapshotSource, ReferencePhaseMetricsSnapshotSource>();
+            }
+            else
+            {
+                builder.Services.AddSingleton<
+                    IServiceHealthSnapshotSource,
+                    ReferencePostgreSqlHealthSnapshotSource>();
+            }
             mantle.AddServiceMantleHealthEndpoints();
             mantle.AddServiceReadinessContributor<ReferencePostgreSqlWorkspaceReadinessContributor>();
             // The management session rides the same gate: the external identity comes from the
