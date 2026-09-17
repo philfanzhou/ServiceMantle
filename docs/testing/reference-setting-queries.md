@@ -1,9 +1,18 @@
-# 参考服务设置项查询验收
+# 参考服务设置项查询与更新验收
 
-`tests/ServiceMantle.ReferenceService.Tests/ReferenceSettingQueryTests.cs` 验收样例的两个只读设置
-查询 endpoint（`GET /management/v1/settings/definitions` 与 `GET /management/v1/settings`）的真实
-接线：真实 PostgreSQL（Testcontainers）、真实 `ReferenceApplication` 组合路径、真实管理登录。契约
-本体见 [`docs/contracts/management-setting-queries.md`](../contracts/management-setting-queries.md)。
+本文件是查询与更新两套验收的共用说明：运行命令、容器与环境变量完全一致，矩阵各自成节。
+
+- `tests/ServiceMantle.ReferenceService.Tests/ReferenceSettingQueryTests.cs` 验收样例的两个只读
+  设置查询 endpoint（`GET /management/v1/settings/definitions` 与 `GET /management/v1/settings`）
+  的真实接线。契约本体见
+  [`docs/contracts/management-setting-queries.md`](../contracts/management-setting-queries.md)。
+- `tests/ServiceMantle.ReferenceService.Tests/ReferenceSettingUpdateTests.cs` 验收样例的事务批量
+  更新 endpoint（`POST /management/v1/settings`）及其消费方提交边界
+  （`ReferenceSettingUpdateExecutor`）。契约本体见
+  [`docs/contracts/management-setting-updates.md`](../contracts/management-setting-updates.md)。
+
+两套验收同样使用真实 PostgreSQL（Testcontainers）、真实 `ReferenceApplication` 组合路径与真实管
+理登录。
 
 ## 运行
 
@@ -17,7 +26,7 @@ RUN_SERVICEMANTLE_POSTGRES_TESTS=true \
 `Build, test, and pack` 以 `eng/packages.json` 打开同一套件。不带环境变量时整个类按既有
 `RealDatabaseTest` 约定跳过。
 
-## 矩阵
+## 查询矩阵（ReferenceSettingQueryTests）
 
 | 用例 | 断言要点 |
 | --- | --- |
@@ -32,9 +41,25 @@ RUN_SERVICEMANTLE_POSTGRES_TESTS=true \
 | 取消 | store 读取中调用方取消：客户端得到取消、store 观察到调用方 token、日志无未处理异常、随后请求 200 |
 
 播种使用公开 API（`SensitiveValueProtector.Protect` + `EfCoreServiceSettingStore.UpdateAsync`），
-因为样例本身没有写路径；这同时是把写入面留给更新任务（#519）的边界证明。
+因为样例在更新面交付前没有写路径；更新面交付后该播种方式保留为查询矩阵自身的边界证明。
 
-不保证与既有契约一致的部分以
-[`docs/contracts/management-setting-queries.md`](../contracts/management-setting-queries.md) 为准
-（第三方请求日志、进程内存、响应开始写出之后等已声明的非保证）。跨实例一致性（#170）与 root key
-轮换流程不在本矩阵内。
+## 更新矩阵（ReferenceSettingUpdateTests）
+
+失败与提交时失败用 PostgreSQL 触发器构造：`BEFORE INSERT` 抛错模拟审计写入失败、
+`DEFERRABLE INITIALLY DEFERRED` 约束触发器抛错模拟提交时失败、`pg_sleep` 触发器拉开取消窗口。
+
+| 用例 | 断言要点 |
+| --- | --- |
+| A1 成功 | 两个 key、`expectedVersion` 0 → `200 {"version":1}`；`service_settings` 版本 1、`updated_by` 为登录操作员；每个变更 key 一行审计，`configuration.changed\|操作员\|interactive_admin\|configuration\|reference-service\|{"key":…}`，`metadata_json` 不含值 |
+| A2 拒绝 | 版本冲突 409 `management.request.conflict`、未注册 key 400、约束违规（`item_limit=5000`）400 且响应不回显违规值；两表计数均为 0 |
+| A3 授权 | 未登录 401、只读操作员 403；两表计数均为 0 |
+| A4 审计插入失败 | 触发器抛错 → 固定 `503 {"errorCode":"management.settings.update_unavailable"}`；设置行与审计行都不存在（证明同事务） |
+| A5 提交时失败 | 延迟约束触发器抛错 → 同一固定 503；两表计数为 0 |
+| A6 提交前取消 | 审计触发器 `pg_sleep(3)`，800ms 时取消：客户端观察到取消，服务端结束后两表计数为 0 |
+| A7 提交中取消 | 延迟触发器 `pg_sleep(3)`，1s 时取消：客户端观察到取消；版本 1 与审计 1 行保留（提交走 `CancellationToken.None`） |
+| A8 并发 | 相同 `expectedVersion` 0 的两个请求恰一个 200、一个 409；版本 1、审计 1 行、库存的是赢家的值 |
+| A9 敏感写入 | 写 `workspace.integration_token` → 库中只有 `sm:v1:` 密文；审计与捕获日志不含明文与密文；随后 `GET /settings` 投影 `hasValue:true`、`value:null` |
+
+不保证与既有契约一致的部分以各自的契约文档为准（第三方请求日志、进程内存、响应开始写出之后、
+跨请求幂等、自动冲突重试、未知提交结果补偿等已声明的非保证）。跨实例一致性（#170）、root key
+轮换流程、快照发布与热更新、SQLite 写入路径不在矩阵内。
