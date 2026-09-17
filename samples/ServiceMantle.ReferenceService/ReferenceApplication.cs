@@ -183,6 +183,20 @@ public static class ReferenceApplication
             builder.Services.AddSingleton<IServiceReadinessContributor, ReferenceReadinessContributor>();
             builder.Services.AddScoped<IManagementIdentityProvider, ExternalManagementIdentityPlaceholder>();
         }
+        else
+        {
+            // The read-only setting queries ride the gate's context factory: the store owns its own
+            // short-lived contexts, exactly like the health snapshot source and the readiness
+            // contributor. This block runs after the registry registration above on purpose:
+            // AddServiceMantleSettingSnapshots registers ServiceSettingDefinitionRegistry with
+            // TryAdd, so the sample's unconditional registration must land first for the container
+            // to hold exactly one registry.
+            builder.Services.AddSingleton<IServiceSettingStore>(provider =>
+                new EfCoreServiceSettingStore<ReferencePostgreSqlDbContext>(
+                    provider.GetRequiredService<IDbContextFactory<ReferencePostgreSqlDbContext>>()));
+            builder.Services.AddSingleton<IServiceSettingRootKeySource, ReferenceSettingRootKeySource>();
+            builder.Services.AddServiceMantleSettingSnapshots();
+        }
 
         return builder;
     }
@@ -207,6 +221,11 @@ public static class ReferenceApplication
 
             app.MapServiceMantleManagementSession(ReferenceManagementLoginAdapter.AdaptAsync);
             app.MapServiceMantleHealthEndpoints();
+            // The protected group is created once and kept in a local so the update endpoints that
+            // come later append to exactly this group; the two read-only setting queries hang off
+            // it now.
+            var managementApi = app.MapServiceMantleManagementApiV1();
+            managementApi.MapServiceMantleSettingQueries();
             if (app.Services.GetService<ReferencePrometheusRegistration>() is not null)
             {
                 // Mapped only when the switch authorized the registration above; calling the mapper
