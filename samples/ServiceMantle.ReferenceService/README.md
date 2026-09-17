@@ -22,7 +22,7 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 | `Database/Sqlite/` | opt-in 的 SQLite 启动部署 gate 与消费方自有的迁移 executor | #112 / #113 |
 | `Database/PostgreSql/` | 消费方自有的 PostgreSQL 迁移 executor、单事务初始化 executor 与 opt-in 启动部署 gate | #497 / #160 |
 | `ReferenceSetupContributor` | 只读校验与仅 staging 的示例；启动时绝不调用 | [#175](https://github.com/philfanzhou/ServiceMantle/issues/175) |
-| `ReferenceSettingDefinitions` | 三个设置项定义（含一个敏感示例键 `workspace.integration_token`）；只读查询接线见下文，写入路径仍不存在 | #518 已交付查询面；更新面 #519 |
+| `ReferenceSettingDefinitions` | 三个设置项定义（含一个敏感示例键 `workspace.integration_token`）；只读查询与事务更新接线见下文 | #518 已交付查询面；更新面 #519 |
 | `ReferenceReadinessContributor` | gate 关闭路径的唯一占位 contributor，返回 `reference.health_not_integrated`；绝不声称就绪 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 在 PostgreSQL 路径改接业务 contributor |
 | `Health/PostgreSql/` | 仅当 PostgreSQL 启动 gate 打开时接线：`ReferencePostgreSqlHealthSnapshotSource` 每次请求重读安装行，`ReferencePostgreSqlWorkspaceReadinessContributor` 提供业务就绪否决 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) / [#388](https://github.com/philfanzhou/ServiceMantle/issues/388) 交付 |
 | `ExternalManagementIdentityPlaceholder` | gate 关闭路径的未配置 provider；PostgreSQL 路径改用 `ReferenceExternalManagementIdentityProvider`（部署配置的操作员目录） | 由 [#109](https://github.com/philfanzhou/ServiceMantle/issues/109) 交付 |
@@ -429,10 +429,37 @@ root key 复用 `ReferenceService:Management:RootKey`，不新增配置键：库
 
 敏感示例键 `workspace.integration_token`（`isSensitive: true`，非必填，无默认值——库禁止敏感默认
 值）证明敏感投影：数据库中只存 `sm:v1:` 密文，查询响应中该项只出现 `hasValue`/`source`、
-`value` 恒为 `null`，明文与 root key 不出现在任何响应或样例日志中。样例本身没有写入路径；测试
-经公开的 `SensitiveValueProtector.Protect` 与 `EfCoreServiceSettingStore.UpdateAsync` 播种。库中
-密文以另一把 key 加密时，`GET /settings` 是固定 `503
+`value` 恒为 `null`，明文与 root key 不出现在任何响应或样例日志中。样例本身没有直接写入路径；
+查询测试经公开的 `SensitiveValueProtector.Protect` 与 `EfCoreServiceSettingStore.UpdateAsync` 播
+种。库中密文以另一把 key 加密时，`GET /settings` 是固定 `503
 {"errorCode":"management.settings.unavailable"}`，定义查询仍 200。
+
+## 设置项事务更新接线
+
+同一 gate 打开时，`Build` 还在同一个受保护组上映射批量更新 endpoint
+`POST /management/v1/settings`。endpoint 本身来自公开包的
+`MapServiceMantleSettingUpdates(executor)`：解析、校验、操作员解析、结果投射都在共享处理程序内；
+样例只提供契约要求消费方自持的**提交边界**——`ReferenceSettingUpdateExecutor.ExecuteAsync`：
+
+- 从 `IServiceScopeFactory` 建一个新的 async scope，取其中 scoped 的
+  `ReferencePostgreSqlDbContext`（gate 的 `AddDbContextFactory` 同时注册了 scoped context）并
+  `BeginTransactionAsync`；
+- 在事务内以 scope 中的 `ServiceId`、`ServiceSettingDefinitionRegistry`、
+  `EfCoreServiceSettingUpdateTransaction<ReferencePostgreSqlDbContext>` 与
+  `IServiceSettingRootKeySource` 构造 `ServiceSettingUpdateService`（不传 root-key source 时敏感
+  写入会以 `ProtectionFailed` 失败）；
+- 结果不是 `Applied` 时回滚并原样返回；是 `Applied` 时先检查一次调用方取消，再以
+  `CancellationToken.None` 提交——提交一旦开始，调用方取消不会把提交打断成未知结果；
+- 任何异常回滚后重新抛出；回滚自身的异常被吞掉（scope 与连接随即丢弃，未提交内容不会留下）。
+
+由此每个变更 key 一行审计（`action=configuration.changed`、`target_type=configuration`、
+`target_id=reference-service`、`operator_source=interactive_admin`、`metadata_json` 只含变更键，
+不含值或密文）与设置行、版本递增在同一调用方事务内原子提交；`Applied` 只在提交完成后返回。冲
+突 409、校验失败 400、审计插入失败与提交失败统一为固定
+`503 {"errorCode":"management.settings.update_unavailable"}`，失败与提交前取消都回滚且两表皆空；
+提交开始后的调用方取消观察到自己的取消，数据保留（详见
+[`docs/contracts/management-setting-updates.md`](../../docs/contracts/management-setting-updates.md)）。
+跨请求幂等、自动冲突重试与未知提交结果的补偿是公开契约已声明的非保证，样例不追加。
 
 ```bash
 dotnet run --project samples/ServiceMantle.ReferenceService -- \
@@ -446,4 +473,5 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- \
 ```
 
 验收矩阵与运行命令见
-[`docs/testing/reference-setting-queries.md`](../../docs/testing/reference-setting-queries.md)。
+[`docs/testing/reference-setting-queries.md`](../../docs/testing/reference-setting-queries.md)
+（查询与更新共用一份说明）。

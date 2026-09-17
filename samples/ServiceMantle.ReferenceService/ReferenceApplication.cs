@@ -222,10 +222,12 @@ public static class ReferenceApplication
             app.MapServiceMantleManagementSession(ReferenceManagementLoginAdapter.AdaptAsync);
             app.MapServiceMantleHealthEndpoints();
             // The protected group is created once and kept in a local so the update endpoints that
-            // come later append to exactly this group; the two read-only setting queries hang off
-            // it now.
+            // come later append to exactly this group; the two read-only setting queries and the
+            // transactional update entry hang off it now. The update's executor owns the sample's
+            // commit boundary: fresh scope, one transaction, commit only an applied result.
             var managementApi = app.MapServiceMantleManagementApiV1();
             managementApi.MapServiceMantleSettingQueries();
+            managementApi.MapServiceMantleSettingUpdates(ReferenceSettingUpdateExecutor.ExecuteAsync);
             if (app.Services.GetService<ReferencePrometheusRegistration>() is not null)
             {
                 // Mapped only when the switch authorized the registration above; calling the mapper
