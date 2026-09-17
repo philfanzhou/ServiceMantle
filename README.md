@@ -970,8 +970,22 @@ return `bootstrap_credential.unavailable`.
 
 Consumption is one-way and happens before the Bootstrap file is written, so a later failure leaves
 the credential consumed and requires an explicit new provision; `GetStatusAsync` makes that window
-diagnosable without exposing the plaintext or the digest. See
-[docs/contracts/bootstrap-creation-credential.md](docs/contracts/bootstrap-creation-credential.md).
+diagnosable without exposing the plaintext or the digest. When no Bootstrap file exists yet, the
+store-owned `ReissueAsync` replaces a readable record - consumed, expired, or simply not yet used -
+with a fresh credential, so a Bootstrap-mode host can print a new plaintext on every start without
+touching the record files by hand; the previous plaintext is invalid immediately, and a corrupt
+record is never repaired or replaced:
+
+```csharp
+var reissued = await credentialStore.ReissueAsync(BootstrapCredentialLifetime.Default);
+if (reissued.IsProvisioned)
+{
+    // The only place the new plaintext is ever available.
+    Console.WriteLine(reissued.Credential!.Reveal());
+}
+```
+
+See [docs/contracts/bootstrap-creation-credential.md](docs/contracts/bootstrap-creation-credential.md).
 
 ## Bootstrap management use cases
 

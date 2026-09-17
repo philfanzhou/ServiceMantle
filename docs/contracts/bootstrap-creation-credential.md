@@ -61,8 +61,46 @@ ServiceMantle 只保证其自身的持久化、异常、结果与诊断绝不回
 | 无法确定 Bootstrap 文件是否存在 | `bootstrap_credential.unavailable` |
 | 访问被拒绝、I/O 失败 | `bootstrap_credential.unavailable` |
 
+「预配」一节的存在性证据规则同样约束重新签发；两节的错误码与语义见上文各表。
+
 记录以独占创建方式建立，因此在本进程或任何其他进程中，操作系统只放行恰好一个写入者，每个失败
 者都会看到不含明文的 `already_exists`。
+
+## 重新签发
+
+`IBootstrapCredentialReissuer.ReissueAsync`（由 `BootstrapCredentialFileStore` 实现）是 store 拥有
+的恢复动作：为每次进入 Bootstrap 模式的进程打印一个新凭据，或在凭据未消费而过期、进程重启后取
+回一个新明文，而不需要手工操作记录文件。与预配一致，它是显式的本地运维动作，没有任何管理
+endpoint 提供重新签发。
+
+| 条件 | 结果 |
+| --- | --- |
+| 证明 Bootstrap 文件存在 | `bootstrap_credential.bootstrap_configured`，记录不变 |
+| 无法确定 Bootstrap 文件是否存在 | `bootstrap_credential.unavailable`，不读取记录 |
+| 证明不存在，无记录（含已消费） | 同 `ProvisionAsync`：`Provisioned`；竞争失败者 `already_exists` |
+| 证明不存在，记录可解析（未过期或已过期） | `Provisioned`，新明文；记录被原子替换，旧明文立即失效 |
+| 证明不存在，记录读取失败、超大、损坏或协议非法 | `bootstrap_credential.unavailable`，原记录逐字节不变 |
+| 暂存写入或替换移动失败 | `bootstrap_credential.unavailable`，旧记录不变，暂存文件已删除 |
+| 写入前调用方已取消 | 抛出携带调用方 token 的取消，无任何文件改动 |
+
+替换是原子的：新记录先以独占创建写入同目录的随机暂存文件（Unix 权限 `0600`，与记录一致），
+`Flush(flushToDisk: true)` 后以 `File.Move(staging, FilePath, overwrite: true)` 覆盖（Windows 上为
+`MoveFileExW` + `MOVEFILE_REPLACE_EXISTING`，Unix 上为 `rename(2)`）。记录路径上任何时刻只有旧
+记录或完整的新记录。明文只出现在返回值中；旧明文的校验与消费都因摘要不匹配而得到
+`bootstrap_credential.invalid`，不需要新的判定路径。调用方取消只在写入之前的边界被检查（入口、
+存在性探测后、记录解析后、替换开始前）；替换一旦完成，结果照常返回，不再检查取消，因为返回值是
+新明文唯一的副本。
+
+不保证：与并发 `ConsumeAsync` 或并发 `ReissueAsync` 之间的结果顺序。并发重新签发时只有最后完成
+替换的那个明文有效，较早返回的明文可能已失效；进行中的消费若在替换之后才完成认领，会认领到新
+记录、复核摘要不匹配而返回 `invalid`，并使新记录被消费掉，此时需要再次重新签发。在写入窗口内
+被独占创建句柄拒绝读取的并发调用按上表「读取失败」行报告 `unavailable`（共享语义由运行时与平
+台决定：Windows 与 .NET 10 的 macOS 强制共享模式，Linux 不强制）。对外部独占句柄、杀毒软件、任
+意 ACL、被杀死进程的行为沿用 store 既有非保证；掉电持久性不超出 `flushToDisk` 的语义；损坏的记
+录不会被修复。
+
+调用方责任：只在确认没有进行中的创建请求时调用（典型用法是 Bootstrap 模式宿主启动、开始接收
+请求之前）；通过安全通道输出明文；损坏的记录由运维人工处理。
 
 ### 存在性是证据，而不是否定检查
 
@@ -168,3 +206,5 @@ Bootstrap 发布之间不提供任何互斥。
 - 跨平台的文件所有者与符号链接策略不属于本契约。
 - 熵的主张基于使用 BCL 加密随机数生成器的 32 字节以及由此得出的编码，而不基于对生成值的统计
   观察。
+- 重新签发不保证与并发消费或并发重新签发之间的结果顺序（见「重新签发」一节）；也不保证对外部
+  独占句柄、杀毒软件、任意 ACL、被杀死进程的行为，或超出 `flushToDisk` 语义的掉电持久性。
