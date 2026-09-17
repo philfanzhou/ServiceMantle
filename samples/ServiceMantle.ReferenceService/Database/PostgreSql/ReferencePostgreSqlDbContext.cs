@@ -49,5 +49,9 @@ public sealed class ReferencePostgreSqlDbContext(DbContextOptions<ReferencePostg
         // The shared management cookie key ring: mapping the table is schema only, and the keys are
         // written only by the data-protection repository the management wiring registers.
         modelBuilder.AddServiceMantleDataProtectionKeys();
+        // The shared settings and management audit tables are schema only: this context creates no
+        // setting rows and writes no audit entries; their consumers arrive with later wiring.
+        modelBuilder.AddServiceMantleSettings();
+        modelBuilder.AddServiceMantleManagementAudit(ManagementAuditDatabaseDialect.PostgreSql);
     }
 }
