@@ -22,7 +22,7 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 | `Database/Sqlite/` | opt-in 的 SQLite 启动部署 gate 与消费方自有的迁移 executor | #112 / #113 |
 | `Database/PostgreSql/` | 消费方自有的 PostgreSQL 迁移 executor、单事务初始化 executor 与 opt-in 启动部署 gate | #497 / #160 |
 | `ReferenceSetupContributor` | 只读校验与仅 staging 的示例；启动时绝不调用 | [#175](https://github.com/philfanzhou/ServiceMantle/issues/175) |
-| `ReferenceSettingDefinitions` | 只有默认值与约束；没有 store、HTTP 或激活 | #177 |
+| `ReferenceSettingDefinitions` | 三个设置项定义（含一个敏感示例键 `workspace.integration_token`）；只读查询接线见下文，写入路径仍不存在 | #518 已交付查询面；更新面 #519 |
 | `ReferenceReadinessContributor` | gate 关闭路径的唯一占位 contributor，返回 `reference.health_not_integrated`；绝不声称就绪 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 在 PostgreSQL 路径改接业务 contributor |
 | `Health/PostgreSql/` | 仅当 PostgreSQL 启动 gate 打开时接线：`ReferencePostgreSqlHealthSnapshotSource` 每次请求重读安装行，`ReferencePostgreSqlWorkspaceReadinessContributor` 提供业务就绪否决 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) / [#388](https://github.com/philfanzhou/ServiceMantle/issues/388) 交付 |
 | `ExternalManagementIdentityPlaceholder` | gate 关闭路径的未配置 provider；PostgreSQL 路径改用 `ReferenceExternalManagementIdentityProvider`（部署配置的操作员目录） | 由 [#109](https://github.com/philfanzhou/ServiceMantle/issues/109) 交付 |
@@ -404,3 +404,46 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- \
 
 验收矩阵见
 [`docs/testing/reference-telemetry.md`](../../docs/testing/reference-telemetry.md)。
+
+## 设置项只读查询接线
+
+PostgreSQL 启动 gate 打开时，`Build` 在受保护的 management API v1 组上映射两个只读 endpoint：
+`GET /management/v1/settings/definitions` 返回设置项目录，`GET /management/v1/settings` 返回同一
+完整刷新版本内每个设置项的当前值。两个 endpoint 都由既有的管理会话授权（管理员登录后 200，未
+登录 401，只有 `management.read` 的操作员 403），都接受一个可选的 `group` 前缀过滤参数。gate
+关闭时容器中没有 `IServiceSettingStore`、`IServiceSettingRootKeySource` 与查询服务，路由集合仍
+只有 `/`。
+
+接线完全使用公开包类型：store 是 `EfCoreServiceSettingStore<ReferencePostgreSqlDbContext>`，
+经 gate 已注册的 `IDbContextFactory` 创建短生命周期 context（与健康快照 source、就绪
+contributor 同一方式）；快照栈由 `AddServiceMantleSettingSnapshots()` 绑定。注册顺序是一个不变
+量：样例无条件注册 `ServiceSettingDefinitionRegistry` 在前，快照注册的 `TryAddSingleton` 在后，
+容器中恰好一个 registry（反向顺序会产生两个，启动校验会拒绝）。
+
+root key 复用 `ReferenceService:Management:RootKey`，不新增配置键：库按派生上下文隔离用途（设置
+值的 purpose 是定义键，key ring 的 purpose 是 repository 元素 id），第二把密钥只增加一个部署秘
+密而不增加隔离。由此有一个部署方必须知道的后果：**以另一把 root key 重启部署时，key ring 无法
+解密，登录本身先以 `503 management.session.unavailable` 失败**，走不到设置查询——这是复用根密钥
+的直接推论，轮换流程不在样例范围内（换 key 后既有设置密文与 key ring 都不可解，管理面整体关闭
+失败是预期行为）。
+
+敏感示例键 `workspace.integration_token`（`isSensitive: true`，非必填，无默认值——库禁止敏感默认
+值）证明敏感投影：数据库中只存 `sm:v1:` 密文，查询响应中该项只出现 `hasValue`/`source`、
+`value` 恒为 `null`，明文与 root key 不出现在任何响应或样例日志中。样例本身没有写入路径；测试
+经公开的 `SensitiveValueProtector.Protect` 与 `EfCoreServiceSettingStore.UpdateAsync` 播种。库中
+密文以另一把 key 加密时，`GET /settings` 是固定 `503
+{"errorCode":"management.settings.unavailable"}`，定义查询仍 200。
+
+```bash
+dotnet run --project samples/ServiceMantle.ReferenceService -- \
+  --ReferenceService:PostgreSqlStartup:Enabled true \
+  --ReferenceService:PostgreSqlStartup:ConnectionString 'Host=...;Database=...;Username=...;Password=...' \
+  --ReferenceService:Management:RootKey '<32+ 字符部署密钥>' \
+  --ReferenceService:Management:Operators:0:Id ops-admin \
+  --ReferenceService:Management:Operators:0:Permissions management.read,management.admin \
+  --ReferenceService:Management:Operators:0:Credential '<操作员凭据>' \
+  --urls http://127.0.0.1:5080
+```
+
+验收矩阵与运行命令见
+[`docs/testing/reference-setting-queries.md`](../../docs/testing/reference-setting-queries.md)。
