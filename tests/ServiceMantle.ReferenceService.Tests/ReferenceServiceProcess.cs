@@ -24,7 +24,7 @@ namespace ServiceMantle.ReferenceService.Tests;
 /// </remarks>
 internal sealed partial class ReferenceServiceProcess : IAsyncDisposable
 {
-    /// <summary>The loopback binding every end-to-end start uses. Port 0 asks Kestrel to choose.</summary>
+    /// <summary>The loopback binding an end-to-end start uses unless the caller states its own.</summary>
     internal const string DynamicLoopbackUrl = "http://127.0.0.1:0";
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(25);
@@ -65,7 +65,25 @@ internal sealed partial class ReferenceServiceProcess : IAsyncDisposable
     /// </param>
     /// <param name="arguments">The command-line arguments after the loopback binding.</param>
     internal static ReferenceServiceProcess Start(string workingDirectory, params string[] arguments) =>
-        Start(ReferenceServiceBuildOutput.ConfigureEntryPoint, workingDirectory, arguments);
+        Start(ReferenceServiceBuildOutput.ConfigureEntryPoint, workingDirectory, DynamicLoopbackUrl, arguments);
+
+    /// <summary>
+    /// Starts the reference service from its own build output bound to one explicit address, for
+    /// example a non-loopback binding an endpoint outside the machine - such as a containerized
+    /// agent - must be able to reach.
+    /// </summary>
+    /// <param name="workingDirectory">The directory the process runs in.</param>
+    /// <param name="listenUrl">
+    /// The explicit binding passed as <c>--urls</c>. The caller still learns the address the host
+    /// reports as listening, which carries this binding's host and port.
+    /// </param>
+    /// <param name="arguments">The command-line arguments after the binding.</param>
+    internal static ReferenceServiceProcess Start(string workingDirectory, Uri listenUrl, params string[] arguments) =>
+        Start(
+            ReferenceServiceBuildOutput.ConfigureEntryPoint,
+            workingDirectory,
+            listenUrl.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped),
+            arguments);
 
     /// <summary>
     /// Starts the reference service from any build output, for example a copy restored purely
@@ -79,7 +97,14 @@ internal sealed partial class ReferenceServiceProcess : IAsyncDisposable
     internal static ReferenceServiceProcess Start(
         Action<ProcessStartInfo> configureEntryPoint,
         string workingDirectory,
-        params string[] arguments)
+        params string[] arguments) =>
+        Start(configureEntryPoint, workingDirectory, DynamicLoopbackUrl, arguments);
+
+    private static ReferenceServiceProcess Start(
+        Action<ProcessStartInfo> configureEntryPoint,
+        string workingDirectory,
+        string urls,
+        string[] arguments)
     {
         ArgumentException.ThrowIfNullOrEmpty(workingDirectory);
         ArgumentNullException.ThrowIfNull(arguments);
@@ -93,7 +118,7 @@ internal sealed partial class ReferenceServiceProcess : IAsyncDisposable
             RedirectStandardError = true,
         };
         configureEntryPoint(startInfo);
-        startInfo.ArgumentList.Add("--urls=" + DynamicLoopbackUrl);
+        startInfo.ArgumentList.Add("--urls=" + urls);
         foreach (var argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
@@ -115,7 +140,8 @@ internal sealed partial class ReferenceServiceProcess : IAsyncDisposable
     }
 
     /// <summary>
-    /// Waits until the real Kestrel reports the loopback address it bound, and returns it.
+    /// Waits until the real Kestrel reports the address it bound - the loopback one of the default
+    /// start or the explicit binding of its overload - and returns it.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// The process exited before it listened, or the budget elapsed. The captured output is
@@ -209,7 +235,7 @@ internal sealed partial class ReferenceServiceProcess : IAsyncDisposable
         process.Dispose();
     }
 
-    [GeneratedRegex(@"Now listening on: (?<address>http://127\.0\.0\.1:\d+)")]
+    [GeneratedRegex(@"Now listening on: (?<address>http://\S+)")]
     private static partial Regex ListeningAddress();
 
     private void Reclaim()
