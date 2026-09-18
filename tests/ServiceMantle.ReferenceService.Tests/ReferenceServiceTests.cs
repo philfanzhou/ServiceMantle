@@ -138,7 +138,8 @@ public sealed class ReferenceServiceTests
             "../../src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj",
             "../../src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj",
             "../../src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj",
-            "../../src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj" },
+            "../../src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj",
+            "../../src/ServiceMantle.Consul/ServiceMantle.Consul.csproj" },
             project.Descendants("ProjectReference").Select(reference => (string)reference.Attribute("Include")!));
         Assert.DoesNotContain(project.Descendants("Compile"), item => item.Attribute("Include") is not null);
         var assembly = typeof(ReferenceApplication).Assembly;

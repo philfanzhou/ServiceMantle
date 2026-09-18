@@ -12,5 +12,6 @@
     <ProjectReference Include="../../src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj" />
+    <ProjectReference Include="../../src/ServiceMantle.Consul/ServiceMantle.Consul.csproj" />
   </ItemGroup>
 </Project>
