@@ -150,6 +150,26 @@ jobs:
           echo "RUN_SERVICEMANTLE_ORACLE_TESTS=true" >> "$GITHUB_ENV"
           echo "SERVICEMANTLE_ORACLE_ADMIN_CONNECTION_STRING=$admin_connection" >> "$GITHUB_ENV"
 
+      - name: Apply Oracle target-identity fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          # An empty COMMON_USER_PREFIX lets the target-identity matrix create a no-prefix
+          # common user; the spfile change needs one restart, and the listener verification in
+          # the next step naturally re-checks the database came back.
+          if ! docker exec -i servicemantle-oracle sqlplus -s / as sysdba < eng/oracle-identity-fixture.sql; then
+            echo "The Oracle target-identity fixture did not complete." >&2
+            exit 1
+          fi
+
+          admin_connection="$SERVICEMANTLE_ORACLE_ADMIN_CONNECTION_STRING"
+          oracle_port="$(docker port servicemantle-oracle 1521/tcp | sed -E 's/.*:([0-9]+)$/\1/')"
+          oracle_password="${admin_connection#*Password=}"
+          oracle_password="${oracle_password%%;*}"
+          root_connection="User Id=system;Password=$oracle_password;Data Source=127.0.0.1:$oracle_port/FREE;Pooling=false;Enlist=false"
+          echo "::add-mask::$root_connection"
+          echo "SERVICEMANTLE_ORACLE_ROOT_CONNECTION_STRING=$root_connection" >> "$GITHUB_ENV"
+
       - name: Verify Oracle listener with ODP.NET
         timeout-minutes: 1
         run: >-

@@ -38,6 +38,13 @@ schema 对象：每个数据库用户恰好拥有一个同名的 schema。Oracle
   `SYS_CONTEXT('USERENV', 'CDB_NAME')` 非空；当前 `CON_ID` 大于 `2`；
   `IS_APPLICATION_ROOT` 和 `IS_APPLICATION_PDB` 都为 `NO`；
   `CLOUD_SERVICE` 为空；且 `DBMS_UTILITY.IS_CLUSTER_DATABASE` 为 `FALSE`。
+- 此外，每个**以目标身份**打开的会话（Bootstrap 验证、观察、目标复核与迁移锁获取）必须在
+  同一会话上证明目标身份成立：`USER_USERS` 恰好一行，`USERNAME` 等于规范化目标用户名，且
+  `COMMON = 'NO'`、`ORACLE_MAINTAINED = 'N'`。非 `NO`/`N` 的任何取值（含 `YES`、`Y`、NULL 或
+  未知值）都失败关闭。名称语法不是证据：`COMMON_USER_PREFIX` 可以是非默认或空值，无 `C##`
+  前缀的名字不能证明是本地用户；`SYSTEM` 等 Oracle 维护身份也不能只靠用户名排除。管理身份
+  会话不做此检查——管理员本身可以合法是 Oracle 维护用户（如 CI 的 SYSTEM）。身份分类证据
+  无法获得时（权限拒绝、无行、多行、名称不符）按既有失败映射关闭，不假定本地。
 
 目标身份是规范化后的目标 `User Id`。当且仅当当前 PDB 的 `ALL_USERS` 视图中存在该
 `USERNAME`，且 `COMMON = 'NO'`、`ORACLE_MAINTAINED = 'N'` 时，目标存在。其所有者

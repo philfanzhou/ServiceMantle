@@ -33,4 +33,23 @@
 - `bash eng/tests/oracle-readiness.sh`：用假 Docker 按顺序产生健康/启动状态，确定性复现 healthy 早于密码初始化完成，证明 gate 不会提前通过；同时覆盖未就绪、退出、读取失败与日志脱敏。
 - `dotnet test --project tests/ServiceMantle.Database.Oracle.Tests -c Release`：覆盖安全预检的成功、分类、失败不重试与取消。
 - 真机放大竞争的方法（须原生 AMD64）：新建该 digest 容器，通过 `PWD_FILE` 指向包装脚本，使其在调用原 `setPassword.sh` 前等待一个测试信号文件；等到 healthy，使用新 ORACLE_PWD 做 SYSTEM listener 登录，应失败。释放信号后等待完整启动标记，再做同一登录，应成功。包装脚本、密码与信号文件只用于隔离的临时容器，测试后删除，不能保留在正常 CI。
-- ARM64 下模拟 AMD64 的 Oracle 启动可能出现实例不可用，不能作为该时序测试或真实产品测试的通过证据；使用本 PR 的 Ubuntu AMD64 CI 验证。
+- 本地容器若在启动后不久变为 unhealthy 且日志含 ORA-01034，先检查 Docker VM 内存：实例被 OOM 杀掉时 `docker inspect` 显示 `OOMKilled=true`（alert log 为 `ORA-1092 opitsk aborting process`）。把 VM 内存调到至少 4 GiB 后该 digest 镜像约 20-30 秒就绪，常驻约 2.5 GiB。ARM64 下内存不足的启动失败不是“ARM64 不可用”：同版本 `-lite-arm64` 原生镜像可用于本地目标身份矩阵（见下节），CI 证据仍以 AMD64 为准。
+
+## 目标身份 fixture（#317）
+
+目标身份矩阵（`OracleTargetIdentityRealDatabaseTests`）需要一个**无前缀 common 用户**，而默认
+`COMMON_USER_PREFIX = 'C##'` 使这种名字无法创建。CI 在就绪门之后执行：
+
+```bash
+docker exec -i servicemantle-oracle sqlplus -s / as sysdba < eng/oracle-identity-fixture.sql
+```
+
+脚本把 `COMMON_USER_PREFIX` 置空（`SCOPE = SPFILE`）并重启实例、重新打开全部 PDB；随后的
+「Verify Oracle listener with ODP.NET」步骤天然复核监听恢复。之后导出根容器连接串
+`SERVICEMANTLE_ORACLE_ROOT_CONNECTION_STRING`（`User Id=system;…;Data Source=…/FREE`，加 mask），
+测试以它 `CONTAINER=ALL` 创建/删除 common 用户。
+
+本地复现：Docker VM 至少 4 GiB；arm64 使用同版本 `container-registry.oracle.com/database/free:23.26.1.0-lite-arm64`
+镜像，执行同一 fixture 脚本后设置与 CI 相同的两个环境变量，再运行
+`RUN_SERVICEMANTLE_ORACLE_TESTS=true` 的 Oracle 测试项目。目标用户最小权限：`CREATE SESSION`
+（锁用例另加 `SYS.DBMS_LOCK` 执行权）；身份查询读 `USER_USERS` 自身行，无需额外授权。

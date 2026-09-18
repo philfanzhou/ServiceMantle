@@ -84,7 +84,8 @@ internal sealed class OracleDatabaseOperations : IOracleDatabaseOperations
             return await OracleRuntimeTopology.ProbeAsync(
                     connection,
                     expectedUserName,
-                    cancellationToken)
+                    cancellationToken,
+                    requireLocalApplicationUser: true)
                 .ConfigureAwait(false);
         }
         catch (Exception exception)
@@ -278,7 +279,8 @@ internal static class OracleRuntimeTopology
     internal static async ValueTask<OracleTargetProbeOutcome> ProbeAsync(
         OracleConnection connection,
         string expectedUserName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireLocalApplicationUser = false)
     {
         try
         {
@@ -330,7 +332,46 @@ internal static class OracleRuntimeTopology
                 null,
                 ParameterDirection.Output);
             await clusterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            return string.Equals(clusterParameter.Value?.ToString(), "FALSE", StringComparison.Ordinal)
+            if (!string.Equals(clusterParameter.Value?.ToString(), "FALSE", StringComparison.Ordinal))
+            {
+                return OracleTargetProbeOutcome.UnsupportedTopology;
+            }
+
+            if (!requireLocalApplicationUser)
+            {
+                return OracleTargetProbeOutcome.Success;
+            }
+
+            // A target-identity session proves, on that same session, that the connected user is a
+            // local non-Oracle-maintained application user. A non-default or empty
+            // COMMON_USER_PREFIX means a common user need not carry the C## prefix, so the name
+            // alone proves nothing: the classification row is the evidence. Administrative
+            // sessions skip this check - the CI administrator is SYSTEM, whose own maintained
+            // status is legitimate there.
+            await using var identityCommand = connection.CreateCommand();
+            identityCommand.CommandTimeout = OracleDatabaseTarget.CommandTimeoutSeconds;
+            identityCommand.CommandText =
+                "SELECT USERNAME, COMMON, ORACLE_MAINTAINED FROM USER_USERS";
+            await using var identity = await identityCommand.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (!await identity.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return OracleTargetProbeOutcome.ValidationFailed;
+            }
+
+            var ownName = ReadString(identity, 0);
+            var common = ReadString(identity, 1);
+            var maintained = ReadString(identity, 2);
+            if (await identity.ReadAsync(cancellationToken).ConfigureAwait(false) ||
+                !string.Equals(ownName, expectedUserName, StringComparison.Ordinal))
+            {
+                return OracleTargetProbeOutcome.ValidationFailed;
+            }
+
+            // Anything but an explicit local, non-maintained classification - YES, Y, NULL, or an
+            // unknown future value - fails closed.
+            return string.Equals(common, "NO", StringComparison.Ordinal) &&
+                string.Equals(maintained, "N", StringComparison.Ordinal)
                 ? OracleTargetProbeOutcome.Success
                 : OracleTargetProbeOutcome.UnsupportedTopology;
         }

@@ -1491,6 +1491,18 @@ grant quota or schema-object DDL privileges, repair an existing account, or supp
 root/common users, wallets, tokens, external authentication, proxy authentication, or non-CDB
 deployments. SQL Server and SQLite follow their own target semantics.
 
+Every session opened *as the target identity* - bootstrap validation, observation, the preparation
+re-checks, and migration lock acquisition - additionally proves, on that same session, that the
+connected user is a local non-Oracle-maintained application user: exactly one `USER_USERS` row whose
+`USERNAME` matches the normalized target name with `COMMON = 'NO'` and `ORACLE_MAINTAINED = 'N'`.
+Any other classification (`YES`, `Y`, null, or an unknown value) fails closed through the existing
+outcome mappings, before any target DDL or lock allocation. The name alone is not evidence: a
+non-default or empty `COMMON_USER_PREFIX` lets a common user exist without the `C##` prefix, and
+maintained identities such as `SYSTEM` are excluded by the classification row, not by name syntax.
+Administrative sessions deliberately skip this check - the administrator may legitimately be a
+maintained user such as `SYSTEM`. Callers are responsible for using a plain PDB local user as the
+service target and never `SYSTEM` or another Oracle-maintained user.
+
 Oracle connection-string syntax errors and rejected attributes (including authentication attributes
 not recognized by the pinned ODP.NET version) fail before connecting. Bootstrap returns
 `database.connection_string_invalid`; observation and preparation return
