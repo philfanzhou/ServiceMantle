@@ -1,3 +1,4 @@
+using System.Buffers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Installation;
@@ -97,6 +98,95 @@ internal static class SetupHandlers
         }
 
         ObserveCallerCancellation(context);
+        return result?.Status switch
+        {
+            SetupCompletionStatus.Committed => SetupResult.NoContent,
+            SetupCompletionStatus.CredentialInvalid => SetupResult.CredentialInvalid,
+            SetupCompletionStatus.Conflict => ManagementApiResults.Conflict(),
+            SetupCompletionStatus.ValidationFailed => ManagementApiResults.InvalidRequest(),
+            // Unavailable, a null result, and an undefined status are the same safe outcome.
+            _ => SetupResult.Unavailable,
+        };
+    }
+
+    /// <summary>
+    /// Completes the installation through the consumer transaction executor with one
+    /// consumer-defined installation input, and answers success only once that transaction has
+    /// committed.
+    /// </summary>
+    /// <remarks>
+    /// The judgement order matches <see cref="CompleteAsync"/>: the shared admission, the
+    /// installation authority, the replay conflict, the strict parse, and then exactly one executor
+    /// call. The input is released right after the executor returned or threw and before any result
+    /// classification or cancellation observation, so the consumer cannot read it afterwards and no
+    /// later step can fail on a disposed document.
+    /// </remarks>
+    internal static async Task<IResult> CompleteWithInputAsync(
+        HttpContext context,
+        SetupInputExecutor executor,
+        ArrayPool<byte>? pool = null)
+    {
+        ObserveCallerCancellation(context);
+
+        // A completed installation is a stable replay boundary: it answers the fixed conflict
+        // without reading, parsing, or validating the supplied code at all.
+        var state = await TryReadAsync(context).ConfigureAwait(false);
+        ObserveCallerCancellation(context);
+        if (state is null)
+        {
+            return SetupResult.Unavailable;
+        }
+
+        if (state.IsCompleted)
+        {
+            return ManagementApiResults.Conflict();
+        }
+
+        (SetupCode Code, SetupInput Input)? parsed;
+        try
+        {
+            parsed = await SetupRequestParser.ParseWithInputAsync(context, pool).ConfigureAwait(false);
+        }
+        catch
+        {
+            ObserveCallerCancellation(context);
+            return SetupResult.Unavailable;
+        }
+
+        ObserveCallerCancellation(context);
+        if (parsed is not { } request)
+        {
+            // An unusable HTTP shape and an unusable body shape are one fixed rejection each, and
+            // neither echoes a byte of the request. The parser has already released its buffer.
+            return ManagementApiResults.InvalidRequest();
+        }
+
+        SetupCompletionResult? result;
+        Exception? failure = null;
+        try
+        {
+            result = await executor(context, request.Code, request.Input, context.RequestAborted)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            // An executor failure, an internal timeout, and an unrelated internal cancellation are
+            // held here until the input is released; the classification below then answers with the
+            // caller's own cancellation or the one safe outcome.
+            failure = exception;
+            result = null;
+        }
+        finally
+        {
+            request.Input.Release();
+        }
+
+        ObserveCallerCancellation(context);
+        if (failure is not null)
+        {
+            return SetupResult.Unavailable;
+        }
+
         return result?.Status switch
         {
             SetupCompletionStatus.Committed => SetupResult.NoContent,

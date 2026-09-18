@@ -67,7 +67,9 @@ internal sealed class SetupHostFixture : IAsyncDisposable
         bool registerStore = true,
         bool mapExecutor = true,
         int mapCount = 1,
-        int setupPermitLimit = 60)
+        int setupPermitLimit = 60,
+        bool inputMode = false,
+        ILoggerProvider? loggerProvider = null)
     {
         var resolvedRoot = root ?? ManagementApiDefaults.DefaultRootPath;
         var store = new RecordingInstallationStore(installed);
@@ -76,6 +78,11 @@ internal sealed class SetupHostFixture : IAsyncDisposable
             new WebApplicationOptions { EnvironmentName = "Production" });
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
+        if (loggerProvider is not null)
+        {
+            builder.Logging.AddProvider(loggerProvider);
+        }
+
         builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
         var mantle = builder.Services.AddServiceMantle(
             ServiceId.Parse("catalog"),
@@ -100,7 +107,15 @@ internal sealed class SetupHostFixture : IAsyncDisposable
             application.UseServiceMantlePipeline();
             for (var index = 0; index < mapCount; index++)
             {
-                application.MapServiceMantleSetup(mapExecutor ? executor.Execute : null);
+                if (inputMode)
+                {
+                    // Each conditional keeps one overload applicable, so the call stays unique.
+                    application.MapServiceMantleSetup(mapExecutor ? executor.ExecuteWithInput : null);
+                }
+                else
+                {
+                    application.MapServiceMantleSetup(mapExecutor ? executor.Execute : null);
+                }
             }
         }
         catch (Exception)
@@ -123,7 +138,9 @@ internal sealed class SetupHostFixture : IAsyncDisposable
         ServiceDatabaseReadinessState databaseStatus = ServiceDatabaseReadinessState.Reachable,
         string? root = null,
         bool registerStore = true,
-        int setupPermitLimit = 60)
+        int setupPermitLimit = 60,
+        bool inputMode = false,
+        ILoggerProvider? loggerProvider = null)
     {
         var fixture = await CreateAsync(
             installed: installed,
@@ -133,7 +150,9 @@ internal sealed class SetupHostFixture : IAsyncDisposable
             databaseStatus: databaseStatus,
             root: root,
             registerStore: registerStore,
-            setupPermitLimit: setupPermitLimit);
+            setupPermitLimit: setupPermitLimit,
+            inputMode: inputMode,
+            loggerProvider: loggerProvider);
         await fixture.StartAsync();
         return fixture;
     }
@@ -283,6 +302,12 @@ internal sealed class SetupHostFixture : IAsyncDisposable
         /// <summary>The number of concurrent calls that must arrive before <see cref="Entered"/> completes.</summary>
         internal int ExpectedCalls { get; set; } = 1;
 
+        /// <summary>The raw input text each input-mode call received, in arrival order.</summary>
+        internal List<string> Inputs { get; } = [];
+
+        /// <summary>The retained inputs, used to assert the post-return release.</summary>
+        internal List<SetupInput> RetainedInputs { get; } = [];
+
         internal async ValueTask<SetupCompletionResult> Execute(
             Microsoft.AspNetCore.Http.HttpContext httpContext,
             SetupCode setupCode,
@@ -294,6 +319,28 @@ internal sealed class SetupHostFixture : IAsyncDisposable
                 Codes.Add(setupCode.Reveal());
             }
 
+            return await AnswerAsync(call, cancellationToken);
+        }
+
+        internal async ValueTask<SetupCompletionResult> ExecuteWithInput(
+            Microsoft.AspNetCore.Http.HttpContext httpContext,
+            SetupCode setupCode,
+            SetupInput input,
+            CancellationToken cancellationToken)
+        {
+            var call = Interlocked.Increment(ref calls);
+            lock (Codes)
+            {
+                Codes.Add(setupCode.Reveal());
+                Inputs.Add(input.RootElement.GetRawText());
+                RetainedInputs.Add(input);
+            }
+
+            return await AnswerAsync(call, cancellationToken);
+        }
+
+        private async ValueTask<SetupCompletionResult> AnswerAsync(int call, CancellationToken cancellationToken)
+        {
             if (call >= ExpectedCalls)
             {
                 Entered.TrySetResult();

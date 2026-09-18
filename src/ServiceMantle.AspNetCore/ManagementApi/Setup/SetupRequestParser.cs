@@ -26,6 +26,155 @@ internal static class SetupRequestParser
     /// <summary>The only accepted top-level property name, matched case sensitively.</summary>
     internal const string CodePropertyName = "code";
 
+    /// <summary>The raw request body limit of the input mode, counted in bytes before any decoding.</summary>
+    internal const int MaximumInputBodyLength = 16 * 1024;
+
+    /// <summary>The JSON nesting limit of the input mode. The accepted document needs two objects.</summary>
+    internal const int MaximumInputJsonDepth = 8;
+
+    /// <summary>The second accepted top-level property name of the input mode, matched case sensitively.</summary>
+    internal const string InputPropertyName = "input";
+
+    /// <summary>
+    /// Parses the input mode body <c>{"code":...,"input":{...}}</c>. On success the returned input
+    /// owns one pooled buffer and one document; on every other exit the buffer is zeroed and
+    /// returned here.
+    /// </summary>
+    internal static async ValueTask<(SetupCode Code, SetupInput Input)?> ParseWithInputAsync(
+        HttpContext context,
+        ArrayPool<byte>? pool = null)
+    {
+        var request = context.Request;
+        if (request.QueryString.HasValue ||
+            request.Headers.ContainsKey(HeaderNames.ContentEncoding) ||
+            !IsJsonContentType(request.ContentType) ||
+            request.ContentLength is > MaximumInputBodyLength)
+        {
+            return null;
+        }
+
+        // The length is never trusted from the header alone: one extra byte is read so an undeclared
+        // oversized body is caught by the actual byte count.
+        var rented = (pool ?? ArrayPool<byte>.Shared).Rent(MaximumInputBodyLength + 1);
+        var transferred = false;
+        try
+        {
+            var length = 0;
+            while (true)
+            {
+                var read = await request.Body
+                    .ReadAsync(
+                        rented.AsMemory(length, MaximumInputBodyLength + 1 - length),
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                length += read;
+                if (length > MaximumInputBodyLength)
+                {
+                    return null;
+                }
+            }
+
+            return ParseInput(rented, length, pool, out transferred);
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                ReturnCleared(pool, rented);
+            }
+        }
+    }
+
+    private static (SetupCode Code, SetupInput Input)? ParseInput(
+        byte[] rented,
+        int length,
+        ArrayPool<byte>? pool,
+        out bool transferred)
+    {
+        transferred = false;
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(
+                rented.AsMemory(0, length),
+                new JsonDocumentOptions
+                {
+                    AllowTrailingCommas = false,
+                    CommentHandling = JsonCommentHandling.Disallow,
+                    MaxDepth = MaximumInputJsonDepth,
+                });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        try
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            JsonElement code = default;
+            var sawCode = false;
+            var sawInput = false;
+            foreach (var property in root.EnumerateObject())
+            {
+                // The names are matched exactly: "Code", "Input", a repeated property, an extra
+                // property, and a non-object input value are all rejected here.
+                if (!sawCode && string.Equals(property.Name, CodePropertyName, StringComparison.Ordinal))
+                {
+                    sawCode = true;
+                    code = property.Value;
+                }
+                else if (!sawInput &&
+                    string.Equals(property.Name, InputPropertyName, StringComparison.Ordinal) &&
+                    property.Value.ValueKind == JsonValueKind.Object)
+                {
+                    sawInput = true;
+                }
+                else
+                {
+                    return null;
+                }
+            }
+
+            if (!sawCode || !sawInput ||
+                code.ValueKind != JsonValueKind.String ||
+                !SetupCode.TryParse(code.GetString(), out var parsed))
+            {
+                return null;
+            }
+
+            transferred = true;
+            return (parsed!, new SetupInput(pool ?? ArrayPool<byte>.Shared, rented, document));
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                // Every rejected shape releases the parsed document here; its pooled bytes are
+                // returned by the caller's finally.
+                document.Dispose();
+            }
+        }
+    }
+
+    private static void ReturnCleared(ArrayPool<byte>? pool, byte[] rented)
+    {
+        // The buffer held the raw request bytes; it is zeroed before it returns and the pool clear
+        // is kept as a second fence.
+        Array.Clear(rented);
+        (pool ?? ArrayPool<byte>.Shared).Return(rented, clearArray: true);
+    }
+
     internal static async ValueTask<SetupCode?> ParseAsync(HttpContext context)
     {
         var request = context.Request;

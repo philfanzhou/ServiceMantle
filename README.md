@@ -434,6 +434,33 @@ sub-reason; a store, orchestrator, save, commit, cleanup or internal timeout fai
 `503 {"errorCode":"management.setup.unavailable"}`; caller cancellation propagates its original
 token. See [docs/contracts/management-setup.md](docs/contracts/management-setup.md).
 
+A second overload, `MapServiceMantleSetup(SetupInputExecutor?)`, accepts one consumer-defined
+installation input object next to the code when the first installation must submit values (for
+example an initial administrator credential) inside the same one-shot transaction:
+
+```csharp
+app.MapServiceMantleSetup(async (httpContext, setupCode, input, cancellationToken) =>
+{
+    await using var scope = httpContext.RequestServices
+        .GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+    // validate the code read-only first, then read input.RootElement, orchestrate,
+    // stage the consumption, save once, commit
+    _ = input.RootElement; // the request's "input" object; valid only during this call
+});
+```
+
+The body of this overload must be `{"code":"<32-char Base64URL>","input":{...}}` - both properties
+case-sensitive and in any order - with `application/json`, no query string, no content encoding, at
+most 16 KiB of raw body, and JSON depth at most 8. ServiceMantle never interprets, logs, echoes, or
+stores the input content: the `SetupInput` is marked as a sensitive log value, is released right
+after the executor returns or throws, and reading it afterwards throws `ObjectDisposedException`.
+The executor must validate the code read-only before the input's semantic content may influence the
+answer, so callers without the code cannot probe the input validation rules through the 400/401
+split. Note that a literal `app.MapServiceMantleSetup(null)` no longer compiles once both overloads
+exist; pass the lambda or a typed `null` instead.
+
 ### Management session login, read, and logout
 
 `MapServiceMantleManagementSession` serves `POST {versionedRoot}/session/login`,
