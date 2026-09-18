@@ -230,6 +230,27 @@ workspace 为空 → 503 `reference.workspace_missing`；workspace 不可读 →
 [`ReferencePostgreSqlHealthTests`](../../tests/ServiceMantle.ReferenceService.Tests/) 与无需数据库的
 [`ReferencePostgreSqlHealthSnapshotSourceTests`](../../tests/ServiceMantle.ReferenceService.Tests/)。
 
+<a id="reference-consul-registration"></a>
+
+## 可选 Consul 注册接线
+
+`ReferenceService:Consul:Enabled` 默认为 `false`；只有显式的 `true` 才接线，且要求 PostgreSQL
+启动 gate 同时打开（Consul 的全部运行输入来自 gate 数据库拥有的设置快照），否则在任何注册
+之前失败，消息只含两个配置键。可选的 `ReferenceService:InstanceId`（缺省
+`reference-local`）在 `AddServiceMantle` 之前校验，多实例部署必须为每个实例提供不同值。
+
+开关打开时，hosted service 顺序固定为 gate → `ReferenceSettingSnapshotActivation`（恰好一次
+快照激活，失败以只含错误码的固定消息终止启动）→ 共享 Consul 注册生命周期（默认计时）。
+`discovery.*` 八个定义只在此刻进入设置目录，组合校验使「启用但缺 endpoint/service-name/
+address/port」的更新被 `POST /management/v1/settings` 直接拒绝。就绪判定复用健康能力注册的
+同一 `IServiceReadinessDecisionSource`：未 Ready 绝不注册；变为 Ready 以
+`reference-service:<instanceId>` 注册恰一次；失去 Ready 或宿主停止时对同一 ID 注销。
+
+两个已知边界由调用方负责：其一，`discovery.*` 全部 `requiresRestart`，运行中写入的新值重启
+后才生效；其二，开关开启期间写入的 `discovery.*` 行在关闭开关（或回滚本接线）前必须删除，
+否则它们成为未知键并使设置查询/更新与快照激活失败。完整矩阵、非保证与测试见
+[docs/testing/reference-consul.md](../../docs/testing/reference-consul.md)。
+
 ## PostgreSQL 单事务初始化 executor
 
 `Database/PostgreSql/` 下的 `ReferencePostgreSqlMigrationExecutor` 是 schema-only 的观察与

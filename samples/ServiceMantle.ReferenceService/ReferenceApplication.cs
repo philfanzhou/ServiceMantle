@@ -9,6 +9,7 @@ using ServiceMantle.ReferenceService.Configuration;
 using ServiceMantle.ReferenceService.Data;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.ReferenceService.Database.Sqlite;
+using ServiceMantle.ReferenceService.Discovery;
 using ServiceMantle.ReferenceService.Health;
 using ServiceMantle.ReferenceService.Health.PostgreSql;
 using ServiceMantle.ReferenceService.Installation;
@@ -28,9 +29,32 @@ public static class ReferenceApplication
     public static WebApplicationBuilder CreateBuilder(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        // The instance identity is an explicit deployment input, fixed before Build: a missing
+        // value keeps the historical default, and an unusable value fails here with a message
+        // naming only the setting - before any capability can capture the identity.
+        InstanceId instanceId;
+        var configuredInstanceId = builder.Configuration[ReferenceConsulDefaults.InstanceIdKey];
+        if (configuredInstanceId is null)
+        {
+            instanceId = InstanceId.Parse(ReferenceConsulDefaults.DefaultInstanceId);
+        }
+        else
+        {
+            try
+            {
+                instanceId = InstanceId.Parse(configuredInstanceId);
+            }
+            catch (Exception)
+            {
+                throw new InvalidOperationException(
+                    "The reference instance identity could not be read from '" +
+                    ReferenceConsulDefaults.InstanceIdKey + "'.");
+            }
+        }
+
         var mantle = builder.Services.AddServiceMantle(
             ServiceId.Parse("reference-service"),
-            InstanceId.Parse("reference-local"));
+            instanceId);
         // The switch is explicit and fixed before Build: a missing or unparsable value leaves the
         // ServiceMantle Serilog host, the sensitive Header registry, and the request log unwired.
         var logging = bool.TryParse(
@@ -63,6 +87,20 @@ public static class ReferenceApplication
                 "The reference service refuses to run two startup deployment gates at once: '" +
                 ReferenceSqliteStartupOptions.EnabledKey + "' and '" +
                 ReferencePostgreSqlStartupOptions.EnabledKey + "' cannot both be true.");
+        }
+
+        // Explicit and fixed before Build, on the same shape as the other switches: the optional
+        // Consul registration lifecycle rides the PostgreSQL gate, because its whole runtime input
+        // is the setting snapshot the gate's database owns.
+        var consul = bool.TryParse(
+            builder.Configuration[ReferenceConsulDefaults.EnabledKey],
+            out var consulEnabled) && consulEnabled;
+        if (consul && postgresqlOptions is null)
+        {
+            throw new InvalidOperationException(
+                "The reference Consul registration requires the PostgreSQL startup gate: '" +
+                ReferenceConsulDefaults.EnabledKey + "' needs '" +
+                ReferencePostgreSqlStartupOptions.EnabledKey + "' to be true.");
         }
 
         // Fixed before Build, on the same shape as the other switches: only a value that parses to
@@ -172,8 +210,12 @@ public static class ReferenceApplication
             ?? new SqliteConnectionStringBuilder { DataSource = databasePath, Pooling = false }.ConnectionString;
         builder.Services.AddDbContext<ReferenceDbContext>(options => options.UseSqlite(connectionString));
         builder.Services.AddSingleton<IServiceSettingDefinitionProvider, ReferenceSettingDefinitions>();
+        // The registry is constructed over both definition providers and composite validators, so
+        // the Consul combination validation (enabled requires endpoint, service-name, address, and
+        // port) is part of setting updates the moment AddServiceMantleConsul registered it.
         builder.Services.AddSingleton(provider => new ServiceSettingDefinitionRegistry(
-            provider.GetServices<IServiceSettingDefinitionProvider>()));
+            provider.GetServices<IServiceSettingDefinitionProvider>(),
+            provider.GetServices<IServiceSettingCompositeValidator>()));
         builder.Services.AddScoped<IServiceSetupContributor, ReferenceSetupContributor>();
         if (postgresqlOptions is null)
         {
@@ -196,6 +238,15 @@ public static class ReferenceApplication
                     provider.GetRequiredService<IDbContextFactory<ReferencePostgreSqlDbContext>>()));
             builder.Services.AddSingleton<IServiceSettingRootKeySource, ReferenceSettingRootKeySource>();
             builder.Services.AddServiceMantleSettingSnapshots();
+            if (consul)
+            {
+                // The snapshot must be activated before the Consul lifecycle can resolve its
+                // session, and the activation itself must run after the gate has migrated the
+                // database; the hosted-service registration order fixes both. No timing keys are
+                // added - the lifecycle keeps its defaults.
+                builder.Services.AddSingleton<IHostedService, ReferenceSettingSnapshotActivation>();
+                builder.Services.AddServiceMantleConsul();
+            }
         }
 
         return builder;
