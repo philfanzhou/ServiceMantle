@@ -60,7 +60,8 @@ internal sealed class OracleMigrationLockOperations : IOracleMigrationLockOperat
             var topology = await OracleRuntimeTopology.ProbeAsync(
                     connection,
                     expectedUserName,
-                    cancellationToken)
+                    cancellationToken,
+                    requireLocalApplicationUser: true)
                 .ConfigureAwait(false);
             EnsureSupportedTopology(topology, cancellationToken);
 
