@@ -9,6 +9,7 @@
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <PackageReference Include="Testcontainers.Consul" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <ProjectReference Include="../../samples/ServiceMantle.ReferenceService/ServiceMantle.ReferenceService.csproj" />
     <ProjectReference Include="../../src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj" />

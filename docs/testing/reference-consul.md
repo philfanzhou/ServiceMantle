@@ -79,8 +79,9 @@ Readiness 接到可选 Consul 注册生命周期的接线。Consul 能力自身�
 
 - 保证：上表结果；token 明文不进入样例与 ServiceMantle 拥有的日志、异常与响应；开关关闭时零
   Consul 类型、零连接。
-- 不保证：真实 Consul agent 的传播、健康检查与 ACL 行为（
-  [#176](https://github.com/philfanzhou/ServiceMantle/issues/176) 用真实 Consul 验证）；两实例
+- 不保证：Consul 集群、多数据中心、ACL 拓扑或 Consul 自身故障切换下的行为，以及注册传播延迟、
+  重试间隔或注销时限的绝对时间上界（单一 dev agent 下的注册、健康检查与注销行为由
+  [#176](https://github.com/philfanzhou/ServiceMantle/issues/176) 的真实 agent E2E 验证）；两实例
   宣告地址区分（[#532](https://github.com/philfanzhou/ServiceMantle/issues/532)）；计时可配置；
   运行中设置热重载；`consul-registration-lifecycle.md` 已声明的全部非保证。
 - 调用方责任：写入合法 `discovery.*` 后重启；为多实例部署配置不同的
@@ -97,3 +98,10 @@ D1 关闭路径零 Consul 类型与 3 键目录、D2 配置校验（consul 无 g
 D4 组合校验与密文落库、D5 激活失败只含错误码、D6 就绪门控注册与实例 ID、D7 失去/恢复就绪、
 D8 重试无重叠、D9 停止注销与 session 处置、D10 不热重载、D11 token canary、G1 同一数据库两
 实例各自宣告 Id/Address/Port/HealthUri、G2 缺省回退服务级值、G4 开关关闭不受宣告键影响。
+`ReferenceConsulCrossInstanceTests.cs`（真实 PostgreSQL + 真实 Consul dev agent 容器 + 双真实
+进程，[#176](https://github.com/philfanzhou/ServiceMantle/issues/176)）：禁用与未 Ready 期间
+agent catalog 恒空；agent 停机期间注册被拒、两宿主存活并在恢复后恰好各注册一次；双实例以各自
+实例 ID 注册、ServiceAddress/Port 为实例级宣告、agent 健康检查回连两进程真实 `/health/ready`
+且 passing；失去 Ready 注销、恢复后同 ID 重注册；SIGTERM 停止按实例注销（POSIX 门控）；ACL
+token canary 不进入任一进程控制台输出（本部署形态未启用 Prometheus/phase metrics，无指标面可
+断言）。进程侧基架改动：`ReferenceServiceProcess` 支持显式 `--urls` 绑定与非回环监听地址解析。
