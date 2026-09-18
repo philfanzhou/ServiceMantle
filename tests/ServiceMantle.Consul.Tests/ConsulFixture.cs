@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Configuration;
 using ServiceMantle.Consul;
+using ServiceMantle.Discovery;
 using Xunit;
 
 namespace ServiceMantle.Consul.Tests;
@@ -19,7 +20,8 @@ internal sealed class ConsulFixture : IDisposable
     internal readonly ServiceProvider Services;
 
     internal ConsulFixture(bool composite = true, bool tokenSensitive = true, ServiceId? snapshotService = null,
-        Action<IServiceCollection>? configureServices = null)
+        Action<IServiceCollection>? configureServices = null,
+        Action<ServiceInstanceAdvertisementOptions>? advertisement = null)
     {
         var definitions = new ConsulSettingDefinitions().GetDefinitions().Select(d =>
             d.Key == ConsulSettingDefinitions.Token && !tokenSensitive
@@ -37,8 +39,18 @@ internal sealed class ConsulFixture : IDisposable
             return ClientFactory;
         });
         configureServices?.Invoke(services);
-        services.AddServiceMantleConsul();
-        services.AddServiceMantleConsul();
+        if (advertisement is null)
+        {
+            services.AddServiceMantleConsul();
+            services.AddServiceMantleConsul();
+        }
+        else
+        {
+            // Repeated registrations with agreeing advertisement values stay idempotent, exactly
+            // like the timing copies.
+            services.AddServiceMantleConsul(null, advertisement);
+            services.AddServiceMantleConsul(null, advertisement);
+        }
         // The lifecycle is registered once however often the capability is added, and registration
         // itself resolves no client factory, creates no client, and starts no timer or remote work:
         // the controller only takes ownership once the host starts it.
