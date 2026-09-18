@@ -41,7 +41,65 @@ public static class ServiceMantleConsulServiceCollectionExtensions
     /// <exception cref="ConsulConfigurationException">A timing value is out of range.</exception>
     public static IServiceCollection AddServiceMantleConsul(
         this IServiceCollection services,
-        Action<ServiceRegistrationLifecycleOptions>? configure)
+        Action<ServiceRegistrationLifecycleOptions>? configure) =>
+        AddCore(services, configure, advertisementConfiguration: null);
+
+    /// <summary>
+    /// Registers the same capability with explicit lifecycle timing and this process's explicit
+    /// per-instance advertised address and port.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configureLifecycle">Configures the validated lifecycle timing.</param>
+    /// <param name="configureAdvertisement">
+    /// Configures the instance-level advertisement. Supplying both the address and the port makes
+    /// this process advertise its own endpoint instead of the service-level values shared by every
+    /// instance; leaving both null keeps the service-level behaviour byte for byte.
+    /// </param>
+    /// <returns>The same service collection.</returns>
+    /// <remarks>
+    /// <para>
+    /// The advertisement values are validated here with exactly the rules the service-level
+    /// setting values obey - the address is an IP literal or a 1-253 character DNS name over
+    /// ASCII letters, digits, dots, and hyphens, and the port is 1-65535 - and the address and
+    /// the port must be supplied together. An invalid or half-supplied advertisement fails this
+    /// call itself with <see cref="ConsulConfigurationException"/>, before any descriptor that
+    /// could reach a registration is written.
+    /// </para>
+    /// <para>
+    /// The captured values are fixed for the process lifetime: they are captured into every
+    /// client session together with the snapshot and never hot-reloaded. Repeating the
+    /// registration is idempotent while the values agree; two calls that disagree - including one
+    /// configured and one unconfigured - are a conflicting configuration detected when the
+    /// lifecycle is first resolved, before any background work starts.
+    /// </para>
+    /// <para>
+    /// The service-level combination validation is unchanged: an enabled snapshot still requires
+    /// a valid service-level address and port regardless of the instance-level advertisement,
+    /// because the setting validity must not depend on whether this process configured one. The
+    /// instance-level address and port never appear in diagnostics, exception messages, or
+    /// <c>ToString</c> output.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ConsulConfigurationException">
+    /// A timing or advertisement value is out of range, or only one of the address and the port
+    /// was supplied.</exception>
+    public static IServiceCollection AddServiceMantleConsul(
+        this IServiceCollection services,
+        Action<ServiceRegistrationLifecycleOptions>? configureLifecycle,
+        Action<ServiceInstanceAdvertisementOptions>? configureAdvertisement)
+    {
+        ArgumentNullException.ThrowIfNull(configureAdvertisement);
+        var advertisementOptions = new ServiceInstanceAdvertisementOptions();
+        configureAdvertisement(advertisementOptions);
+        // Validation happens at registration time, so an invalid value can never reach a session.
+        var advertisement = ConsulInstanceAdvertisement.FromOptions(advertisementOptions);
+        return AddCore(services, configureLifecycle, advertisement);
+    }
+
+    private static IServiceCollection AddCore(
+        IServiceCollection services,
+        Action<ServiceRegistrationLifecycleOptions>? configure,
+        ConsulInstanceAdvertisement? advertisementConfiguration)
     {
         ArgumentNullException.ThrowIfNull(services);
         var options = new ServiceRegistrationLifecycleOptions();
@@ -55,8 +113,14 @@ public static class ServiceMantleConsulServiceCollectionExtensions
         services.TryAddSingleton(provider => new ConsulClientProvider(
             provider.GetRequiredService<IServiceSettingCurrentSnapshotAccessor>(),
             provider.GetRequiredService<ServiceId>(), provider.GetRequiredService<InstanceId>(),
-            () => provider.GetRequiredService<IConsulClientFactory>()));
+            () => provider.GetRequiredService<IConsulClientFactory>(),
+            ConsulClientProvider.SingleAdvertisement(provider.GetServices<ConsulInstanceAdvertisement>())));
         services.AddSingleton(settings);
+        if (advertisementConfiguration is not null)
+        {
+            services.AddSingleton(advertisementConfiguration);
+        }
+
         if (services.Any(descriptor => descriptor.ServiceType == typeof(ConsulRegistrationLifecycle)))
         {
             return services;

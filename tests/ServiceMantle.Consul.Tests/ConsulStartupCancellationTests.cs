@@ -286,7 +286,8 @@ public sealed class ConsulStartupCancellationTests
                 accessor,
                 ConsulFixture.Service,
                 ConsulFixture.Instance,
-                () => factory);
+                () => factory,
+                null);
             var observer = new ConsulLifecycleObserver();
             var lifecycle = new ConsulRegistrationLifecycle(
                 provider,

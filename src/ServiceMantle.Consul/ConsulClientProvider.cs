@@ -9,14 +9,16 @@ public sealed class ConsulClientProvider
     private readonly ServiceId serviceId;
     private readonly InstanceId instanceId;
     private readonly Func<IConsulClientFactory> factory;
+    private readonly ConsulInstanceAdvertisement advertisement;
 
     internal ConsulClientProvider(IServiceSettingCurrentSnapshotAccessor accessor, ServiceId serviceId,
-        InstanceId instanceId, Func<IConsulClientFactory> factory)
+        InstanceId instanceId, Func<IConsulClientFactory> factory, ConsulInstanceAdvertisement? advertisement)
     {
         this.accessor = accessor;
         this.serviceId = serviceId;
         this.instanceId = instanceId;
         this.factory = factory;
+        this.advertisement = advertisement ?? ConsulInstanceAdvertisement.Unconfigured;
     }
 
     /// <summary>
@@ -42,7 +44,10 @@ public sealed class ConsulClientProvider
         try
         {
             if (snapshot.ServiceId != serviceId) { throw ConsulSnapshotBinding.Invalid(); }
-            binding = ConsulSnapshotBinding.Read(snapshot.Values);
+            binding = ConsulSnapshotBinding.Read(
+                snapshot.Values,
+                advertisement.IsConfigured ? advertisement.Address : null,
+                advertisement.IsConfigured ? advertisement.Port : null);
         }
         catch { throw ConsulSnapshotBinding.Invalid(); }
         if (binding is null) { return null; }
@@ -56,5 +61,26 @@ public sealed class ConsulClientProvider
             return new ConsulClientSession(client, registration, snapshot.Version);
         }
         catch { throw new ConsulConfigurationException(ConsulConfigurationError.ClientCreationFailed); }
+    }
+
+    /// <summary>
+    /// Accepts repeated advertisement registrations only while they agree, exactly like the
+    /// timing copies; an unconfigured advertisement alone stays valid.
+    /// </summary>
+    internal static ConsulInstanceAdvertisement SingleAdvertisement(
+        IEnumerable<ConsulInstanceAdvertisement> registered)
+    {
+        ConsulInstanceAdvertisement? baseline = null;
+        foreach (var current in registered)
+        {
+            if (baseline is not null && baseline != current)
+            {
+                throw new ConsulConfigurationException(ConsulConfigurationError.InvalidConfiguration);
+            }
+
+            baseline = current;
+        }
+
+        return baseline ?? ConsulInstanceAdvertisement.Unconfigured;
     }
 }

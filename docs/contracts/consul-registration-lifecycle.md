@@ -104,6 +104,45 @@ README（英文）中的 `ConsulDiscoverySettingMigration.TryConvert` 内存转�
 示例只做内存转换与输入检查，不证明消费方数据库提交的原子性、持久性或异常恢复；停机、备份、根
 密钥、事务、版本、审计与回滚均由消费方负责。
 
+## 实例级宣告地址（#532）
+
+`discovery.address` 与 `discovery.port` 是服务级设置：同一服务的每个实例从共享快照宣告**完全相同**
+的地址、端口与健康检查 URL，Consul 健康检查无法区分实例。消费方可以为每个进程显式提供实例级
+宣告，覆盖该进程的最终宣告值：
+
+```csharp
+services.AddServiceMantleConsul(
+    configureLifecycle: null,
+    configureAdvertisement: options =>
+    {
+        options.Address = "10.0.0.7";   // this instance's externally reachable address
+        options.Port = 5001;            // this instance's externally reachable port
+    });
+```
+
+固定不变量：
+
+1. **校验时机与计时选项同形**：`configureAdvertisement` 在注册调用内立即校验，规则与服务级值
+   **完全相同**（同一校验函数，非第二套）：Address 为 IP 字面量或 1–253 字符、仅
+   `[A-Za-z0-9.-]` 的 DNS 名；Port 为 1–65535；**两者同时提供或同时不提供**。失败以
+   `ConsulConfigurationException(InvalidConfiguration)` 让注册调用本身失败，不写入任何
+   descriptor。两者均为 null 视为未配置。
+2. **覆盖语义**：存在实例级宣告时，`ConsulServiceRegistration.Address`/`Port` 取实例级值，
+   `HealthUri` 由 `discovery.health-scheme`、实例级 Address:Port 与 `discovery.health-path`
+   组成；`Id`、`Name`、endpoint、token 不变。不存在时行为与现状逐字节一致。没有本机地址或
+   实际监听端口的自动探测。
+3. **组合校验不变**：启用时服务级 `discovery.address`/`discovery.port` 仍必须合法——设置有效性
+   不随进程是否配置实例级宣告而变化；多实例部署中服务级值只作为未配置实例的回退。
+4. **重复注册**：与计时相同——重复调用且实例级值一致为幂等；不一致（含一有一无）在生命周期
+   首次解析时以 `InvalidConfiguration` 失败，任何后台工作开始前。
+5. **捕获时机**：实例级值在 `CreateClient()` 时与快照一起捕获进 session，进程生命周期内固定，
+   不热重载。
+6. **不披露**：实例级地址与端口不进入诊断、异常消息或 `ToString()`（
+   `ConsulServiceRegistration.Address` 作为传输用公开属性与 `HealthUri` 本身不在此列）。
+
+调用方责任：多实例部署为每个实例提供与其真实对外监听一致的实例级 Address 与 Port；实例级地址
+对 Consul agent 或其他实例的可达性（NAT、多网卡、容器端口映射）由运维负责。
+
 ## 状态模型
 
 有限控制状态与一个保守的远程存在性观察配对：

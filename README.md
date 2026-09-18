@@ -2248,7 +2248,36 @@ if (session is not null)
 Each session captures one version and combines `service_id:instance_id` into its registration ID;
 malformed UTF-16 instance IDs are rejected before encoding can collapse distinct IDs. Later snapshots
 do not mutate existing sessions. The advertised address/port also define the health
-URL origin. The default adapter sends one PUT using the
+URL origin.
+
+`discovery.address` and `discovery.port` are service-level settings, so every instance of a service
+advertises the same endpoint. A deployment that wants each instance to advertise its own externally
+reachable endpoint supplies it explicitly per process through the two-argument overload:
+
+```csharp
+services.AddServiceMantleConsul(
+    configureLifecycle: null,
+    configureAdvertisement: options =>
+    {
+        options.Address = "10.0.0.7";
+        options.Port = 5001;
+    });
+```
+
+The address (an IP literal, or a 1-253 character DNS name over ASCII letters, digits, dots, and
+hyphens) and the port (1-65535) must be supplied together or not at all, are validated at
+registration time with exactly the service-level rules, and are captured into every session for the
+process lifetime - there is no auto-detection and no hot reload. While configured, the registration's
+`Address`, `Port`, and health URL use the instance-level values; the ID, service name, agent
+endpoint, and token never change, and an unconfigured advertisement keeps the service-level
+behaviour byte for byte. The service-level combination validation is unchanged: an enabled snapshot
+still requires valid service-level address and port values, which then serve as the fallback for
+instances without their own advertisement. The instance-level address and port never appear in
+diagnostics, exception messages, or `ToString` output. Multi-instance callers are responsible for
+supplying values that match each instance's real external listener; reachability across NAT,
+multiple NICs, or container port mappings is an operations concern.
+
+The default adapter sends one PUT using the
 [Consul agent service API](https://developer.hashicorp.com/consul/api-docs/agent/service), with an HTTP
 health check (10-second interval, 2-second check timeout, initial `critical` status). Requests time out
 after 10 seconds, do not follow redirects, use normal TLS verification and send the optional ACL

@@ -14,7 +14,13 @@ internal sealed class ConsulSnapshotBinding
 
     // The same invariant is checked before activation and at the consumer boundary. The latter
     // also rejects snapshots made with a replacement catalog that weakens the token definition.
-    internal static ConsulSnapshotBinding? Read(IReadOnlyDictionary<string, ServiceSettingValue> values)
+    // The optional instance-level advertisement overrides only the final Address, Port, and
+    // HealthUri: the service-level values are still read and validated, because the combination
+    // validation must not depend on whether this process configured an advertisement.
+    internal static ConsulSnapshotBinding? Read(
+        IReadOnlyDictionary<string, ServiceSettingValue> values,
+        string? instanceAddress = null,
+        int? instancePort = null)
     {
         var enabled = Required(values, ConsulSettingDefinitions.Enabled, ServiceSettingValueType.Boolean);
         if (!enabled.GetBoolean())
@@ -57,11 +63,8 @@ internal sealed class ConsulSnapshotBinding
             throw Invalid();
         }
 
-        var address = Text(values, ConsulSettingDefinitions.Address);
-        if (address.Length is < 1 or > 253 ||
-            (!IPAddress.TryParse(address, out _) &&
-             (Uri.CheckHostName(address) != UriHostNameType.Dns ||
-              address.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '.' and not '-'))))
+        var serviceAddress = Text(values, ConsulSettingDefinitions.Address);
+        if (!IsValidAdvertisedAddress(serviceAddress))
         {
             throw Invalid();
         }
@@ -81,16 +84,34 @@ internal sealed class ConsulSnapshotBinding
             throw Invalid();
         }
 
+        // The instance-level advertisement, when configured, wins over the service-level fallback
+        // for exactly these three fields; Id, Name, endpoint, and token never change.
+        var address = instanceAddress ?? serviceAddress;
+        var port = instancePort ?? (int)number;
         return new()
         {
             Endpoint = endpoint,
             Token = token,
             Name = name,
             Address = address,
-            Port = (int)number,
-            HealthUri = new UriBuilder(scheme, address, (int)number, path).Uri
+            Port = port,
+            HealthUri = new UriBuilder(scheme, address, port, path).Uri
         };
     }
+
+    /// <summary>
+    /// The one address rule the service-level setting and the instance-level advertisement share:
+    /// an IP literal, or a DNS name of 1-253 characters over ASCII letters, digits, dots, and
+    /// hyphens.
+    /// </summary>
+    internal static bool IsValidAdvertisedAddress(string address) =>
+        address.Length is >= 1 and <= 253 &&
+        (IPAddress.TryParse(address, out _) ||
+            (Uri.CheckHostName(address) == UriHostNameType.Dns &&
+                address.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-')));
+
+    /// <summary>The one port rule both levels share: 1 through 65535.</summary>
+    internal static bool IsValidAdvertisedPort(int port) => port is >= 1 and <= 65535;
 
     private static string Text(IReadOnlyDictionary<string, ServiceSettingValue> values, string key) =>
         Required(values, key, ServiceSettingValueType.String).GetString();
