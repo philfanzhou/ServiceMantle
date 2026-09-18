@@ -64,7 +64,22 @@ internal sealed partial class ReferenceServiceProcess : IAsyncDisposable
     /// would create from a relative default lands under the directory the test inspects.
     /// </param>
     /// <param name="arguments">The command-line arguments after the loopback binding.</param>
-    internal static ReferenceServiceProcess Start(string workingDirectory, params string[] arguments)
+    internal static ReferenceServiceProcess Start(string workingDirectory, params string[] arguments) =>
+        Start(ReferenceServiceBuildOutput.ConfigureEntryPoint, workingDirectory, arguments);
+
+    /// <summary>
+    /// Starts the reference service from any build output, for example a copy restored purely
+    /// from packed artifacts rather than from the repository's project references.
+    /// </summary>
+    /// <param name="configureEntryPoint">
+    /// Points <paramref name="startInfo"/> at the entry point of the build output under test.
+    /// </param>
+    /// <param name="workingDirectory">The directory the process runs in.</param>
+    /// <param name="arguments">The command-line arguments after the loopback binding.</param>
+    internal static ReferenceServiceProcess Start(
+        Action<ProcessStartInfo> configureEntryPoint,
+        string workingDirectory,
+        params string[] arguments)
     {
         ArgumentException.ThrowIfNullOrEmpty(workingDirectory);
         ArgumentNullException.ThrowIfNull(arguments);
@@ -77,7 +92,7 @@ internal sealed partial class ReferenceServiceProcess : IAsyncDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        ReferenceServiceBuildOutput.ConfigureEntryPoint(startInfo);
+        configureEntryPoint(startInfo);
         startInfo.ArgumentList.Add("--urls=" + DynamicLoopbackUrl);
         foreach (var argument in arguments)
         {
