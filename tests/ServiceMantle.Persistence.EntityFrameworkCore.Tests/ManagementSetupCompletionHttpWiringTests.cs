@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
@@ -158,6 +159,60 @@ public sealed class ManagementSetupCompletionHttpWiringTests
         Assert.Equal(HttpStatusCode.Conflict, garbage.StatusCode);
     }
 
+    [Fact]
+    public async Task An_input_completion_validates_the_code_before_the_input_and_commits_once()
+    {
+        await using var host = await SetupHost.StartAsync(new CommitBarrier(), inputMode: true);
+        var code = await host.IssueCodeAsync();
+        var issuedVersion = await host.VersionAsync();
+        const string invalidNote = """{"note":""}""";
+        const string wrongCode = "ThisIsNotTheIssuedSetupCode00000";
+
+        // A wrong code answers 401 even with a semantically unusable input: the input rules are
+        // not a probe oracle for callers without the code, and nothing is staged.
+        using var wrongCodeResponse = await host.CompleteWithInputAsync(wrongCode, invalidNote);
+        Assert.Equal(HttpStatusCode.Unauthorized, wrongCodeResponse.StatusCode);
+        await using (var observer = host.Context())
+        {
+            Assert.Equal(
+                InstallationStatus.PendingSetup,
+                (await observer.ServiceInstallations.AsNoTracking().SingleAsync(Token)).Status);
+            Assert.Empty(await observer.Set<SetupNoteEntity>().AsNoTracking().ToListAsync(Token));
+        }
+
+        // A valid code with a semantically unusable input rolls back; the code stays consumable.
+        using var rejected = await host.CompleteWithInputAsync(code, invalidNote);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        Assert.Equal(0, host.Contributors.Registrations);
+        await using (var stillPending = host.Context())
+        {
+            var installation = await stillPending.ServiceInstallations.AsNoTracking()
+                .SingleAsync(Token);
+            Assert.Equal(InstallationStatus.PendingSetup, installation.Status);
+            Assert.NotNull(installation.SetupCodeDigest);
+            Assert.Equal(issuedVersion, installation.Version);
+            Assert.Empty(await stillPending.Set<SetupNoteEntity>().AsNoTracking().ToListAsync(Token));
+        }
+
+        // The same code then commits the input value in one transaction a second connection sees.
+        using var committed = await host.CompleteWithInputAsync(code, """{"note":"from-the-input"}""");
+        Assert.Equal(HttpStatusCode.NoContent, committed.StatusCode);
+        await using (var observer = host.Context())
+        {
+            var installation = await observer.ServiceInstallations.AsNoTracking().SingleAsync(Token);
+            Assert.Equal(InstallationStatus.Completed, installation.Status);
+            Assert.Null(installation.SetupCodeDigest);
+            Assert.Equal(["from-the-input", "contributor-b"], await observer.Set<SetupNoteEntity>()
+                .AsNoTracking()
+                .OrderBy(note => note.Id)
+                .Select(note => note.Name)
+                .ToListAsync(Token));
+        }
+
+        using var replay = await host.CompleteWithInputAsync(code, """{"note":"again"}""");
+        Assert.Equal(HttpStatusCode.Conflict, replay.StatusCode);
+    }
+
     public enum FailureMode
     {
         None,
@@ -184,7 +239,8 @@ public sealed class ManagementSetupCompletionHttpWiringTests
 
         internal static async Task<SetupHost> StartAsync(
             CommitBarrier barrier,
-            FailureMode mode = FailureMode.None)
+            FailureMode mode = FailureMode.None,
+            bool inputMode = false)
         {
             var databasePath = Path.Combine(Path.GetTempPath(), $"sm-http-setup-{Guid.NewGuid():N}.db");
             var connectionString = $"Data Source={databasePath};Pooling=False";
@@ -215,8 +271,17 @@ public sealed class ManagementSetupCompletionHttpWiringTests
             var application = builder.Build();
             SetupHost? host = null;
             application.UseServiceMantlePipeline();
-            application.MapServiceMantleSetup((httpContext, setupCode, cancellationToken) =>
-                host!.ExecuteAsync(httpContext, setupCode, mode, cancellationToken));
+            if (inputMode)
+            {
+                application.MapServiceMantleSetup(
+                    (httpContext, setupCode, input, cancellationToken) =>
+                        host!.ExecuteWithInputAsync(httpContext, setupCode, input, mode, cancellationToken));
+            }
+            else
+            {
+                application.MapServiceMantleSetup((httpContext, setupCode, cancellationToken) =>
+                    host!.ExecuteAsync(httpContext, setupCode, mode, cancellationToken));
+            }
 
             try
             {
@@ -282,6 +347,21 @@ public sealed class ManagementSetupCompletionHttpWiringTests
             return client.SendAsync(request, Token);
         }
 
+        internal Task<HttpResponseMessage> CompleteWithInputAsync(string code, string inputJson)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/management/v1/setup")
+            {
+                Content = new StringContent(
+                    "{\"code\":\"" + code + "\",\"input\":" + inputJson + "}",
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+            request.Headers.Add(
+                ManagementEntryDefaults.UnsafeRequestHeaderName,
+                ManagementEntryDefaults.UnsafeRequestHeaderValue);
+            return client.SendAsync(request, Token);
+        }
+
         /// <summary>Releases one held executor by its arrival position.</summary>
         internal void ReleaseArrival(int index)
         {
@@ -292,6 +372,18 @@ public sealed class ManagementSetupCompletionHttpWiringTests
         }
 
         /// <summary>
+        /// The consumer transaction boundary of the input mode: the same sequence as the code-only
+        /// executor, with the input's semantics checked only after the read-only code validation.
+        /// </summary>
+        private async ValueTask<SetupCompletionResult> ExecuteWithInputAsync(
+            HttpContext httpContext,
+            SetupCode setupCode,
+            SetupInput input,
+            FailureMode mode,
+            CancellationToken cancellationToken) =>
+            await ExecuteAsync(httpContext, setupCode, mode, cancellationToken, input);
+
+        /// <summary>
         /// The consumer transaction boundary: a fresh scope, a clean DbContext, read-only
         /// validation, orchestration, staged consumption, one save, and a commit.
         /// </summary>
@@ -299,7 +391,8 @@ public sealed class ManagementSetupCompletionHttpWiringTests
             HttpContext httpContext,
             SetupCode setupCode,
             FailureMode mode,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            SetupInput? input = null)
         {
             await HoldAsync(cancellationToken).ConfigureAwait(false);
             await using var scope = httpContext.RequestServices
@@ -319,6 +412,21 @@ public sealed class ManagementSetupCompletionHttpWiringTests
                 {
                     await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                     return Map(validation.ErrorCode);
+                }
+
+                if (input is not null)
+                {
+                    // The code validated, so the input's semantics may answer at last: one note
+                    // property with a non-empty string value, or the transaction rolls back.
+                    if (!input.RootElement.TryGetProperty("note", out var note) ||
+                        note.ValueKind != JsonValueKind.String ||
+                        string.IsNullOrWhiteSpace(note.GetString()))
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                        return SetupCompletionResult.ValidationFailed();
+                    }
+
+                    Contributors.InputNote = note.GetString();
                 }
 
                 var orchestration = await new ServiceSetupOrchestrator(
@@ -422,9 +530,12 @@ public sealed class ManagementSetupCompletionHttpWiringTests
 
         internal int Registrations => Volatile.Read(ref registrations);
 
+        /// <summary>The note name the input mode staged, overriding the first fixed name.</summary>
+        internal string? InputNote { get; set; }
+
         internal IEnumerable<IServiceSetupContributor> Create(SetupHttpDbContext context) =>
         [
-            new NoteContributor(1, "contributor-a", context, this, FailureMode.None),
+            new NoteContributor(1, "contributor-a", context, this, FailureMode.None, useInputNote: true),
             new NoteContributor(2, "contributor-b", context, this, mode),
         ];
 
@@ -436,7 +547,8 @@ public sealed class ManagementSetupCompletionHttpWiringTests
         string name,
         SetupHttpDbContext context,
         RecordingContributors recorder,
-        FailureMode mode) : IServiceSetupContributor
+        FailureMode mode,
+        bool useInputNote = false) : IServiceSetupContributor
     {
         public int Order => order;
 
@@ -448,7 +560,10 @@ public sealed class ManagementSetupCompletionHttpWiringTests
             CancellationToken cancellationToken = default)
         {
             recorder.Record();
-            context.Set<SetupNoteEntity>().Add(new SetupNoteEntity { Name = name });
+            context.Set<SetupNoteEntity>().Add(new SetupNoteEntity
+            {
+                Name = useInputNote && recorder.InputNote is { } input ? input : name,
+            });
             return mode switch
             {
                 FailureMode.ContributorRejects => ValueTask.FromResult(

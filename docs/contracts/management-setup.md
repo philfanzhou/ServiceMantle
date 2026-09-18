@@ -1,4 +1,4 @@
-# Setup 状态与完成契约（#96）
+# Setup 状态与完成契约（#96、#531）
 
 状态：已实现。本文档描述 ServiceMantle 管理面的匿名 Setup 条目。它细化
 [management-entry-authorization.md](management-entry-authorization.md) 中的 Setup 行，
@@ -23,6 +23,12 @@ app.MapServiceMantleSetup(async (httpContext, setupCode, cancellationToken) =>
 并列映射，绝不位于其内部。使用默认根时完整路径为 `/management/v1/setup`；自定义版本化根会
 同时移动两者。它们至多被映射一次。缺少执行器、缺少共享管理条目能力或管理 API v1 能力，以及
 重复映射，都会在宿主启动前失败。
+
+存在两个同名重载：`MapServiceMantleSetup(SetupExecutor?)` 只接受 `code`（下文「完成 Setup」），
+`MapServiceMantleSetup(SetupInputExecutor?)` 额外接受一个消费方定义的 `input` 对象（下文
+「带安装输入的完成（#531）」）。两个重载共享「每宿主至多映射一次」计数与同一条目基线；同一
+宿主先后映射两个重载同样算重复映射。新增第二个重载后，字面量 `MapServiceMantleSetup(null)`
+不再能唯一解析（CS0121），这是已接受的源码差异——该调用此前在启动时必然抛出。
 
 ## 准入与安全基线
 
@@ -72,6 +78,60 @@ unavailable 结果，而不是由 endpoint 强加。
 暂存之后的任何 code 竞争、贡献者失败、暂存、保存、提交、取消或清理失败，都必须回滚，丢弃
 整个 scope 且不重试，并绝不复用该 DbContext。
 
+## 带安装输入的完成（#531）
+
+`MapServiceMantleSetup(SetupInputExecutor?)` 把同一组条目映射为**输入模式**：完成请求体在
+`code` 之外还必须恰好携带一个消费方定义的 `input` JSON 对象。共享层只做有界结构校验，把
+`input` 原样交给执行器，不解释、不记录、不回显其内容；仅 `code` 模式的行为逐字节不变。
+
+### 线上格式
+
+在待完成期间，输入模式的请求必须满足以下每一条规则，任何违反都返回固定的管理 `400`，且不
+回显请求的任何一个字节，执行器不被调用：
+
+- `application/json`，可选带 `charset=utf-8` 参数，别无其他；
+- 无查询字符串，无 `Content-Encoding` Header；
+- 原始请求体至多 16 KiB，按实际读取字节计数（至多多读 1 字节即判超限，不信任
+  `Content-Length`）；
+- JSON 深度至多为 8（根对象记为第 0 层），无注释，无尾随逗号；
+- 根对象恰好有两个属性：`code` 与 `input`，名称均区分大小写，顺序不限；重复属性、`Code`
+  或 `Input` 大小写变体、多余属性都被拒绝；
+- `code` 为字符串且满足现有 `SetupCode.TryParse`（不修剪）；`input` 必须是 JSON 对象，可为
+  空对象 `{}`。
+
+### 判定顺序与结果
+
+判定顺序与仅 `code` 模式完全一致：阶段/限流/不安全 Header 拒绝（不读取请求体）→ 安装权威
+读取（缺失或故障 `503`）→ `Completed` 直接 `409` 且**不读取、不解析**请求体 → 结构解析
+（`400`）→ 执行器恰好一次。读取请求体时的普通 I/O 异常返回 `503`；执行器结果、null 结果与
+异常的映射，以及调用方取消优先级，全部沿用上表，不复述。
+
+### 输入的所有权与释放
+
+`SetupInput` 没有公开构造函数，也不公开 `Dispose`：其生命周期只归处理器所有。解析成功后它
+持有租用缓冲与 `JsonDocument`；处理器在执行器**返回或抛出之后、任何结果分类与取消观察之前**
+释放它（释放文档并将清零后的缓冲归还池）。此后访问 `RootElement` 抛 `ObjectDisposedException`。
+解析失败路径同样在返回 `400` 之前清零归还。执行器不被调用的路径不创建 `SetupInput`。两个并发
+请求各自持有独立缓冲，互不可见。
+
+### 输入模式执行器的额外义务（第 7 条）
+
+在「必需的执行器序列」六步之上，输入模式执行器还必须：**只有在
+`IServiceSetupCodeStore.ValidateAsync` 只读验证通过之后，才允许根据 `input` 的语义内容返回
+`ValidationFailed`**；code 无效时必须返回 `CredentialInvalid`，使无 code 的调用方无法通过
+400/401 差异探测输入校验规则。`input` 中的敏感值只可交给 Contributor 暂存，不得写入日志、
+审计描述或响应。执行器不得在返回后保留 `SetupInput` 或其任何 `JsonElement`。
+
+### 输入模式的非保证与调用方责任
+
+- 执行器从 `JsonElement` 物化出的托管字符串（例如 `GetString()` 得到的密码）无法清零，仍在
+  GC 回收前留在进程内存。
+- `ValidationFailed` 的 `400` 不携带任何字段级原因，消费方前端只能展示通用提示或自行做客户
+  端预校验。
+- 执行器违反第 7 条义务时的探测风险，以及上文「明确的非保证」的全部条目，继续适用。
+- 调用方责任：先验 code 再做输入语义校验；不在执行器返回后保留输入；在前端对可预知的字段
+  规则做预校验。
+
 ## 响应
 
 | 结果 | HTTP 结果 |
@@ -116,8 +176,9 @@ null 完成结果和未定义的状态值都视为不可用，绝不猜测。
 ## 否定性披露保证
 
 每个响应体都是五个固定字节数组之一。任何候选 Setup Code、摘要、生成、过期、安装版本、
-贡献者值、存储错误码或异常文本都不会到达序列化器、消息或 ServiceMantle 诊断。解析器租用的
-缓冲区（曾持有候选值）在归还池时被清零。
+贡献者值、存储错误码、安装输入内容或异常文本都不会到达序列化器、消息或 ServiceMantle 诊断。
+解析器租用的缓冲区（曾持有候选值或原始输入字节）在归还池时被清零；`SetupInput` 标记
+`ISensitiveLogValue`，其 `ToString` 与调试显示固定为掩码。
 
 ## 明确的非保证
 

@@ -79,6 +79,88 @@ public sealed class SetupCancellationPriorityTests
 
     [Theory]
     [MemberData(nameof(StoreOutcomes))]
+    public async Task The_input_mode_store_boundary_propagates_the_callers_cancellation(string outcome)
+    {
+        using var abort = new CancellationTokenSource();
+        var executor = new RecordingInputExecutor();
+        var context = CreateContext(
+            new CancellingStore(outcome, abort),
+            abort.Token,
+            Body(InputBody("""{"username":"admin"}""")));
+
+        var completion = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await SetupHandlers.CompleteWithInputAsync(context, executor.Execute));
+
+        AssertCallersCancellation(completion, abort.Token);
+        Assert.Equal(0, executor.Calls);
+        Assert.Equal(0, context.Request.Body.Position);
+    }
+
+    [Theory]
+    [MemberData(nameof(BodyOutcomes))]
+    public async Task The_input_mode_body_boundary_propagates_the_callers_cancellation(string outcome)
+    {
+        using var abort = new CancellationTokenSource();
+        var executor = new RecordingInputExecutor();
+        var context = CreateContext(
+            new FixedStore(InstallationStatus.PendingSetup),
+            abort.Token,
+            Body(InputBody("{}")));
+        context.Request.Body = new CancellingBody(outcome, abort, InputBody("{}"));
+
+        var completion = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await SetupHandlers.CompleteWithInputAsync(context, executor.Execute));
+
+        AssertCallersCancellation(completion, abort.Token);
+        // A body that was aborted never reaches the consumer transaction.
+        Assert.Equal(0, executor.Calls);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutorOutcomes))]
+    public async Task The_input_mode_executor_boundary_propagates_the_callers_cancellation(string outcome)
+    {
+        using var abort = new CancellationTokenSource();
+        var executor = new RecordingInputExecutor(outcome, abort);
+        var context = CreateContext(
+            new FixedStore(InstallationStatus.PendingSetup),
+            abort.Token,
+            Body(InputBody("""{"username":"admin"}""")));
+
+        var completion = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await SetupHandlers.CompleteWithInputAsync(context, executor.Execute));
+
+        AssertCallersCancellation(completion, abort.Token);
+        // A cancellation observed after the executor returned or threw never calls it again and
+        // never retries, rolls back, or commits anything of its own.
+        Assert.Equal(1, executor.Calls);
+        // The input the executor saw was released before the cancellation was classified.
+        Assert.Throws<ObjectDisposedException>(() => executor.Retained.RootElement);
+    }
+
+    [Theory]
+    [InlineData("committed")]
+    [InlineData("credential-invalid")]
+    [InlineData("conflict")]
+    [InlineData("validation-failed")]
+    [InlineData("unavailable")]
+    [InlineData("null")]
+    public async Task Without_caller_cancellation_the_input_mode_mapping_is_unchanged(string outcome)
+    {
+        var executor = new RecordingInputExecutor(outcome);
+        var context = CreateContext(
+            new FixedStore(InstallationStatus.PendingSetup),
+            CancellationToken.None,
+            Body(InputBody("""{"username":"admin"}""")));
+
+        var result = await SetupHandlers.CompleteWithInputAsync(context, executor.Execute);
+
+        Assert.Equal(1, executor.Calls);
+        Assert.Equal(Expected(outcome), Describe(result));
+    }
+
+    [Theory]
+    [MemberData(nameof(StoreOutcomes))]
     public async Task The_read_entry_store_boundary_propagates_the_callers_cancellation(string outcome)
     {
         using var abort = new CancellationTokenSource();
@@ -350,6 +432,8 @@ public sealed class SetupCancellationPriorityTests
 
     private static Stream Body(string json) => new MemoryStream(Encoding.UTF8.GetBytes(json));
 
+    private static string InputBody(string input) => $$"""{"code":"{{SentinelCode}}","input":{{input}}}""";
+
     private static DefaultHttpContext CreateContext(
         IServiceInstallationStore? store,
         CancellationToken requestAborted,
@@ -455,7 +539,10 @@ public sealed class SetupCancellationPriorityTests
     }
 
     /// <summary>Cancels the caller during the body read, then produces one finite outcome.</summary>
-    private sealed class CancellingBody(string outcome, CancellationTokenSource abort) : Stream
+    private sealed class CancellingBody(
+        string outcome,
+        CancellationTokenSource abort,
+        string? validBody = null) : Stream
     {
         private bool answered;
 
@@ -487,7 +574,7 @@ public sealed class SetupCancellationPriorityTests
             switch (outcome)
             {
                 case "valid":
-                    return ValueTask.FromResult(Write(buffer, $$"""{"code":"{{SentinelCode}}"}"""));
+                    return ValueTask.FromResult(Write(buffer, validBody ?? $$"""{"code":"{{SentinelCode}}"}"""));
                 case "unusable":
                     return ValueTask.FromResult(Write(buffer, """{"code":"too-short"}"""));
                 case "foreign-cancellation":
@@ -596,6 +683,49 @@ public sealed class SetupCancellationPriorityTests
                 _ => ValueTask.FromException<SetupCompletionResult>(
                     new InvalidOperationException(
                         secret is null ? "internal failure" : $"internal failure {secret}")),
+            };
+        }
+    }
+
+    /// <summary>Counts its calls and produces one finite input-mode executor outcome.</summary>
+    private sealed class RecordingInputExecutor(
+        string outcome = "committed",
+        CancellationTokenSource? abort = null)
+    {
+        private int calls;
+
+        internal int Calls => Volatile.Read(ref calls);
+
+        internal SetupInput Retained { get; private set; } = null!;
+
+        internal ValueTask<SetupCompletionResult> Execute(
+            HttpContext context,
+            SetupCode setupCode,
+            SetupInput input,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref calls);
+            Retained = input;
+            abort?.Cancel();
+            return outcome switch
+            {
+                "committed" => ValueTask.FromResult(SetupCompletionResult.Committed()),
+                "credential-invalid" => ValueTask.FromResult(
+                    SetupCompletionResult.CredentialInvalid()),
+                "conflict" => ValueTask.FromResult(SetupCompletionResult.Conflict()),
+                "validation-failed" => ValueTask.FromResult(
+                    SetupCompletionResult.ValidationFailed()),
+                "unavailable" => ValueTask.FromResult(
+                    SetupCompletionResult.Unavailable()),
+                "null" => ValueTask.FromResult<SetupCompletionResult>(null!),
+                "timeout" => ValueTask.FromException<SetupCompletionResult>(
+                    new TimeoutException("internal timeout")),
+                "foreign-cancellation" => ValueTask.FromException<SetupCompletionResult>(
+                    new OperationCanceledException(
+                        "internal",
+                        new CancellationTokenSource().Token)),
+                _ => ValueTask.FromException<SetupCompletionResult>(
+                    new InvalidOperationException("internal failure")),
             };
         }
     }

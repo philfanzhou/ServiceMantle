@@ -71,4 +71,66 @@ public static class ServiceMantleSetupEndpointRouteBuilderExtensions
             (HttpContext context) => SetupHandlers.CompleteAsync(context, executor));
         return endpoints;
     }
+
+    /// <summary>
+    /// Maps <c>GET</c>, <c>HEAD</c>, and <c>POST {versionedRoot}/setup</c> with the shared
+    /// management entry baseline and the ServiceMantle-owned Setup handlers, and accepts one
+    /// consumer-defined installation input object on the completion body.
+    /// </summary>
+    /// <param name="endpoints">The application the ServiceMantle pipeline was composed on.</param>
+    /// <param name="executor">
+    /// The consumer-owned transaction boundary. It returns Committed only after commit completes.
+    /// </param>
+    /// <returns>The same endpoint route builder.</returns>
+    /// <remarks>
+    /// <para>
+    /// This overload shares the mapping rules, the entry baseline, and the read entry with the
+    /// <see cref="MapServiceMantleSetup(IEndpointRouteBuilder, SetupExecutor?)">code-only
+    /// overload</see>: the entries are opt-in, at most one of the two overloads may be mapped per
+    /// host, and a missing executor or capability fails before the host starts. A literal
+    /// <c>app.MapServiceMantleSetup(null)</c> no longer compiles once both overloads exist; pass
+    /// the lambda or a typed <c>null</c> instead of the untyped literal.
+    /// </para>
+    /// <para>
+    /// The completion body of this overload must be <c>application/json</c> with an optional UTF-8
+    /// charset, no query string and no content encoding, a raw body of at most 16 KiB, JSON depth
+    /// at most 8, no comments, and no trailing commas. The root object must hold exactly two
+    /// case-sensitive properties: <c>code</c>, a string with the existing 32-character Base64URL
+    /// Setup Code, never trimmed, and <c>input</c>, a JSON object (possibly empty) whose content
+    /// ServiceMantle never interprets, logs, echoes, or stores. Every unusable shape answers the
+    /// fixed management 400 without reading the executor. The already-completed conflict, the
+    /// status codes, and the caller-cancellation precedence are identical to the code-only
+    /// overload.
+    /// </para>
+    /// <para>
+    /// The executor receives the parsed code together with a <see cref="SetupInput"/> that is
+    /// valid only for the duration of that call: the endpoint disposes it and returns its zeroed
+    /// buffer right after the executor returned or threw. The executor must validate the code
+    /// read-only before the input's semantic content may influence the answer, and must not retain
+    /// the input or any <c>JsonElement</c> derived from it.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// The executor is missing, the shared management entry capability or management API v1
+    /// capability is not registered, or the entries are mapped more than once.
+    /// </exception>
+    public static IEndpointRouteBuilder MapServiceMantleSetup(
+        this IEndpointRouteBuilder endpoints,
+        SetupInputExecutor? executor)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        if (executor is null)
+        {
+            throw SetupMapping.MissingExecutor();
+        }
+
+        SetupMapping.RecordMap(endpoints.ServiceProvider);
+        endpoints.MapServiceMantleManagementEntry(
+            ManagementEntryKind.SetupStatus,
+            (HttpContext context) => SetupHandlers.StatusAsync(context));
+        endpoints.MapServiceMantleManagementEntry(
+            ManagementEntryKind.SetupComplete,
+            (HttpContext context) => SetupHandlers.CompleteWithInputAsync(context, executor));
+        return endpoints;
+    }
 }
