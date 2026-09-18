@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Configuration;
 using ServiceMantle.Health;
@@ -101,6 +102,17 @@ public static class ReferenceApplication
         if (postgresqlOptions is not null)
         {
             builder.Services.AddReferencePostgreSqlStartup(postgresqlOptions);
+            // The Setup Code delivery seam and the startup issuer ride the same gate and are
+            // registered after the gate's own hosted service, so the issuer's StartingAsync runs
+            // after the gate has published its database fact. With the gate off neither exists and
+            // no banner is ever printed.
+            builder.Services.TryAddSingleton(
+                new ServiceMantle.ReferenceService.Installation.PostgreSql.ReferenceSetupCodeOutput(
+                    Console.Out,
+                    Console.Error));
+            builder.Services.AddSingleton<ServiceMantle.ReferenceService.Installation.PostgreSql.ReferenceSetupCodeIssuer>();
+            builder.Services.AddSingleton<IHostedService>(provider =>
+                provider.GetRequiredService<ServiceMantle.ReferenceService.Installation.PostgreSql.ReferenceSetupCodeIssuer>());
             // The health capability, its one live snapshot source, and the business readiness
             // contributor are wired if and only if the PostgreSQL startup gate is enabled, and they
             // reuse the gate's own context factory and Ready result rather than any new setting. The
@@ -221,6 +233,11 @@ public static class ReferenceApplication
 
             app.MapServiceMantleManagementSession(ReferenceManagementLoginAdapter.AdaptAsync);
             app.MapServiceMantleHealthEndpoints();
+            // The anonymous Setup entries complete the one-shot installation through the sample's
+            // own executor: the consumed code, one workspace, and one audit row commit in a single
+            // consumer-owned transaction or not at all.
+            app.MapServiceMantleSetup(
+                ServiceMantle.ReferenceService.Installation.PostgreSql.ReferencePostgreSqlSetupExecutor.ExecuteAsync);
             // The protected group is created once and kept in a local so the update endpoints that
             // come later append to exactly this group; the two read-only setting queries and the
             // transactional update entry hang off it now. The update's executor owns the sample's

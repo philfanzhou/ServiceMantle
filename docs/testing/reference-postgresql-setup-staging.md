@@ -14,10 +14,11 @@
 此处交付：一个 contributor 和一个 staging scope，可以与真实的 `ServiceSetupOrchestrator`
 组合，针对真实的 PostgreSQL 数据库使用。
 
-**此处不交付，且下面的任何内容都不隐含：**host 启用、Setup Code、安装状态、初始配置、审计、
-HTTP、新表或迁移、任何 DI 自动接线，以及任何锁。staging 一个工作区不是一个 `Completed`
-的安装。示例的 host 不会在启动期间运行此 contributor，运行它也不会使正在运行的示例变为
-`Ready`。
+**此处不交付，且下面的任何内容都不隐含：**host 启用、初始配置、HTTP、新表或迁移、任何 DI
+自动接线，以及任何锁。Setup Code、安装状态、审计与实际宿主/HTTP 激活由
+[reference-postgresql-setup.md](reference-postgresql-setup.md)（#175）交付。staging 一个工作区
+不是一个 `Completed` 的安装。示例的 host 不会在启动期间运行此 contributor，运行它也不会使
+正在运行的示例变为 `Ready`。
 
 ## 每个成员做什么
 

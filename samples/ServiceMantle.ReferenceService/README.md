@@ -136,11 +136,39 @@ provider 消息或异常文本。只有 `Ready` 允许宿主完成启动——ga
 
 本 gate **不**保证：不自动接管任意旧库（缺安装行或安装行无效一律关闭失败）；不回滚已提交的
 迁移或 `CREATE DATABASE`；不保证 gate 结果之后的状态新鲜度（实时健康见下文的
-[阶段 Live/Ready 健康接线](#postgresql-live-ready-health)）；不签发 Setup Code（
-[#175](https://github.com/philfanzhou/ServiceMantle/issues/175)）；不做双实例最终 E2E（
+[阶段 Live/Ready 健康接线](#postgresql-live-ready-health)）；不做双实例最终 E2E（
 [#165](https://github.com/philfanzhou/ServiceMantle/issues/165)）；不保证行政连接端点的 TLS
 与网络信任。调用方责任：可信的 PostgreSQL 端点、最小权限的运行时账户、首次准备之后移除
 行政凭据、部署侧负责备份。
+
+<a id="postgresql-setup-installation"></a>
+
+## 一次性首次安装（Setup）
+
+当且仅当上面的 PostgreSQL 启动 gate 被显式打开时，样例接线共享 Setup 条目与自己的安装
+Contributor。gate 关闭时 `/management/v1/setup` 为 404，没有签发器，控制台没有横幅。
+
+首次启动（gate 解析为 `PendingSetup`）在标准输出打印一次：
+
+```
+one-time setup code:
+<32 字符明文>
+expires at <UTC ISO-8601>
+for a new code later run with --rotate-setup-code
+```
+
+明文只经过可替换的 `ReferenceSetupCodeOutput` 接缝（默认 `Console.Out`），从不经过
+`ILogger`；数据库只存摘要。`PendingSetup` 期间重启打印固定提示，不轮换；`CreateAsync` 的
+乐观并发保证两实例同时首签时至多一份有效材料。code 过期或丢失时运行
+`--rotate-setup-code`（同样的 gate 参数，在 Web 宿主之前执行）：成功打印同一横幅并退出
+`0`，已完成/无安装行/其他拒绝以一行固定 stderr 退出 `1`，gate 未开启退出 `2`。
+
+`POST /management/v1/setup` 携带 `{"code":"…"}`（仅 `code` 模式）完成安装。示例执行器
+`ReferencePostgreSqlSetupExecutor` 严格遵循共享契约的六步序列，把消费的 code、一个业务工作区
+与一条 `installation.completed` 系统审计放进**同一个**事务：全部提交或全部不存在。不写
+`service_settings` 行（初始配置由定义默认值承担）。完成后不重启即可 `/health/ready` 200。
+完整的行为矩阵、结果映射与非保证见
+[docs/testing/reference-postgresql-setup.md](../../docs/testing/reference-postgresql-setup.md)。
 
 <a id="postgresql-management-session"></a>
 
