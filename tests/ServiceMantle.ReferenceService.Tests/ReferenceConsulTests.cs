@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
@@ -22,7 +23,7 @@ namespace ServiceMantle.ReferenceService.Tests;
 /// with the transport replaced by a recording factory: the disabled path with zero clients, the
 /// combination validation of discovery settings, the snapshot activation boundary, the
 /// readiness-gated registration and deregistration, retry, shutdown, the restart-only setting
-/// refresh, and the sensitive-token boundary.
+/// refresh, the sensitive-token boundary, and the optional instance-level advertisement.
 /// </summary>
 [RealDatabaseTest(RealDatabaseProvider.PostgreSql)]
 public sealed class ReferenceConsulTests : IAsyncLifetime
@@ -325,6 +326,72 @@ public sealed class ReferenceConsulTests : IAsyncLifetime
         }
     }
 
+    // --- G1: two instances on one target advertise their own endpoints ---------------------------
+
+    [Fact]
+    public async Task G1_TwoInstancesOnOneTargetAdvertiseTheirOwnAddressAndPort()
+    {
+        var database = await CreateTargetAsync("advertise-two");
+        await WriteFullComboAsync(database);
+        var factoryA = new RecordingFactory();
+        await using var appA = await StartAppAsync(
+            database, consul: true, factoryA,
+            instanceId: "reference-a", advertisedAddress: "127.0.0.1", advertisedPort: 5101);
+        var factoryB = new RecordingFactory();
+        await using var appB = await StartAppAsync(
+            database, consul: true, factoryB,
+            instanceId: "reference-b", advertisedAddress: "127.0.0.2", advertisedPort: 5102);
+        await WaitAsync(() => factoryA.Creates >= 1 && factoryB.Creates >= 1);
+        await ExecuteAsync(Target(database), $"INSERT INTO {WorkspacesTable} (\"Id\", \"DisplayName\") VALUES (gen_random_uuid(), 'w')");
+        await WaitAsync(() => factoryA.RegisterCalls >= 1 && factoryB.RegisterCalls >= 1);
+
+        var registrationA = Assert.Single(factoryA.RegistrationCopies);
+        var registrationB = Assert.Single(factoryB.RegistrationCopies);
+        Assert.Equal("reference-service:reference-a", registrationA.Id);
+        Assert.Equal("reference-service:reference-b", registrationB.Id);
+        Assert.Equal("127.0.0.1", registrationA.Address);
+        Assert.Equal("127.0.0.2", registrationB.Address);
+        Assert.Equal(5101, registrationA.Port);
+        Assert.Equal(5102, registrationB.Port);
+        Assert.Equal(new Uri("http://127.0.0.1:5101/health/ready"), registrationA.HealthUri);
+        Assert.Equal(new Uri("http://127.0.0.2:5102/health/ready"), registrationB.HealthUri);
+    }
+
+    // --- G2: absent keys keep the service-level advertisement ------------------------------------
+
+    [Fact]
+    public async Task G2_WithoutTheAdvertisementKeysTheServiceLevelValuesRegister()
+    {
+        var database = await CreateTargetAsync("advertise-fallback");
+        await WriteFullComboAsync(database);
+        var factory = new RecordingFactory();
+        await using var app = await StartAppAsync(database, consul: true, factory);
+        await ExecuteAsync(Target(database), $"INSERT INTO {WorkspacesTable} (\"Id\", \"DisplayName\") VALUES (gen_random_uuid(), 'w')");
+        await WaitAsync(() => factory.RegisterCalls >= 1);
+
+        var registration = Assert.Single(factory.RegistrationCopies);
+        Assert.Equal("reference-service:reference-local", registration.Id);
+        Assert.Equal("10.0.0.5", registration.Address);
+        Assert.Equal(8080, registration.Port);
+        Assert.Equal(new Uri("http://10.0.0.5:8080/health/ready"), registration.HealthUri);
+    }
+
+    // --- G4: a switch-off host never reads the advertisement keys --------------------------------
+
+    [Fact]
+    public async Task G4_AnUnreadAdvertisementPairLeavesTheSwitchOffHostUnchanged()
+    {
+        var database = await CreateTargetAsync("advertise-off");
+        await using var app = await StartAppAsync(database, consul: false, new RecordingFactory(), advertisedAddress: "127.0.0.1");
+        await Task.Delay(TimeSpan.FromSeconds(1.5), Token0);
+
+        Assert.DoesNotContain(
+            app.Services.GetServices<IHostedService>(),
+            service => service.GetType().Name == "ConsulRegistrationLifecycle");
+        Assert.Null(app.Services.GetService<ConsulClientProvider>());
+        Assert.Null(app.Services.GetService<IConsulClientFactory>());
+    }
+
     // --- helpers --------------------------------------------------------------------------------
 
     /// <summary>Starts a migrated host, completes the installation by SQL, and writes the full
@@ -368,7 +435,9 @@ public sealed class ReferenceConsulTests : IAsyncLifetime
         RecordingFactory factory,
         string? rootKey = null,
         string? instanceId = null,
-        ILoggerProvider? loggerProvider = null)
+        ILoggerProvider? loggerProvider = null,
+        string? advertisedAddress = null,
+        int? advertisedPort = null)
     {
         var arguments = new List<string>
         {
@@ -392,6 +461,18 @@ public sealed class ReferenceConsulTests : IAsyncLifetime
         {
             arguments.Add("--" + ReferenceConsulDefaults.InstanceIdKey);
             arguments.Add(instanceId);
+        }
+
+        if (advertisedAddress is not null)
+        {
+            arguments.Add("--" + ReferenceConsulDefaults.AdvertisedAddressKey);
+            arguments.Add(advertisedAddress);
+        }
+
+        if (advertisedPort is not null)
+        {
+            arguments.Add("--" + ReferenceConsulDefaults.AdvertisedPortKey);
+            arguments.Add(advertisedPort.Value.ToString(CultureInfo.InvariantCulture));
         }
 
         var builder = ReferenceApplication.CreateBuilder([.. arguments]);
@@ -516,6 +597,7 @@ public sealed class ReferenceConsulTests : IAsyncLifetime
     {
         private readonly ConcurrentQueue<string> calls = [];
         private readonly ConcurrentQueue<string> registrations = [];
+        private readonly ConcurrentQueue<ConsulServiceRegistration> registrationCopies = [];
         private int creates;
         private int registerCalls;
         private int deregisterCalls;
@@ -566,6 +648,18 @@ public sealed class ReferenceConsulTests : IAsyncLifetime
         internal IReadOnlyList<string> RegisteredNames =>
             Registrations.Select(call => call.Split(':')[^1]).ToList();
 
+        /// <summary>The immutable registrations handed to the transport, in order.</summary>
+        internal IReadOnlyList<ConsulServiceRegistration> RegistrationCopies
+        {
+            get
+            {
+                lock (registrationCopies)
+                {
+                    return [.. registrationCopies];
+                }
+            }
+        }
+
         public IConsulClient Create(ConsulClientConfiguration configuration)
         {
             Interlocked.Increment(ref creates);
@@ -598,6 +692,11 @@ public sealed class ReferenceConsulTests : IAsyncLifetime
                     lock (owner.registrations)
                     {
                         owner.registrations.Enqueue("register:" + registration.Id + ":" + registration.Name);
+                    }
+
+                    lock (owner.registrationCopies)
+                    {
+                        owner.registrationCopies.Enqueue(registration);
                     }
 
                     var result = owner.RegisterResults is { } results && registerIndex < results.Count

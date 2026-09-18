@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -102,6 +103,35 @@ public static class ReferenceApplication
                 "The reference Consul registration requires the PostgreSQL startup gate: '" +
                 ReferenceConsulDefaults.EnabledKey + "' needs '" +
                 ReferencePostgreSqlStartupOptions.EnabledKey + "' to be true.");
+        }
+
+        // Explicit and fixed before Build, on the same shape as the other Consul inputs: the
+        // optional instance-level advertisement is read only while the Consul switch is on, so a
+        // switch-off host never touches the two keys. An unusable pair - one key without the
+        // other, or a port that is not a plain whole number - fails here with a message naming
+        // only the two settings, before any provider, registration, or network is touched. A
+        // syntactically valid pair is not re-validated here; the shared registration entry owns
+        // those rules and fails the startup itself when they do not hold.
+        string? advertisedAddress = null;
+        int? advertisedPort = null;
+        if (consul)
+        {
+            advertisedAddress = builder.Configuration[ReferenceConsulDefaults.AdvertisedAddressKey];
+            var advertisedPortText = builder.Configuration[ReferenceConsulDefaults.AdvertisedPortKey];
+            if (advertisedAddress is not null || advertisedPortText is not null)
+            {
+                if (advertisedAddress is null || advertisedPortText is null ||
+                    !int.TryParse(advertisedPortText, NumberStyles.None, CultureInfo.InvariantCulture, out var parsedPort))
+                {
+                    throw new InvalidOperationException(
+                        "The reference Consul advertisement could not be read from '" +
+                        ReferenceConsulDefaults.AdvertisedAddressKey + "' and '" +
+                        ReferenceConsulDefaults.AdvertisedPortKey +
+                        "': both settings must be supplied together and the port must be a whole number.");
+                }
+
+                advertisedPort = parsedPort;
+            }
         }
 
         // Fixed before Build, on the same shape as the other switches: only a value that parses to
@@ -257,7 +287,25 @@ public static class ReferenceApplication
                 // database; the hosted-service registration order fixes both. No timing keys are
                 // added - the lifecycle keeps its defaults.
                 builder.Services.AddSingleton<IHostedService, ReferenceSettingSnapshotActivation>();
-                builder.Services.AddServiceMantleConsul();
+                if (advertisedAddress is null)
+                {
+                    // Both advertisement keys absent keeps the service-level values byte for byte;
+                    // the two-argument overload refuses a null advertisement delegate, so this
+                    // stays on the parameterless entry.
+                    builder.Services.AddServiceMantleConsul();
+                }
+                else
+                {
+                    var address = advertisedAddress;
+                    var port = advertisedPort!.Value;
+                    builder.Services.AddServiceMantleConsul(
+                        configureLifecycle: null,
+                        configureAdvertisement: options =>
+                        {
+                            options.Address = address;
+                            options.Port = port;
+                        });
+                }
             }
         }
 

@@ -11,11 +11,30 @@ Readiness 接到可选 Consul 注册生命周期的接线。Consul 能力自身�
 | --- | --- | --- |
 | `ReferenceService:Consul:Enabled` | `false` | 只有解析为 `true` 才接线，`Build` 之前固定。 |
 | `ReferenceService:InstanceId` | `reference-local` | 可选实例身份，`InstanceId.Parse` 校验；非法值启动失败且消息只含配置键。多实例部署必须为每个实例提供不同值。 |
+| `ReferenceService:Consul:AdvertisedAddress` | 无 | 可选实例级宣告地址，仅在开关开启时读取。必须与 `AdvertisedPort` 成对出现。 |
+| `ReferenceService:Consul:AdvertisedPort` | 无 | 可选实例级宣告端口（整数，`NumberStyles.None` + 不变文化解析），仅在开关开启时读取。必须与 `AdvertisedAddress` 成对出现。 |
 
 开关开启而 PostgreSQL gate 未开启 → 在任何注册之前抛出 `InvalidOperationException`，消息只含
 两个配置键。开关关闭时不调用 `AddServiceMantleConsul`，容器内没有
 `ConsulRegistrationLifecycle`、`ConsulClientProvider`、`IConsulClientFactory`，`discovery.*`
 定义不进入设置目录（仍只有 3 个 `workspace.*` 键），SQLite 与骨架路径不变。
+
+## 实例级宣告地址与端口
+
+跟踪 [#533](https://github.com/philfanzhou/ServiceMantle/issues/533)。开关开启时，样例读取上表
+两个可选键并接到 `AddServiceMantleConsul(configureLifecycle: null, configureAdvertisement: …)`：
+
+| 配置 | 启动 | 注册宣告 |
+| --- | --- | --- |
+| 开关关闭（无论是否配置宣告键） | 不变（两个键不读取、不校验） | 无 Consul |
+| 开关开启，两键缺失 | 成功 | 服务级 `discovery.address`/`discovery.port`（与 #159 一致） |
+| 开关开启，两键合法 | 成功 | 实例级 address/port，`HealthUri` 指向实例端点 |
+| 只配一项，或端口非纯整数字符 | 注册前失败，`InvalidOperationException` 消息只含两个键名 | 无 |
+| 两键存在但共享规则不通过（如端口 `0`） | 共享层 `ConsulConfigurationException(InvalidConfiguration)` 使启动失败 | 无 |
+
+宣告值按进程固定，捕获进每个 client session，不热重载。多实例部署必须为每个实例配置不同的
+`ReferenceService:InstanceId` 与各自的宣告地址端口（调用方责任）；宣告地址的可达性与正确性不
+在样例保证范围内。
 
 ## 接线顺序
 
@@ -71,7 +90,10 @@ Readiness 接到可选 Consul 注册生命周期的接线。Consul 能力自身�
 ## 测试
 
 `tests/ServiceMantle.ReferenceService.Tests/ReferenceConsulStartupTests.cs`（无数据库）：
-D1 关闭路径零 Consul 类型与 3 键目录、D2 配置校验（consul 无 gate、非法实例 ID）。
+D1 关闭路径零 Consul 类型与 3 键目录、D2 配置校验（consul 无 gate、非法实例 ID）、G3 宣告
+配置错误（只配一项、端口非整数 → 消息只含键名；端口 `0` → 共享层
+`ConsulConfigurationException`）、G4 开关关闭时宣告键不读取。
 `ReferenceConsulTests.cs`（真实 PostgreSQL + 记录型 `IConsulClientFactory`）：D3 禁用零客户端、
 D4 组合校验与密文落库、D5 激活失败只含错误码、D6 就绪门控注册与实例 ID、D7 失去/恢复就绪、
-D8 重试无重叠、D9 停止注销与 session 处置、D10 不热重载、D11 token canary。
+D8 重试无重叠、D9 停止注销与 session 处置、D10 不热重载、D11 token canary、G1 同一数据库两
+实例各自宣告 Id/Address/Port/HealthUri、G2 缺省回退服务级值、G4 开关关闭不受宣告键影响。
