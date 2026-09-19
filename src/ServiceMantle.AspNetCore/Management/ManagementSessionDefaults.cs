@@ -16,6 +16,13 @@ public static class ManagementSessionDefaults
     public const string CookieName = "__Host-ServiceMantle.Management";
 
     /// <summary>
+    /// The fixed cookie name used when insecure transport is explicitly allowed. It drops the
+    /// <c>__Host-</c> prefix, which browsers reject unless the cookie is always sent with the
+    /// Secure attribute.
+    /// </summary>
+    public const string InsecureTransportCookieName = "ServiceMantle.Management";
+
+    /// <summary>
     /// The default absolute ticket lifetime, in hours.
     /// </summary>
     public const int DefaultExpireTimeSpanHours = 8;

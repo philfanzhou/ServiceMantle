@@ -252,8 +252,13 @@ public static class ServiceMantleServiceCollectionExtensions
     /// <remarks>
     /// The capability also registers the management authorization policy. Equivalent duplicate
     /// registrations are idempotent; conflicting or unsafe settings fail when the host starts.
-    /// A presented cookie that cannot be authenticated uses the closed expired-session response so
-    /// that invalid ticket details are not exposed.
+    /// The cookie requires secure transport by default; explicitly enabling
+    /// <see cref="ManagementCookieOptions.AllowInsecureTransport"/> together with
+    /// <see cref="Microsoft.AspNetCore.Http.CookieSecurePolicy.SameAsRequest"/> accepts an
+    /// intranet plain-HTTP deployment, logs a warning at startup, and switches the fixed cookie
+    /// name away from the <c>__Host-</c> prefix, which browsers reject without the Secure
+    /// attribute. A presented cookie that cannot be authenticated uses the closed expired-session
+    /// response so that invalid ticket details are not exposed.
     /// </remarks>
     public static ServiceMantleBuilder AddManagementCookieAuthentication(
         this ServiceMantleBuilder builder,
@@ -299,7 +304,7 @@ public static class ServiceMantleServiceCollectionExtensions
                 ManagementSessionDefaults.AuthenticationScheme,
                 cookieOptions =>
                 {
-                    cookieOptions.Cookie.Name = ManagementSessionDefaults.CookieName;
+                    cookieOptions.Cookie.Name = registration.CookieName;
                     cookieOptions.Cookie.HttpOnly = registration.HttpOnly;
                     cookieOptions.Cookie.SecurePolicy = registration.SecurePolicy;
                     cookieOptions.Cookie.SameSite = registration.SameSite;
@@ -308,7 +313,7 @@ public static class ServiceMantleServiceCollectionExtensions
                     cookieOptions.Cookie.Domain = null;
                     cookieOptions.ExpireTimeSpan = registration.ExpireTimeSpan;
                     cookieOptions.SlidingExpiration = registration.SlidingExpiration;
-                    cookieOptions.Events = ManagementCookieEvents.Create();
+                    cookieOptions.Events = ManagementCookieEvents.Create(registration.CookieName);
                 });
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,

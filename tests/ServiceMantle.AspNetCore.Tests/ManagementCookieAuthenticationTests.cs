@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -72,6 +74,216 @@ public sealed class ManagementCookieAuthenticationTests
             host.StartAsync(TestContext.Current.CancellationToken));
 
         Assert.DoesNotContain("catalog", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(CookieSecurePolicy.None)]
+    [InlineData(CookieSecurePolicy.SameAsRequest)]
+    public async Task WithoutInsecureOptIn_NonAlwaysPolicy_FailsWithUnchangedMessage(
+        CookieSecurePolicy securePolicy)
+    {
+        var exception = await AssertThrowsWhenTheHostStarts(options =>
+            options.SecurePolicy = securePolicy);
+
+        Assert.Equal(
+            "The ServiceMantle management cookie must always require secure transport.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task InsecureOptIn_WithSameAsRequest_StartsLogsWarningAndUsesUnprefixedCookieName()
+    {
+        var logs = new RecordingLoggerProvider();
+        using var host = await StartHostAsync(
+            loggerProvider: logs,
+            configure: options =>
+            {
+                options.AllowInsecureTransport = true;
+                options.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            });
+
+        var options = host.Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+            .Get(ManagementSessionDefaults.AuthenticationScheme);
+        Assert.Equal(CookieSecurePolicy.SameAsRequest, options.Cookie.SecurePolicy);
+        Assert.Equal(ManagementSessionDefaults.InsecureTransportCookieName, options.Cookie.Name);
+        Assert.False(options.Cookie.Domain is not null);
+        Assert.True(options.Cookie.HttpOnly);
+        Assert.True(options.Cookie.IsEssential);
+
+        var warning = Assert.Single(
+            logs.Entries,
+            entry => entry.Level == LogLevel.Warning);
+        Assert.Contains("plaintext", warning.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InsecureOptIn_WithAlwaysPolicy_KeepsHostCookieNameAndLogsNoWarning()
+    {
+        var logs = new RecordingLoggerProvider();
+        using var host = await StartHostAsync(
+            loggerProvider: logs,
+            configure: options => options.AllowInsecureTransport = true);
+
+        var options = host.Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+            .Get(ManagementSessionDefaults.AuthenticationScheme);
+        Assert.Equal(CookieSecurePolicy.Always, options.Cookie.SecurePolicy);
+        Assert.Equal(ManagementSessionDefaults.CookieName, options.Cookie.Name);
+        Assert.DoesNotContain(logs.Entries, entry => entry.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task InsecureOptIn_WithNonePolicy_FailsWithExplicitMessage()
+    {
+        var exception = await AssertThrowsWhenTheHostStarts(options =>
+        {
+            options.AllowInsecureTransport = true;
+            options.SecurePolicy = CookieSecurePolicy.None;
+        });
+
+        Assert.Equal(
+            "The ServiceMantle management cookie cannot use SecurePolicy.None even when " +
+            "insecure transport is allowed; use SameAsRequest instead.",
+            exception.Message);
+    }
+
+    public static TheoryData<Action<ManagementCookieOptions>> UnsafeSettingsWithInsecureTransport => new()
+    {
+        options => EnableInsecureTransport(options, setting => setting.HttpOnly = false),
+        options => EnableInsecureTransport(options, setting => setting.SecurePolicy = CookieSecurePolicy.None),
+        options => EnableInsecureTransport(options, setting => setting.SameSite = SameSiteMode.None),
+        options => EnableInsecureTransport(options, setting => setting.IsEssential = false),
+        options => EnableInsecureTransport(options, setting => setting.ExpireTimeSpan = TimeSpan.Zero),
+        options => EnableInsecureTransport(options, setting =>
+            setting.ExpireTimeSpan = TimeSpan.FromSeconds(-1)),
+        options => EnableInsecureTransport(options, setting =>
+            setting.ExpireTimeSpan = TimeSpan.FromHours(
+                ManagementSessionDefaults.MaximumExpireTimeSpanHours) + TimeSpan.FromTicks(1)),
+    };
+
+    [Theory]
+    [MemberData(nameof(UnsafeSettingsWithInsecureTransport))]
+    public async Task InsecureOptIn_DoesNotRelaxTheRemainingGates(
+        Action<ManagementCookieOptions> configure)
+    {
+        var exception = await AssertThrowsWhenTheHostStarts(configure);
+        Assert.NotEqual(
+            "The ServiceMantle management cookie must always require secure transport.",
+            exception.Message);
+    }
+
+    public static TheoryData<Action<CookieAuthenticationOptions>> HostScopeOverrides => new()
+    {
+        options => options.Cookie.Name = "ServiceMantle.OtherCookie",
+        options => options.Cookie.Path = "/management",
+        options => options.Cookie.Domain = "catalog.example",
+    };
+
+    [Theory]
+    [MemberData(nameof(HostScopeOverrides))]
+    public async Task HostScopeOverrides_FailWhenTheHostStarts(
+        Action<CookieAuthenticationOptions> overrideEffective)
+    {
+        var exception = await AssertThrowsWhenTheHostStarts(
+            configure: null,
+            overrideEffective: overrideEffective);
+
+        Assert.Equal(
+            "The ServiceMantle management cookie host scope was overridden.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task DataProtectionDiscriminatorOverride_FailsWhenTheHostStarts()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services
+            .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+            .AddManagementCookieAuthentication();
+        builder.Services.PostConfigure<DataProtectionOptions>(
+            options => options.ApplicationDiscriminator = "overridden");
+
+        using var host = builder.Build();
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(
+            "The ServiceMantle management Data Protection application name was overridden.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task EffectiveSecurePolicy_IsValidatedAgainstTheSameOptInSwitch()
+    {
+        var exception = await AssertThrowsWhenTheHostStarts(
+            configure: null,
+            overrideEffective: options =>
+                options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest);
+
+        Assert.Equal(
+            "The ServiceMantle management cookie must always require secure transport.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task InsecureOptIn_HostPrefixedEffectiveCookieNameFails()
+    {
+        var exception = await AssertThrowsWhenTheHostStarts(
+            configure: options =>
+            {
+                options.AllowInsecureTransport = true;
+                options.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            },
+            overrideEffective: options =>
+                options.Cookie.Name = ManagementSessionDefaults.CookieName);
+
+        Assert.Equal(
+            "The ServiceMantle management cookie host scope was overridden.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task InsecureOptInDifferenceBetweenRegistrations_FailsAtStartup()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        var mantle = builder.Services.AddServiceMantle(
+            ServiceId.Parse("catalog"),
+            InstanceId.Parse("catalog-01"));
+        mantle.AddManagementCookieAuthentication();
+        mantle.AddManagementCookieAuthentication(options =>
+        {
+            options.AllowInsecureTransport = true;
+            options.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        });
+
+        using var host = builder.Build();
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(
+            "Conflicting ServiceMantle management cookie settings are registered.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task InsecureOptIn_CarriesSecureAttributeOnlyOnHttpsRequests()
+    {
+        await using var application = await StartDualTransportWebApplicationAsync();
+        using var httpClient = CreateClient(application, "http://");
+        using var httpsClient = CreateClient(application, "https://");
+
+        var httpSetCookie = await SignInForSetCookieAsync(httpClient);
+        Assert.StartsWith(
+            $"{ManagementSessionDefaults.InsecureTransportCookieName}=",
+            httpSetCookie,
+            StringComparison.Ordinal);
+        Assert.False(HasSecureAttribute(httpSetCookie));
+
+        var httpsSetCookie = await SignInForSetCookieAsync(httpsClient);
+        Assert.StartsWith(
+            $"{ManagementSessionDefaults.InsecureTransportCookieName}=",
+            httpsSetCookie,
+            StringComparison.Ordinal);
+        Assert.True(HasSecureAttribute(httpsSetCookie));
     }
 
     [Fact]
@@ -211,7 +423,8 @@ public sealed class ManagementCookieAuthenticationTests
 
     private static async Task<IHost> StartHostAsync(
         string serviceId = "catalog",
-        ILoggerProvider? loggerProvider = null)
+        ILoggerProvider? loggerProvider = null,
+        Action<ManagementCookieOptions>? configure = null)
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
@@ -222,11 +435,119 @@ public sealed class ManagementCookieAuthenticationTests
 
         builder.Services
             .AddServiceMantle(ServiceId.Parse(serviceId), InstanceId.Parse($"{serviceId}-01"))
-            .AddManagementCookieAuthentication();
+            .AddManagementCookieAuthentication(configure);
         var host = builder.Build();
         await host.StartAsync(TestContext.Current.CancellationToken);
         return host;
     }
+
+    private static async Task<InvalidOperationException> AssertThrowsWhenTheHostStarts(
+        Action<ManagementCookieOptions>? configure,
+        Action<CookieAuthenticationOptions>? overrideEffective = null)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services
+            .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+            .AddManagementCookieAuthentication(configure);
+        if (overrideEffective is not null)
+        {
+            builder.Services.PostConfigure<CookieAuthenticationOptions>(
+                ManagementSessionDefaults.AuthenticationScheme,
+                overrideEffective);
+        }
+
+        using var host = builder.Build();
+        return await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken));
+    }
+
+    private static void EnableInsecureTransport(
+        ManagementCookieOptions options,
+        Action<ManagementCookieOptions> applyUnsafeSetting)
+    {
+        options.AllowInsecureTransport = true;
+        options.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        applyUnsafeSetting(options);
+    }
+
+    private static async Task<WebApplication> StartDualTransportWebApplicationAsync()
+    {
+        var builder = WebApplication.CreateSlimBuilder();
+        var certificate = CreateSelfSignedCertificate();
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Listen(IPAddress.Loopback, 0);
+            options.Listen(IPAddress.Loopback, 0, listenOptions => listenOptions.UseHttps(certificate));
+        });
+        builder.Services
+            .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+            .AddManagementCookieAuthentication(options =>
+            {
+                options.AllowInsecureTransport = true;
+                options.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            });
+
+        var application = builder.Build();
+        application.UseAuthentication();
+        application.UseAuthorization();
+        application.MapPost("/sign-in/{permission}", async (HttpContext context, string permission) =>
+        {
+            var managementPermission = Enum.Parse<ManagementPermission>(permission, ignoreCase: true);
+            var identity = ManagementIdentity.Create(
+                WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+                context.Request.Query["operator"].ToString(),
+                [managementPermission],
+                "sensitive-display-name");
+            await context.SignInAsync(
+                ManagementSessionDefaults.AuthenticationScheme,
+                identity.ToClaimsPrincipal());
+            return Results.NoContent();
+        }).AllowAnonymous();
+
+        await application.StartAsync(TestContext.Current.CancellationToken);
+        return application;
+    }
+
+    private static X509Certificate2 CreateSelfSignedCertificate()
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest(
+            "CN=ServiceMantle.Management.Tests",
+            rsa,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        return request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddMinutes(30));
+    }
+
+    private static HttpClient CreateClient(WebApplication application, string schemePrefix)
+    {
+        var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback =
+                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+        };
+        return new HttpClient(handler)
+        {
+            BaseAddress = new Uri(application.Urls.Single(url => url.StartsWith(schemePrefix, StringComparison.Ordinal))),
+        };
+    }
+
+    private static async Task<string> SignInForSetCookieAsync(HttpClient client)
+    {
+        using var response = await client.PostAsync(
+            "/sign-in/admin?operator=insecure-admin",
+            content: null,
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        return Assert.Single(response.Headers.GetValues("Set-Cookie"));
+    }
+
+    private static bool HasSecureAttribute(string setCookie) =>
+        setCookie.Split(';').Skip(1)
+            .Select(attribute => attribute.Trim())
+            .Any(attribute => string.Equals(attribute, "secure", StringComparison.OrdinalIgnoreCase));
 
     private static async Task<WebApplication> StartWebApplicationAsync(
         TimeSpan expiration,
@@ -372,13 +693,17 @@ public sealed class ManagementCookieAuthenticationTests
     {
         internal ConcurrentQueue<string> Messages { get; } = new();
 
-        public ILogger CreateLogger(string categoryName) => new RecordingLogger(Messages);
+        internal ConcurrentQueue<(LogLevel Level, string Message)> Entries { get; } = new();
+
+        public ILogger CreateLogger(string categoryName) => new RecordingLogger(Messages, Entries);
 
         public void Dispose()
         {
         }
 
-        private sealed class RecordingLogger(ConcurrentQueue<string> messages) : ILogger
+        private sealed class RecordingLogger(
+            ConcurrentQueue<string> messages,
+            ConcurrentQueue<(LogLevel Level, string Message)> entries) : ILogger
         {
             public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -389,8 +714,12 @@ public sealed class ManagementCookieAuthenticationTests
                 EventId eventId,
                 TState state,
                 Exception? exception,
-                Func<TState, Exception?, string> formatter) =>
-                messages.Enqueue(formatter(state, exception));
+                Func<TState, Exception?, string> formatter)
+            {
+                var message = formatter(state, exception);
+                messages.Enqueue(message);
+                entries.Enqueue((logLevel, message));
+            }
         }
     }
 }

@@ -503,6 +503,17 @@ claims and ticket material; `HEAD` answers the same status and headers with no b
 `204` once this client's cookie deletion is on the response — it is local and stateless and revokes
 no copied ticket. See [docs/contracts/management-session.md](docs/contracts/management-session.md).
 
+The management cookie registered by `AddManagementCookieAuthentication` is fail-closed: secure
+transport (`SecurePolicy.Always`), `HttpOnly`, a non-`None` `SameSite`, the fixed host-scoped
+`__Host-ServiceMantle.Management` name, and the remaining cookie gates are enforced when the host
+starts. For controlled intranet deployments only, setting
+`ManagementCookieOptions.AllowInsecureTransport = true` together with
+`SecurePolicy.SameAsRequest` is an explicit, auditable opt-in: startup logs a warning that
+management credentials and session ids will be transmitted in plaintext on HTTP requests, and the
+fixed cookie name drops the `__Host-` prefix, which browsers reject unless the cookie always
+carries the Secure attribute. `SecurePolicy.None` is rejected in every configuration, and no other
+gate is relaxed by the switch.
+
 ## Isolated setup and management rate limiting
 
 Rate limiting is opt-in and registers two named sliding-window policies without a global limiter:

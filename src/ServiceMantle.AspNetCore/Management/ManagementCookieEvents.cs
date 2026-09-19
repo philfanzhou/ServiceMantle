@@ -8,11 +8,11 @@ namespace ServiceMantle.AspNetCore.Management;
 
 internal static class ManagementCookieEvents
 {
-    internal static CookieAuthenticationEvents Create() => new()
+    internal static CookieAuthenticationEvents Create(string cookieName) => new()
     {
         OnRedirectToLogin = context => WriteAsync(
             context.Response,
-            context.Request.Cookies.ContainsKey(ManagementSessionDefaults.CookieName)
+            context.Request.Cookies.ContainsKey(cookieName)
                 ? ManagementSessionDefaults.ExpiredErrorCode
                 : ManagementSessionDefaults.UnauthenticatedErrorCode,
             StatusCodes.Status401Unauthorized,

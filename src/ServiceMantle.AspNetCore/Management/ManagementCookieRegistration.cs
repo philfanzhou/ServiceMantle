@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.CookiePolicy;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace ServiceMantle.AspNetCore.Management;
@@ -14,6 +15,8 @@ internal sealed record ManagementCookieRegistration(
     bool IsEssential,
     TimeSpan ExpireTimeSpan,
     bool SlidingExpiration,
+    bool AllowInsecureTransport,
+    string CookieName,
     string ApplicationName)
 {
     internal static ManagementCookieRegistration Create(
@@ -30,14 +33,22 @@ internal sealed record ManagementCookieRegistration(
             options.IsEssential,
             options.ExpireTimeSpan,
             options.SlidingExpiration,
+            options.AllowInsecureTransport,
+            GetCookieName(options.AllowInsecureTransport, options.SecurePolicy),
             $"ServiceMantle.Management:{serviceId.Value}");
     }
+
+    internal static string GetCookieName(bool allowInsecureTransport, CookieSecurePolicy securePolicy) =>
+        allowInsecureTransport && securePolicy == CookieSecurePolicy.SameAsRequest
+            ? ManagementSessionDefaults.InsecureTransportCookieName
+            : ManagementSessionDefaults.CookieName;
 }
 
 internal sealed class ManagementCookieStartupValidator(
     IEnumerable<ManagementCookieRegistration> registrations,
     IOptionsMonitor<CookieAuthenticationOptions> cookieOptions,
-    IOptions<DataProtectionOptions> dataProtectionOptions) : IHostedService
+    IOptions<DataProtectionOptions> dataProtectionOptions,
+    ILogger<ManagementCookieStartupValidator> logger) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -50,8 +61,8 @@ internal sealed class ManagementCookieStartupValidator(
         }
 
         ValidateRegistration(registration);
-        ValidateEffectiveOptions(
-            cookieOptions.Get(ManagementSessionDefaults.AuthenticationScheme));
+        var effectiveOptions = cookieOptions.Get(ManagementSessionDefaults.AuthenticationScheme);
+        ValidateEffectiveOptions(effectiveOptions, registration);
 
         if (!string.Equals(
                 dataProtectionOptions.Value.ApplicationDiscriminator,
@@ -60,6 +71,14 @@ internal sealed class ManagementCookieStartupValidator(
         {
             throw new InvalidOperationException(
                 "The ServiceMantle management Data Protection application name was overridden.");
+        }
+
+        if (registration.AllowInsecureTransport &&
+            effectiveOptions.Cookie.SecurePolicy != CookieSecurePolicy.Always)
+        {
+            logger.LogWarning(
+                "The ServiceMantle management cookie allows insecure transport. Management " +
+                "credentials and session ids will be transmitted in plaintext on HTTP requests.");
         }
 
         return Task.CompletedTask;
@@ -75,7 +94,15 @@ internal sealed class ManagementCookieStartupValidator(
                 "The ServiceMantle management cookie must remain HttpOnly.");
         }
 
-        if (options.SecurePolicy != CookieSecurePolicy.Always)
+        if (options.SecurePolicy == CookieSecurePolicy.None)
+        {
+            throw new InvalidOperationException(options.AllowInsecureTransport
+                ? "The ServiceMantle management cookie cannot use SecurePolicy.None even when " +
+                  "insecure transport is allowed; use SameAsRequest instead."
+                : "The ServiceMantle management cookie must always require secure transport.");
+        }
+
+        if (options.SecurePolicy != CookieSecurePolicy.Always && !options.AllowInsecureTransport)
         {
             throw new InvalidOperationException(
                 "The ServiceMantle management cookie must always require secure transport.");
@@ -102,7 +129,9 @@ internal sealed class ManagementCookieStartupValidator(
         }
     }
 
-    private static void ValidateEffectiveOptions(CookieAuthenticationOptions options)
+    private static void ValidateEffectiveOptions(
+        CookieAuthenticationOptions options,
+        ManagementCookieRegistration registration)
     {
         var effective = new ManagementCookieRegistration(
             options.Cookie.HttpOnly,
@@ -111,12 +140,16 @@ internal sealed class ManagementCookieStartupValidator(
             options.Cookie.IsEssential,
             options.ExpireTimeSpan,
             options.SlidingExpiration,
+            registration.AllowInsecureTransport,
+            ManagementCookieRegistration.GetCookieName(
+                registration.AllowInsecureTransport,
+                options.Cookie.SecurePolicy),
             string.Empty);
         ValidateRegistration(effective);
 
         if (!string.Equals(
                 options.Cookie.Name,
-                ManagementSessionDefaults.CookieName,
+                effective.CookieName,
                 StringComparison.Ordinal) ||
             !string.Equals(options.Cookie.Path, "/", StringComparison.Ordinal) ||
             options.Cookie.Domain is not null)

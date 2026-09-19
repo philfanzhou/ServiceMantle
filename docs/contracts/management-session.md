@@ -125,6 +125,21 @@ null、合法 ticket、缺失过期时间的 ticket、`NoResult`，或抛出普�
 的 `204` 不交付，取消以原始请求 token 向上传播；已写入的删除 cookie 保留在响应上——取消的登
 出绝不通过回滚让旧会话复活，也不声称外部注销副作用未发生。
 
+## Cookie 传输策略与内网 HTTP 部署
+
+管理会话 cookie 默认 fail-closed：`SecurePolicy` 必须是 `Always`，非 `Always` 的取值在宿主启动
+时失败。这是唯一一处显式放宽通道：`ManagementCookieOptions.AllowInsecureTransport` 显式设为
+`true` 且 `SecurePolicy = SameAsRequest` 时，启动接受该策略并记录一条 WARNING，明示管理凭据与
+会话 id 将在 HTTP 请求上明文传输。`SecurePolicy.None` 在任何配置下都被拒绝；开关本身不放松
+`HttpOnly`、`SameSite`、`IsEssential`、lifetime 范围、cookie path、host scope 与 Data Protection
+discriminator 中的任何门禁，注册校验与 `ValidateEffectiveOptions` 对开关的判定一致。
+
+放宽生效时，固定的 cookie 名从 `__Host-ServiceMantle.Management` 换成
+`ServiceMantle.Management`。这不是可配置项：浏览器按规范拒绝缺少 `Secure` 属性的 `__Host-`
+前缀 cookie，保留前缀会让内网 HTTP 登录在浏览器侧静默失败，使该开关失去意义。两个名字下的
+ticket 由同一个 Data Protection discriminator 保护，语义完全一致。开关为 `true` 但策略仍是
+`Always` 时没有任何放宽：名字保持 `__Host-` 前缀，也不记录 WARNING。
+
 ## 明确的不保证
 
 - 登出是本地的、无状态的。它不添加任何服务端吊销权限，也无法使一个已复制的 ticket 失效：同
@@ -156,3 +171,5 @@ null、合法 ticket、缺失过期时间的 ticket、`NoResult`，或抛出普�
   对于被要求登录的请求，cookie 处理器会抑制该续期。
 - `X-ServiceMantle-Request` 与默认的 `SameSite=Strict` cookie 是有限的浏览器 CSRF 缓解措施，
   不是 CORS、TLS、来源或代理策略。
+- `AllowInsecureTransport` 只是把启动期门禁换成显式确认。它不提供任何机密性：非 Secure 传输
+  下，网络路径上的观察者可以看到会话 id 与登录凭据。网段隔离与访问控制完全是调用方的责任。

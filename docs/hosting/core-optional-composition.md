@@ -103,10 +103,11 @@ sealed class DemoSnapshotSource : IServiceHealthSnapshotSource
 }
 ```
 
-生产环境的管理 Cookie 要求 HTTPS（`SecurePolicy.Always`）。测试直接创建受保护 ticket
-并手动附加到回环请求上；这不是浏览器登录流程，也不会削弱 Cookie 传输策略。临时密钥在进程
-退出时消失。共享密钥、状态持久化、身份验证、登录/登出、migration、事务以及 `DbContext`
-保存仍是消费方的责任。
+生产环境的管理 Cookie 要求 HTTPS（`SecurePolicy.Always`）。唯一例外是显式内网放宽：
+`AllowInsecureTransport = true` 配合 `SecurePolicy.SameAsRequest`，启动记录 WARNING 并使用无
+`__Host-` 前缀的固定 cookie 名。测试直接创建受保护 ticket 并手动附加到回环请求上；这不是浏览器
+登录流程，也不会削弱 Cookie 传输策略。临时密钥在进程退出时消失。共享密钥、状态持久化、身份验证、
+登录/登出、migration、事务以及 `DbContext` 保存仍是消费方的责任。
 
 ## 请求与生命周期行为
 
