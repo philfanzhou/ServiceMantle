@@ -6,7 +6,12 @@ namespace ServiceMantle.Configuration;
 /// <summary>One immutable, versioned batch of plaintext setting changes.</summary>
 public sealed class ServiceSettingUpdateCommand
 {
-    /// <summary>Initializes a batch of one to 32 changes. Null removes an explicit value.</summary>
+    /// <summary>Initializes a batch of one to 64 changes. Null removes an explicit value.</summary>
+    /// <remarks>
+    /// The bound of 64 changes is a guard rail against unbounded batches, sized to leave headroom
+    /// above a complete product setting catalog so a consumer can seed or replace its full
+    /// aggregate in a single call.
+    /// </remarks>
     public ServiceSettingUpdateCommand(
         long expectedVersion,
         IReadOnlyDictionary<string, string?> changes,
@@ -15,9 +20,9 @@ public sealed class ServiceSettingUpdateCommand
         ArgumentNullException.ThrowIfNull(changes);
         ArgumentNullException.ThrowIfNull(operatorInfo);
         ArgumentOutOfRangeException.ThrowIfNegative(expectedVersion);
-        if (changes.Count is < 1 or > 32)
+        if (changes.Count is < 1 or > 64)
         {
-            throw new ArgumentException("A setting batch must contain one to 32 changes.", nameof(changes));
+            throw new ArgumentException("A setting batch must contain one to 64 changes.", nameof(changes));
         }
 
         ExpectedVersion = expectedVersion;
