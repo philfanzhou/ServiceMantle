@@ -11,9 +11,10 @@ namespace ServiceMantle.Bootstrap;
 /// The record holds only a format version, the versioned digest, and the issuance and expiry
 /// timestamps. The plaintext credential never reaches disk. Provisioning uses an exclusive create so
 /// that only one caller wins, and consumption claims the record with a cross-process atomic rename
-/// and re-checks the claimed content before it succeeds. Every file call is synchronous: the caller's
-/// token is observed at each boundary, but a synchronous file operation already in progress cannot
-/// be interrupted, and no wall-clock bound is promised for it.
+/// and re-checks the claimed content on a handle that shares no delete before it succeeds, which is
+/// what makes the one-time boundary hold under contention. Every file call is synchronous: the
+/// caller's token is observed at each boundary, but a synchronous file operation already in progress
+/// cannot be interrupted, and no wall-clock bound is promised for it.
 /// </remarks>
 public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IBootstrapCredentialVerifier, IBootstrapCredentialReissuer
 {
@@ -31,6 +32,15 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
     private const string IssuedAtName = "issuedAtUtc";
     private const string ExpiresAtName = "expiresAtUtc";
     private const int BufferSize = 4096;
+
+    /// <summary>
+    /// How many times an open that lost a sharing conflict is retried before the failure is
+    /// reported. The retries bound the number of attempts, not any duration.
+    /// </summary>
+    private const int MaximumSharingConflictRetries = 32;
+
+    /// <summary>The pause between two retries of an open that lost a sharing conflict.</summary>
+    private const int SharingConflictRetryDelayMilliseconds = 1;
 
     private static readonly JsonDocumentOptions DocumentOptions = new()
     {
@@ -459,22 +469,53 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
         }
         catch (UnauthorizedAccessException)
         {
+            // A refused rename only proves that this caller did not claim the record. Windows
+            // reports a claim that is already in flight on the same record as an access denial
+            // rather than as an absence, so the record is re-observed instead of guessed at: one
+            // that is gone was claimed by somebody else, which is the caller's ordinary invalid
+            // result, while one that is still there leaves the denial unexplained and stays a
+            // storage failure.
+            return Rejected(WasClaimedElsewhere(FilePath)
+                ? WellKnownBootstrapCredentialErrorCodes.Invalid
+                : WellKnownBootstrapCredentialErrorCodes.Unavailable);
+        }
+
+        FileStream claimGuard;
+        try
+        {
+            claimGuard = OpenClaimGuard(claimPath);
+        }
+        catch (Exception exception) when (
+            exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            // The rename landed and yet the claimed record is gone: the file object was renamed on
+            // through a handle opened before this caller's rename landed, so the credential was
+            // consumed elsewhere and this caller is an ordinary loser of the claim.
+            return Rejected(WellKnownBootstrapCredentialErrorCodes.Invalid);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // A sharing conflict that survives the bounded retries proves another claimer holds
+            // this file object and may still be completing its own rename of it; any other refusal
+            // is an unexplained storage failure. Either way the claimed record is left in place:
+            // it is already outside the credential path, so it can no longer be consumed by
+            // anybody, and deleting it could destroy the one claim that is still completing.
             return Rejected(WellKnownBootstrapCredentialErrorCodes.Unavailable);
         }
 
         try
         {
-            byte[]? claimed;
+            byte[] claimed;
             try
             {
-                claimed = TryReadRecord(claimPath);
+                claimed = ReadRecordContent(claimGuard);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 return Rejected(WellKnownBootstrapCredentialErrorCodes.Unavailable);
             }
 
-            if (claimed is null || !TryParseRecord(claimed, out var claimedRecord))
+            if (!TryParseRecord(claimed, out var claimedRecord))
             {
                 return Rejected(WellKnownBootstrapCredentialErrorCodes.Unavailable);
             }
@@ -487,7 +528,29 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
         }
         finally
         {
+            claimGuard.Dispose();
             TryDelete(claimPath);
+        }
+    }
+
+    /// <summary>
+    /// Re-observes the record through the same read boundary after a refused claim, and reports
+    /// whether it is gone.
+    /// </summary>
+    /// <remarks>
+    /// Only a proven absence answers true. A record that is still readable, and a re-observation
+    /// that is itself refused, both leave the refusal unexplained, so the caller keeps the storage
+    /// failure rather than being told its candidate was merely invalid.
+    /// </remarks>
+    private static bool WasClaimedElsewhere(string path)
+    {
+        try
+        {
+            return TryReadRecord(path) is null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 
@@ -543,42 +606,124 @@ public sealed class BootstrapCredentialFileStore : IBootstrapCredentialStore, IB
             FileOptions.SequentialScan);
 
     /// <summary>
+    /// Opens the claimed record for its re-check on a handle that shares read and nothing else,
+    /// retrying a bounded number of times when the open loses a sharing conflict.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the claim's own observation point, deliberately not the record read's: on Windows a
+    /// rename travels through a handle that was granted <c>DELETE</c> on the file object, and the
+    /// re-check of a claimed record must hold it without sharing delete. A handle opened this way
+    /// is refused while any <c>DELETE</c> grant on the file is open, so a successful open proves
+    /// that no such grant existed at that instant, and while the handle is held it refuses every
+    /// new <c>DELETE</c> open on the file. The claim path cannot be named by any other caller, so
+    /// no new such handle can appear after the open: the only way left to move the claimed record
+    /// is a handle that predates this caller's own rename, and that handle is exactly what a
+    /// successful open here rules out.
+    /// </para>
+    /// <para>
+    /// A sharing conflict can also come from the rename machinery itself, whose handles close
+    /// within instants, so a lost conflict is retried a bounded number of times. Every successful
+    /// attempt proves the invariant on its own, so the retries weaken nothing.
+    /// </para>
+    /// </remarks>
+    internal static FileStream OpenClaimGuard(string path)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return new FileStream(
+                    path,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    BufferSize,
+                    FileOptions.SequentialScan);
+            }
+            catch (Exception exception) when (
+                attempt < MaximumSharingConflictRetries && IsSharingConflict(exception))
+            {
+                // One millisecond per retry, so the whole bound stays a few tens of milliseconds
+                // and no wall-clock guarantee is created by it.
+                Thread.Sleep(SharingConflictRetryDelayMilliseconds);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tells whether an exception is the sharing conflict an open loses while another handle holds
+    /// the file: <c>ERROR_SHARING_VIOLATION</c> or <c>ERROR_LOCK_VIOLATION</c>.
+    /// </summary>
+    private static bool IsSharingConflict(Exception exception) =>
+        exception is IOException && (exception.HResult & 0xFFFF) is 32 or 33;
+
+    /// <summary>
     /// Reads the raw record, or returns null when it does not exist. An oversized file is read only
     /// far enough to prove that it is oversized.
     /// </summary>
+    /// <remarks>
+    /// An open that loses a sharing conflict is retried a bounded number of times before the
+    /// failure is reported. On Windows a claim's rename holds the record for an instant without
+    /// sharing read, so an open beside one in flight is refused however this reader shares, and
+    /// that refusal is not evidence of a storage failure: the rename either completes and the next
+    /// open reports the record as absent - the true answer, and the caller's ordinary invalid
+    /// result - or the refusal survives the retries and is reported unchanged. Nothing here
+    /// reclassifies a corrupt, oversized, or genuinely inaccessible record.
+    /// </remarks>
     private static byte[]? TryReadRecord(string path)
     {
         FileStream stream;
-        try
+        for (var attempt = 0; ; attempt++)
         {
-            stream = OpenRecordForRead(path);
-        }
-        catch (FileNotFoundException)
-        {
-            return null;
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return null;
+            try
+            {
+                stream = OpenRecordForRead(path);
+                break;
+            }
+            catch (FileNotFoundException)
+            {
+                return null;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return null;
+            }
+            catch (Exception exception) when (
+                attempt < MaximumSharingConflictRetries && IsSharingConflict(exception))
+            {
+                // One millisecond per retry, so the whole bound stays a few tens of milliseconds
+                // and no wall-clock guarantee is created by it.
+                Thread.Sleep(SharingConflictRetryDelayMilliseconds);
+            }
         }
 
         using (stream)
         {
-            var buffer = new byte[MaximumFileByteCount + 1];
-            var read = 0;
-            while (read < buffer.Length)
-            {
-                var current = stream.Read(buffer, read, buffer.Length - read);
-                if (current == 0)
-                {
-                    break;
-                }
+            return ReadRecordContent(stream);
+        }
+    }
 
-                read += current;
+    /// <summary>
+    /// Reads the raw record content from a stream that is already open, reading at most one byte
+    /// past the largest accepted record so an oversized file is proven without reading further.
+    /// </summary>
+    private static byte[] ReadRecordContent(FileStream stream)
+    {
+        var buffer = new byte[MaximumFileByteCount + 1];
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var current = stream.Read(buffer, read, buffer.Length - read);
+            if (current == 0)
+            {
+                break;
             }
 
-            return buffer[..read];
+            read += current;
         }
+
+        return buffer[..read];
     }
 
     private static bool TryParseRecord(byte[] content, out StoredCredentialRecord? record)

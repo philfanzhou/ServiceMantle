@@ -50,9 +50,9 @@ jobs:
       # full suite runs on Linux only, so the Windows half of those calls and of every sharing rule
       # they depend on would otherwise never be executed.
       #
-      # Scoped to the classes that pass here. The credential record's deterministic sharing evidence
-      # is included; its contention classification is a Windows-only defect this store does not yet
-      # report correctly and is tracked, with the evidence gathered here, in #355.
+      # Scoped to the Bootstrap classes whose Windows behavior is deterministic evidence here: the
+      # file store, the credential record's sharing and contention boundaries, and the reissue
+      # replacement path.
       - name: Verify Bootstrap file publishing
         run: >-
           dotnet test
@@ -63,6 +63,7 @@ jobs:
           --filter-class "ServiceMantle.Tests.Bootstrap.BootstrapFileFailureKindTests"
           --filter-class "ServiceMantle.Tests.Bootstrap.BootstrapCredentialFileSharingTests"
           --filter-class "ServiceMantle.Tests.Bootstrap.BootstrapCredentialReissueTests"
+          --filter-class "ServiceMantle.Tests.Bootstrap.BootstrapCredentialContentionTests"
           --minimum-expected-tests 1
           --zero-tests-policy strict
           --diagnostic
