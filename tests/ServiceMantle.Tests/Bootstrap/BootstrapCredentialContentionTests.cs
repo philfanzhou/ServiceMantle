@@ -8,9 +8,9 @@ namespace ServiceMantle.Tests.Bootstrap;
 /// candidates at once, of which exactly one may consume the credential.
 /// </summary>
 /// <remarks>
-/// This class is deliberately separate from the deterministic sharing tests. Windows classifies a
-/// claim that lost this race in a way this store does not yet report correctly, which is tracked in
-/// #355, so the Windows job runs the sharing evidence and not this contention.
+/// This class is deliberately separate from the deterministic sharing tests. On Windows the claim
+/// and its re-check hold handles that make the classification of the losers observable, so the
+/// Windows job runs this contention alongside the sharing evidence.
 /// </remarks>
 public sealed class BootstrapCredentialContentionTests
 {
