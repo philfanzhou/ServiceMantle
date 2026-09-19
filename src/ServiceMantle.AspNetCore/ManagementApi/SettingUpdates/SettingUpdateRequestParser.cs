@@ -11,7 +11,7 @@ internal static class SettingUpdateRequestParser
 {
     internal const int MaximumBodyLength = 256 * 1024;
     internal const int MaximumJsonDepth = 8;
-    internal const int MaximumChanges = 32;
+    internal const int MaximumChanges = 64;
     internal const int MaximumKeyLength = 128;
 
     internal static async ValueTask<ServiceSettingUpdateCommand?> ParseAsync(

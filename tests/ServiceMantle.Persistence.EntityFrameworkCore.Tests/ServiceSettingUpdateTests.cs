@@ -99,7 +99,37 @@ public sealed class ServiceSettingUpdateTests
         Assert.Equal(2, command.Changes.Count);
         Assert.Throws<ArgumentException>(() => Command(0));
         Assert.Throws<ArgumentException>(() => new ServiceSettingUpdateCommand(0,
-            Enumerable.Range(0, 33).ToDictionary(i => "key" + i, _ => (string?)"value"), ManagementAuditOperator.System()));
+            Enumerable.Range(0, 65).ToDictionary(i => "key" + i, _ => (string?)"value"), ManagementAuditOperator.System()));
+    }
+
+    [Fact]
+    public async Task Full_catalog_batch_of_64_changes_applies_in_a_single_call()
+    {
+        var definitions = Enumerable.Range(0, 64)
+            .Select(index => new ServiceSettingDefinition(
+                $"key{index:00}", ServiceSettingValueType.String))
+            .ToArray();
+        var registry = new ServiceSettingDefinitionRegistry([new CatalogDefinitions(definitions)]);
+        var fake = new FakeTransaction();
+        var service = new ServiceSettingUpdateService(Service, registry, fake);
+
+        var result = await service.UpdateAsync(new ServiceSettingUpdateCommand(0,
+            definitions.ToDictionary(definition => definition.Key, _ => (string?)"seeded"),
+            ManagementAuditOperator.System()), Token);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, result.Version);
+        Assert.Equal(1, fake.ApplyCount);
+        Assert.NotNull(fake.Applied);
+        Assert.Equal(0, fake.Applied!.ExpectedVersion);
+        Assert.Equal(64, fake.Applied.Changes.Count);
+        Assert.All(fake.Applied.Changes.Values, value => Assert.Equal("seeded", value));
+    }
+
+    private sealed class CatalogDefinitions(ServiceSettingDefinition[] definitions)
+        : IServiceSettingDefinitionProvider
+    {
+        public IEnumerable<ServiceSettingDefinition> GetDefinitions() => definitions;
     }
 
     [Theory]
@@ -254,6 +284,7 @@ public sealed class ServiceSettingUpdateTests
         public Dictionary<string, string> Values { get; } = [];
         public int LoadCount { get; private set; }
         public int ApplyCount { get; private set; }
+        public ServiceSettingStoreUpdate? Applied { get; private set; }
         public ValueTask<ServiceSettingStoreSnapshot> LoadAsync(ServiceId serviceId, CancellationToken cancellationToken)
         {
             LoadCount++;
@@ -264,6 +295,7 @@ public sealed class ServiceSettingUpdateTests
             IReadOnlyList<ManagementAuditEvent> audits, CancellationToken cancellationToken)
         {
             ApplyCount++;
+            Applied = update;
             return ValueTask.FromResult(ServiceSettingUpdateResult.Applied(Version + 1));
         }
     }

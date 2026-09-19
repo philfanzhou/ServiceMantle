@@ -1062,7 +1062,7 @@ the exception never retains provider diagnostics, connection strings, credential
 
 `ServiceSettingUpdateService` validates the complete candidate, encrypts changed sensitive values,
 and writes one key-only audit per changed key through `IServiceSettingUpdateTransaction`.
-`ServiceSettingUpdateCommand` contains one to 32 changes and an expected service version; null removes
+`ServiceSettingUpdateCommand` contains one to 64 changes and an expected service version; null removes
 an explicit value so catalog defaults apply. Unknown input keys are not echoed in errors. Registered
 keys, validation codes and operator identifiers must be non-secret product metadata. Raw commands,
 root keys, decrypted candidates and EF sensitive-data logging must stay out of logs and responses.

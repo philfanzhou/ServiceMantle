@@ -168,8 +168,8 @@ public sealed class SettingUpdateEndpointTests
     {
         var executor = new SettingUpdateHostFixture.RecordingExecutor();
         await using var host = await SettingUpdateHostFixture.StartAsync(executor.ExecuteAsync);
-        var thirtyTwo = Body(Enumerable.Range(0, 32).Select(index => ($"key-{index}", (string?)"value")));
-        var thirtyThree = Body(Enumerable.Range(0, 33).Select(index => ($"key-{index}", (string?)"value")));
+        var sixtyFour = Body(Enumerable.Range(0, 64).Select(index => ($"key-{index}", (string?)"value")));
+        var sixtyFive = Body(Enumerable.Range(0, 65).Select(index => ($"key-{index}", (string?)"value")));
         var key128 = Body([(new string('k', 128), (string?)"value")]);
         var key129 = Body([(new string('k', 129), (string?)"value")]);
         const string prefix = "{\"expectedVersion\":0,\"changes\":[{\"key\":\"large\",\"value\":\"";
@@ -180,14 +180,14 @@ public sealed class SettingUpdateEndpointTests
             "{\"expectedVersion\":0,\"changes\":[{\"key\":\"a\",\"value\":\"x\"}]," +
             "\"extra\":{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":{\"f\":{\"g\":{}}}}}}}}}";
 
-        foreach (var accepted in new[] { thirtyTwo, key128, exactBody })
+        foreach (var accepted in new[] { sixtyFour, key128, exactBody })
         {
             using var response = await host.SendAsync(accepted, host.AdminCookie());
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
 
         var calls = executor.Calls;
-        foreach (var rejected in new[] { thirtyThree, key129, oversizedBody, deepBody })
+        foreach (var rejected in new[] { sixtyFive, key129, oversizedBody, deepBody })
         {
             using var response = await host.SendAsync(rejected, host.AdminCookie());
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);

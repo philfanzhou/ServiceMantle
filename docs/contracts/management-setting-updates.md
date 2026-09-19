@@ -32,7 +32,7 @@ v1 组的直接子项。
 ```
 
 两个顶层属性都是必需的且区分大小写；未知或重复的属性被拒绝。`expectedVersion` 是从零到
-`long.MaxValue` 的整数。`changes` 包含一到 32 个对象，每个恰好有 `key` 和 `value`。每个原始
+`long.MaxValue` 的整数。`changes` 包含一到 64 个对象，每个恰好有 `key` 和 `value`。每个原始
 key 为一到 128 个字符，且修剪后必须保持非空。修剪并按不区分大小写比较后发生冲突的 key 被
 拒绝。value 是 JSON 字符串或 `null`；字符串原样传递，null 移除显式持久化的值。现有的更新器
 验证已注册的 key 和完整候选值，包括字符串、数字、布尔、JSON、required/default、敏感值以及
