@@ -14,6 +14,7 @@
 // later host build would see one consistent lifecycle configuration rather than a conflicting one.
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using ServiceMantle.Configuration;
 using ServiceMantle.Discovery;
 
 var services = new ServiceCollection();
@@ -43,6 +44,43 @@ if (services.Count(descriptor => descriptor.ServiceType == typeof(IHostedService
     throw new InvalidOperationException("Repeated Consul registrations duplicated the hosted lifecycle.");
 }
 
+// The typed snapshot-source entry: a dedicated consumer-owned accessor type replaces the
+// process-global snapshot source. It lives in its own collection so the two forms never mix
+// (a mix is a conflicting configuration by contract), and it needs only the core package's
+// ServiceMantle.Configuration namespace for the accessor contract - no Consul namespace using,
+// no provider-named type burden. Repeating the call with agreeing timing stays idempotent.
+var typedServices = new ServiceCollection();
+typedServices.AddSingleton(new DiscoverySnapshotAccessor());
+_ = typedServices.AddServiceMantleConsul<DiscoverySnapshotAccessor>();
+_ = typedServices.AddServiceMantleConsul<DiscoverySnapshotAccessor>(Configure);
+
+if (typedServices.Count(descriptor => descriptor.ServiceType == typeof(IHostedService)) != 1)
+{
+    throw new InvalidOperationException("Repeated typed Consul registrations duplicated the hosted lifecycle.");
+}
+
+if (typedServices.Any(descriptor =>
+        descriptor.ServiceType == typeof(IServiceSettingDefinitionProvider) ||
+        descriptor.ServiceType == typeof(IServiceSettingCompositeValidator)))
+{
+    throw new InvalidOperationException("The typed Consul entry contributed to the global setting catalog.");
+}
+
 Console.WriteLine(
     "Consul registration entry resolved with ServiceRegistrationLifecycleOptions: "
-    + $"{services.Count} descriptors and one hosted lifecycle.");
+    + $"{services.Count} descriptors and one hosted lifecycle; the typed entry added "
+    + $"{typedServices.Count} more without touching the global catalog.");
+
+/// <summary>
+/// A consumer-owned discovery snapshot accessor: the consumer activates its projection of the
+/// authoritative product snapshot on this singleton before the host starts.
+/// </summary>
+internal sealed class DiscoverySnapshotAccessor : IServiceSettingCurrentSnapshotAccessor
+{
+    public bool TryGetCurrent(out ServiceSettingSnapshot? snapshot)
+    {
+        // Placeholder for the consumer's activation; registration itself never reads it.
+        snapshot = null;
+        return false;
+    }
+}

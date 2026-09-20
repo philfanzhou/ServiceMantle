@@ -181,7 +181,7 @@ public sealed class ConsulConfigurationTests
         using var fixture = new ConsulFixture();
         await fixture.ActivateAsync(ConsulFixture.Enabled());
         using var first = fixture.Provider.CreateClient();
-        var other = new ConsulClientProvider(fixture.Accessor, ConsulFixture.Service,
+        var other = new ConsulClientProvider(() => fixture.Accessor, ConsulFixture.Service,
             InstanceId.Parse("host/instance?two"), () => fixture.ClientFactory, null);
         using var second = other.CreateClient();
         Assert.NotEqual(first!.Registration.Id, second!.Registration.Id);
@@ -195,13 +195,13 @@ public sealed class ConsulConfigurationTests
         await fixture.ActivateAsync(ConsulFixture.Enabled());
         foreach (var value in new[] { "\ud800", "\udfff", "x\ud800y" })
         {
-            var provider = new ConsulClientProvider(fixture.Accessor, ConsulFixture.Service,
+            var provider = new ConsulClientProvider(() => fixture.Accessor, ConsulFixture.Service,
                 InstanceId.Parse(value), () => fixture.ClientFactory, null);
             Assert.Equal(ConsulConfigurationError.InvalidConfiguration,
                 Assert.Throws<ConsulConfigurationException>(() => provider.CreateClient()).Error);
         }
         Assert.Equal(0, fixture.ClientFactory.Calls);
-        var valid = new ConsulClientProvider(fixture.Accessor, ConsulFixture.Service,
+        var valid = new ConsulClientProvider(() => fixture.Accessor, ConsulFixture.Service,
             InstanceId.Parse("服务器😀"), () => fixture.ClientFactory, null);
         using var client = valid.CreateClient();
         Assert.Equal("orders:服务器😀", client!.Registration.Id);

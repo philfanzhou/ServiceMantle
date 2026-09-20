@@ -2289,6 +2289,40 @@ diagnostics, exception messages, or `ToString` output. Multi-instance callers ar
 supplying values that match each instance's real external listener; reachability across NAT,
 multiple NICs, or container port mappings is an operations concern.
 
+### Choosing a dedicated snapshot source
+
+`AddServiceMantleConsul<TSnapshotAccessor>()` reads the captured `discovery.*` snapshot from one
+dedicated, consumer-owned accessor type instead of the process-global snapshot source:
+
+```csharp
+// The consumer registers its own singleton accessor and activates a complete discovery
+// snapshot for the same ServiceId before the host starts.
+services.AddSingleton<DiscoverySnapshotAccessor>();
+services.AddServiceMantleConsul<DiscoverySnapshotAccessor>();
+```
+
+This entry registers the client boundary and lifecycle only: it contributes no Consul definitions
+or validators to the global setting catalog and replaces no global accessor, store, loader, query,
+or update descriptors, so a consumer that derives its discovery snapshot from an authoritative
+product snapshot keeps that authority untouched. The library creates no storage for the accessor,
+reads no `IConfiguration`, migrates no keys, and performs no validation of its own - schema, token
+sensitivity, service identity, and the enabled value are rechecked at the same consumer boundary.
+The typed accessor is resolved and read only inside `CreateClient`'s existing safe capture boundary:
+registration, service-provider construction, and host builds never resolve it and never create a
+client. A registration that is missing, throws while being resolved, or yields no usable snapshot
+fails with the closed `SnapshotUnavailable` category (no inner exception); an invalid snapshot
+keeps `InvalidConfiguration`, and raw accessor exceptions never escape.
+
+All entries converge on one lifecycle owner. Repeating the typed entry with the same accessor type
+and agreeing timing and advertisement values is idempotent; mixing it with a non-generic entry,
+naming a different accessor type, or disagreeing on timing or advertisement is a conflicting
+configuration rejected with `InvalidConfiguration` when the lifecycle is first resolved, before any
+background work starts - never first-wins or last-wins. Consumers own the accessor's thread
+safety, the completeness of the same-service snapshot it publishes, correct sensitivity marking,
+and activation before `Host.Start`; their projection must derive from a trusted authority and must
+not write plaintext secrets back. There is no hot reload: an updated source is captured only after
+a restart.
+
 The default adapter sends one PUT using the
 [Consul agent service API](https://developer.hashicorp.com/consul/api-docs/agent/service), with an HTTP
 health check (10-second interval, 2-second check timeout, initial `critical` status). Requests time out
