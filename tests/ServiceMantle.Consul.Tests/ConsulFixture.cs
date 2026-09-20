@@ -21,7 +21,8 @@ internal sealed class ConsulFixture : IDisposable
 
     internal ConsulFixture(bool composite = true, bool tokenSensitive = true, ServiceId? snapshotService = null,
         Action<IServiceCollection>? configureServices = null,
-        Action<ServiceInstanceAdvertisementOptions>? advertisement = null)
+        Action<ServiceInstanceAdvertisementOptions>? advertisement = null,
+        Action<IServiceCollection>? register = null)
     {
         var definitions = new ConsulSettingDefinitions().GetDefinitions().Select(d =>
             d.Key == ConsulSettingDefinitions.Token && !tokenSensitive
@@ -39,7 +40,13 @@ internal sealed class ConsulFixture : IDisposable
             return ClientFactory;
         });
         configureServices?.Invoke(services);
-        if (advertisement is null)
+        if (register is not null)
+        {
+            // The test owns the registration form itself (for example the typed snapshot-source
+            // entry), while everything above keeps the shared fixture composition.
+            register(services);
+        }
+        else if (advertisement is null)
         {
             services.AddServiceMantleConsul();
             services.AddServiceMantleConsul();

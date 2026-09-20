@@ -283,7 +283,7 @@ public sealed class ConsulStartupCancellationTests
                 .AddScoped<IServiceReadinessDecisionSource>(_ => source)
                 .BuildServiceProvider();
             var provider = new ConsulClientProvider(
-                accessor,
+                () => accessor,
                 ConsulFixture.Service,
                 ConsulFixture.Instance,
                 () => factory,

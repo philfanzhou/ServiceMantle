@@ -5,16 +5,16 @@ namespace ServiceMantle.Consul;
 /// <summary>Creates explicit owned sessions from a single atomically captured active snapshot.</summary>
 public sealed class ConsulClientProvider
 {
-    private readonly IServiceSettingCurrentSnapshotAccessor accessor;
+    private readonly Func<IServiceSettingCurrentSnapshotAccessor> accessor;
     private readonly ServiceId serviceId;
     private readonly InstanceId instanceId;
     private readonly Func<IConsulClientFactory> factory;
     private readonly ConsulInstanceAdvertisement advertisement;
 
-    internal ConsulClientProvider(IServiceSettingCurrentSnapshotAccessor accessor, ServiceId serviceId,
+    internal ConsulClientProvider(Func<IServiceSettingCurrentSnapshotAccessor> accessor, ServiceId serviceId,
         InstanceId instanceId, Func<IConsulClientFactory> factory, ConsulInstanceAdvertisement? advertisement)
     {
-        this.accessor = accessor;
+        this.accessor = accessor ?? throw new ArgumentNullException(nameof(accessor));
         this.serviceId = serviceId;
         this.instanceId = instanceId;
         this.factory = factory;
@@ -31,7 +31,10 @@ public sealed class ConsulClientProvider
         ServiceSettingSnapshot snapshot;
         try
         {
-            if (!accessor.TryGetCurrent(out var current) || current is null)
+            // The accessor getter is part of the same safe boundary: a typed registration that is
+            // missing, fails to resolve, or returns an unusable accessor is the closed snapshot-
+            // unavailable category, never a raw dependency exception.
+            if (!accessor().TryGetCurrent(out var current) || current is null)
             {
                 throw new ConsulConfigurationException(ConsulConfigurationError.SnapshotUnavailable);
             }

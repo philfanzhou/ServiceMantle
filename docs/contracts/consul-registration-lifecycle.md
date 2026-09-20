@@ -143,6 +143,46 @@ services.AddServiceMantleConsul(
 调用方责任：多实例部署为每个实例提供与其真实对外监听一致的实例级 Address 与 Port；实例级地址
 对 Consul agent 或其他实例的可达性（NAT、多网卡、容器端口映射）由运维负责。
 
+## 专用快照来源（#557）
+
+非泛型入口在注册 discovery 目录的同时固定解析全局 `IServiceSettingCurrentSnapshotAccessor`。当
+消费方只希望向 Consul 提供由自有权威快照派生的 `discovery.*` 快照（例如 SignaCore 的 43 个产品键
+权威快照）时，可改用显式的类型化注册入口：
+
+```csharp
+IServiceCollection AddServiceMantleConsul<TSnapshotAccessor>(
+    this IServiceCollection services,
+    Action<ServiceRegistrationLifecycleOptions>? configureLifecycle = null,
+    Action<ServiceInstanceAdvertisementOptions>? configureAdvertisement = null)
+    where TSnapshotAccessor : class, IServiceSettingCurrentSnapshotAccessor;
+```
+
+固定不变量：
+
+1. **非泛型三个入口行为不变**（目录/validator 注册、全局 accessor、默认 timing/advertisement）。
+   泛型入口**不向全局注入** `IServiceSettingDefinitionProvider` 或
+   `IServiceSettingCompositeValidator`，不改全局 accessor/store/loader/query/update 的任何
+   descriptor；全局设置目录与权威保持消费方原状。
+2. **调用方责任**：自行注册 `TSnapshotAccessor` 单例并在 Host.Start 前激活完整的同 service-id
+   快照。库不为其创建存储、不解析产品 `IConfiguration`、不迁移键、不代替其校验或加密；快照的
+   线程安全、敏感值标记与投影来源的可信性均由调用方负责。
+3. **延迟解析**：泛型 accessor 的解析与读取只发生在 `CreateClient` 的既有安全捕获边界内——
+   注册、Build、生命周期解析均不解析它、不创建 client。缺注册、解析抛错、返回 null 或不可用
+   映射为**无 inner 的 `SnapshotUnavailable`**；错误 service-id、schema/敏感属性或 enabled 值仍为
+   `InvalidConfiguration`。原始异常不得逃逸。全局 accessor 的解析时机与原行为一致。
+4. **合流与冲突**：所有入口合流到同一个 AddCore 与同一个选择描述符，只有一个 hosted owner。
+   相同模式/同 T/timing/advertisement 重复调用幂等；默认与泛型混用（无论顺序）、不同 T、
+   timing 或 advertisement 不一致都是冲突，在**第一次生命周期解析**时以固定
+   `InvalidConfiguration` 拒绝——不是 first-wins/last-wins，`BuildServiceProvider` 或
+   `Host.Build()` 并不必然检测到。
+5. **既有语义不变**：Start 仍一次捕获、禁用仍零 client/timer/readiness、停止与取消优先级、
+   同一 session 的版本和所有权、无热重载均保持。同步 DI 工厂不被当作可强制取消的操作；
+   调用方取消的优先级与既有检查点一致。
+
+敏感流：调用方 accessor → 既有 binding → client config 的显式 token getter → 原 HTTP Header；类型名
+与异常同样不作为原始失败的诊断输出。不新增日志、序列化或持久化通道。无新持久数据；回滚移除新
+入口调用即可（新消费代码需要包含该 overload 的新包）。
+
 ## 状态模型
 
 有限控制状态与一个保守的远程存在性观察配对：
