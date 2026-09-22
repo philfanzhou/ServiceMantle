@@ -14,6 +14,12 @@ namespace ServiceMantle.Persistence.EntityFrameworkCore;
 /// <remarks>
 /// Each call uses a dedicated DbContext. The root-key callback is invoked once per operation; the
 /// returned key material is neither persisted nor included in repository diagnostics.
+/// <para>
+/// Storing an element runs its whole transaction — begin, save, and commit — inside the context's
+/// execution strategy, so a retrying execution strategy configured by the consumer (for example
+/// Npgsql's <c>EnableRetryOnFailure</c>) is supported: a transient failure re-runs the entire unit
+/// and a retried attempt never stages a second copy of the element.
+/// </para>
 /// </remarks>
 public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlRepository
     where TDbContext : DbContext
@@ -101,24 +107,43 @@ public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlReposito
             throw RootKeyUnavailable();
         }
 
-        TDbContext? dbContext = null;
-        IDbContextTransaction? transaction = null;
+        var dbContext = dbContextFactory.CreateDbContext();
         try
         {
-            dbContext = dbContextFactory.CreateDbContext();
-            transaction = dbContext.Database.BeginTransaction();
-            dbContext.Set<DataProtectionKeyEntity>().Add(new DataProtectionKeyEntity
+            // The whole transactional unit — begin, add, save, commit — runs inside one
+            // execution-strategy delegate, so a context configured with a retrying execution
+            // strategy (for example Npgsql's EnableRetryOnFailure) re-runs the entire unit as one
+            // retriable operation instead of rejecting the user-initiated transaction. Each
+            // attempt starts from a cleared change tracker, so a retried attempt never re-stages
+            // the entity of the failed attempt or leaves an uncommitted fragment behind.
+            dbContext.Database.CreateExecutionStrategy().Execute(() =>
             {
-                ServiceId = serviceId.Value,
-                KeyId = elementId,
-                EncryptedXml = encryptedXml,
+                dbContext.ChangeTracker.Clear();
+                var transaction = dbContext.Database.BeginTransaction();
+                try
+                {
+                    dbContext.Set<DataProtectionKeyEntity>().Add(new DataProtectionKeyEntity
+                    {
+                        ServiceId = serviceId.Value,
+                        KeyId = elementId,
+                        EncryptedXml = encryptedXml,
+                    });
+                    dbContext.SaveChanges();
+                    transaction.Commit();
+                }
+                catch
+                {
+                    SafeRollback(transaction);
+                    throw;
+                }
+                finally
+                {
+                    SafeDispose(transaction);
+                }
             });
-            dbContext.SaveChanges();
-            transaction.Commit();
         }
         catch (DbUpdateException)
         {
-            SafeRollback(transaction);
             if (RowExists(elementId))
             {
                 throw DuplicateKey();
@@ -128,17 +153,14 @@ public sealed class EfCoreDataProtectionKeyRepository<TDbContext> : IXmlReposito
         }
         catch (DataProtectionKeyRepositoryException)
         {
-            SafeRollback(transaction);
             throw;
         }
         catch
         {
-            SafeRollback(transaction);
             throw StorageFailure();
         }
         finally
         {
-            SafeDispose(transaction);
             SafeDispose(dbContext);
         }
     }
