@@ -23,8 +23,10 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
     private readonly ConsulLifecycleObserver observer;
     private readonly CancellationTokenSource lifetime = new();
     private readonly SemaphoreSlim desireChanged = new(0, 1);
+    private readonly object stopGate = new();
 
     private ConsulClientSession? session;
+    private Task? stopTask;
     private Task? sampler;
     private Task? owner;
     private int desiredPresent;
@@ -120,15 +122,32 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
     /// cancelled and an in-flight deregister is awaited. It never starts another register.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A caller cancellation observed before stop returns is the result of the whole call: it
     /// outranks the internal shutdown timeout and every cleanup failure, and propagates as an
     /// <see cref="OperationCanceledException"/> carrying only the caller's own token. Ownership is
     /// still released first - an in-flight operation is notified, awaited until it settles, and only
     /// then is the session disposed - so a cancelled stop can still finish later than the call that
     /// cancelled it.
+    /// </para>
+    /// <para>
+    /// Stops are serialized: the first caller owns the budget and the cleanup, and every later
+    /// entry - a concurrent stop or the container's <see cref="DisposeAsync"/> - awaits the same
+    /// completion instead of racing it, so the cleanup deregistration and the session disposal each
+    /// happen exactly once and a disposal following a stop never touches released primitives.
+    /// </para>
     /// </remarks>
     /// <exception cref="OperationCanceledException">The caller cancelled the stop.</exception>
-    public async Task StopAsync(CancellationToken cancellationToken)
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        lock (stopGate)
+        {
+            stopTask ??= StopCoreAsync(cancellationToken);
+            return stopTask;
+        }
+    }
+
+    private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
         Interlocked.Exchange(ref stopping, 1);
         if (session is null)
@@ -154,8 +173,13 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
         }
         finally
         {
-            DisposeSession(session);
-            session = null;
+            // Taken atomically: a concurrent disposal must never hand this helper a null session,
+            // and exactly one of the two paths disposes the session.
+            var owned = Interlocked.Exchange(ref session, null);
+            if (owned is not null)
+            {
+                DisposeSession(owned);
+            }
         }
 
         ThrowIfCancelledByCaller(cancellationToken);
@@ -167,6 +191,12 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
     /// stop - still forbids a new register and waits for the loops and any cooperative in-flight
     /// operation to settle before it releases the session they own. Disposal never deregisters.
     /// </summary>
+    /// <remarks>
+    /// Disposal and stop share one serialized release path: whichever runs first owns the loops and
+    /// the session, so a stop racing the container's disposal cannot double-deregister, cannot
+    /// dispose the session twice, and never touches a coordination primitive the other path already
+    /// released.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         if (disposed)
@@ -175,6 +205,43 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
         }
 
         disposed = true;
+        Task completion;
+        lock (stopGate)
+        {
+            if (stopTask is null)
+            {
+                // No stop ever ran - a host disposed after a failed start - so this release keeps
+                // the "disposal never deregisters" guarantee and never enters the cleanup path.
+                stopTask = ReleaseWithoutDeregisteringAsync();
+            }
+
+            completion = stopTask;
+        }
+
+        try
+        {
+            await completion.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The stop caller's own cancelled result was already observed by that caller; the
+            // disposal still settles everything the cancelled stop parked before handing off.
+        }
+
+        // When a stop ran first, the primitives are still alive; releasing them here is safe and
+        // idempotent for the pure-disposal path above. A stop cancelled by its caller may have
+        // parked before its own session hand-off, so the hand-off is taken here as a backstop.
+        lifetime.Dispose();
+        desireChanged.Dispose();
+        var remaining = Interlocked.Exchange(ref session, null);
+        if (remaining is not null)
+        {
+            DisposeSession(remaining);
+        }
+    }
+
+    private async Task ReleaseWithoutDeregisteringAsync()
+    {
         Interlocked.Exchange(ref stopping, 1);
         Signal();
         await lifetime.CancelAsync().ConfigureAwait(false);
@@ -190,10 +257,10 @@ internal sealed class ConsulRegistrationLifecycle : IHostedService, IAsyncDispos
         {
             lifetime.Dispose();
             desireChanged.Dispose();
-            if (session is { } owned)
+            var owned = Interlocked.Exchange(ref session, null);
+            if (owned is not null)
             {
                 DisposeSession(owned);
-                session = null;
             }
         }
     }
