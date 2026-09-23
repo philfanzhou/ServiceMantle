@@ -301,6 +301,27 @@ token。
 `Registered` 或 `NotReady`。owner 只记录其保守的存在性含义，并应用最新的期望状态。停止完成之后
 送达的事件会被忽略。
 
+## 停止与释放的互斥（#565）
+
+生命周期同时是 `IHostedService` 与 `IAsyncDisposable`，宿主的停止调用与容器的释放调用可能
+交错。两条路径共享一个串行化释放口：
+
+1. **首个进入者拥有释放**：第一个 `StopAsync` 以当时的调用方 token 执行完整停止（预算、
+   清理注销、session 交接）；之后的每个 `StopAsync` 与 `DisposeAsync` 都等待同一完成，不再
+   独自执行清理——同一注册 ID 的清理注销与 session 处置各恰好一次，不存在重叠的注销调用。
+2. **释放先行不注销**：从未停止就被释放的生命周期（启动失败后直接 dispose 的宿主）保持
+   「释放不注销」——它取消采样、等待在途操作落定、处置 session，但保留远端注册。随后的
+   `StopAsync` 只是等待该释放完成，安全返回。
+3. **session 交接原子化**：session 由 `Interlocked.Exchange` 取走后处置，任何交错都不会把
+   null 交给处置助手，也不会处置两次。
+4. **取消不阻断释放**：首个 stop 若以调用方取消结束，其取消结果属于该调用方；
+   `DisposeAsync` 观察该结果但不传播，并兜底完成被取消的 stop 未走完的 session 交接。
+   首个 stop 之后的 stop 调用者收到的是同一完成结果，包括其取消分类。
+
+违反该互斥的交错曾产生的缺陷（注销 PUT 重复、session 双重处置、`DisposeSession(null)` 空引用、
+释放后再停止时的 `ObjectDisposedException`）由
+`tests/ServiceMantle.Consul.Tests/ConsulStopDisposeInterlockTests.cs` 的交错矩阵钉住。
+
 ## 停止矩阵
 
 停止首先取消采样器和每个退避延迟。它把期望存在性设为 `Absent` 并启动关闭总预算。此后不得开始
