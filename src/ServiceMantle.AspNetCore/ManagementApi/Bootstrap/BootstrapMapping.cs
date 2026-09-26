@@ -66,6 +66,12 @@ internal static class BootstrapMapping
             "IBootstrapCredentialStore. ServiceMantle never provisions a credential on their " +
             "behalf and never configures its storage location from an HTTP request.");
 
+    internal static InvalidOperationException InvalidUpdateCredential() =>
+        new("The ServiceMantle Bootstrap update entry's Bearer authentication option is invalid: " +
+            "every registration must name the same registered, non-forwarding authentication " +
+            "scheme other than the fixed management cookie, and the fixed management cookie " +
+            "scheme must be registered.");
+
     internal static InvalidOperationException MissingCapability() =>
         new("The ServiceMantle Bootstrap management entries require AddServiceMantle, " +
             "AddServiceMantleManagementApiV1, AddServiceMantleBootstrapManagement, the composed " +

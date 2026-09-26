@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.AspNetCore.Http;
 using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
 using ServiceMantle.AspNetCore.PhaseGate;
 using ServiceMantle.AspNetCore.RateLimiting;
 
@@ -52,7 +53,7 @@ internal sealed class ManagementEntryState(IServiceProvider services)
         var validated = new List<ValidatedEntry>();
         foreach (var endpoint in endpoints)
         {
-            var definition = Validate(endpoint, root);
+            var definition = Validate(endpoint, root, services);
             if (!seen.Add(definition.Kind))
             {
                 throw Failure();
@@ -99,7 +100,10 @@ internal sealed class ManagementEntryState(IServiceProvider services)
     /// Rejects an entry whose path, method, surface, authentication, rate limiting, security
     /// headers, or unsafe-request guard does not match its fixed definition exactly.
     /// </summary>
-    private static ManagementEntryDefinition Validate(RouteEndpoint endpoint, string root)
+    private static ManagementEntryDefinition Validate(
+        RouteEndpoint endpoint,
+        string root,
+        IServiceProvider services)
     {
         var markers = endpoint.Metadata.GetOrderedMetadata<ManagementEntryMetadata>();
         if (markers.Count != 1 || !Enum.IsDefined(markers[0].Kind))
@@ -107,7 +111,7 @@ internal sealed class ManagementEntryState(IServiceProvider services)
             throw Failure();
         }
 
-        var definition = ManagementEntryDefaults.Get(markers[0].Kind);
+        var definition = ManagementEntryDefaults.Get(markers[0].Kind, services);
         var surfaces = endpoint.Metadata.GetOrderedMetadata<ManagementSurfaceMetadata>();
         var methods = endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods;
         if (endpoint.Metadata.GetMetadata<ManagementApiMetadata>() is not null ||
@@ -193,14 +197,27 @@ internal sealed class ManagementEntryState(IServiceProvider services)
             throw MissingCapability();
         }
 
-        // The entries that pin the fixed management cookie scheme need that handler to exist.
-        if (protectedEntries.Any(entry => entry.Definition.AuthorizationPolicyNames.Contains(
-                ManagementAuthorizationDefaults.SessionPolicyName,
-                StringComparer.Ordinal)) &&
+        // The entries that pin the fixed management cookie scheme need that handler to exist; so
+        // does the Bootstrap update credential selector, which falls back to it.
+        if (protectedEntries.Any(entry =>
+                entry.Definition.AuthorizationPolicyNames.Contains(
+                    ManagementAuthorizationDefaults.SessionPolicyName,
+                    StringComparer.Ordinal) ||
+                entry.Definition.AuthorizationPolicyNames.Contains(
+                    BootstrapUpdateCredential.SessionPolicyName,
+                    StringComparer.Ordinal)) &&
             await schemes.GetSchemeAsync(
                 ManagementSessionDefaults.AuthenticationScheme).ConfigureAwait(false) is null)
         {
             throw MissingCapability();
+        }
+
+        if (protectedEntries.Any(entry => entry.Definition.AuthorizationPolicyNames.Contains(
+                BootstrapUpdateCredential.SessionPolicyName,
+                StringComparer.Ordinal)))
+        {
+            var credential = services.GetService<BootstrapUpdateCredential>() ?? throw MissingCapability();
+            await credential.ValidateAsync(schemes).ConfigureAwait(false);
         }
 
         foreach (var entry in protectedEntries.Where(
@@ -229,11 +246,20 @@ internal sealed class ManagementEntryState(IServiceProvider services)
         var combined = await AuthorizationPolicy.CombineAsync(
             policies,
             entry.Endpoint.Metadata.OfType<IAuthorizeData>()).ConfigureAwait(false);
+        // The pinned set is exactly one scheme: the fixed management cookie, or - for the
+        // Bootstrap update entry of a host that opted in - the one credential selector. Anything
+        // added beside it would let the authorization evaluation merge a second principal.
+        var expectedScheme = string.Equals(
+                entry.Definition.RequiredSchemePolicyName,
+                BootstrapUpdateCredential.SessionPolicyName,
+                StringComparison.Ordinal)
+            ? BootstrapUpdateCredential.SelectorScheme
+            : ManagementSessionDefaults.AuthenticationScheme;
         if (combined is null ||
             combined.AuthenticationSchemes.Count != 1 ||
             !string.Equals(
                 combined.AuthenticationSchemes[0],
-                ManagementSessionDefaults.AuthenticationScheme,
+                expectedScheme,
                 StringComparison.Ordinal))
         {
             throw Failure();

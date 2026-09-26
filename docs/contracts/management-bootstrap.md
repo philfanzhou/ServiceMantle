@@ -35,12 +35,48 @@ ServiceMantle 从不代替消费方预置凭据，也没有任何 HTTP 请求可
 当该组被映射多次、没有注册 `IBootstrapCredentialStore`，或者更新条目所解析的固定 management
 cookie 认证方案缺失时，宿主启动失败。没有映射该组的宿主不会获得这些前置条件中的任何一个。
 
+### 可选：更新条目接受管理 Bearer
+
+默认情况下更新条目只接受固定 management cookie，与 0.1.0 完全相同。消费方可以显式指定一个
+**已注册**的管理 Bearer 认证方案，让更新条目额外接受它：
+
+```csharp
+builder.Services
+    .AddServiceMantle(serviceId, instanceId)
+    // ...
+    .AddServiceMantleBootstrapManagement(options =>
+        options.UpdateBearerAuthenticationScheme = "OrderService.ManagementBearer");
+```
+
+启用后：
+
+- 更新条目改由固定名称的 policy scheme `ServiceMantle.ManagementBootstrapUpdateCredential` 认证，
+  并以固定策略 `ServiceMantle.ManagementBootstrapUpdateSession`（该 policy scheme +
+  `RequireAuthenticatedUser` + `ManagementSessionRequirement`）替代 `ServiceMantle.ManagementSession`，
+  仍与 `ServiceMantle.ManagementAdmin` 组合。其它条目（session login/logout/current、setup、status、
+  bootstrap 创建）与 `ServiceMantle.ManagementSession` 策略不变。
+- **选择规则：** 请求中**存在任意** `Authorization` Header（包括空值、多值、非 Bearer 形状）时，
+  认证、challenge 与 forbid 全部只交给所配置的 Bearer 方案；否则交给 management cookie。每个请求只
+  由一个方案决定，授权评估不会合并两个 principal，无效 Bearer 也不会回退到同时携带的有效 cookie。
+- **失败归属：** 选中哪个方案，401/403 就由哪个方案给出。cookie 分支沿用既有 management
+  401/403；Bearer 分支的状态码与正文由消费方方案决定，ServiceMantle 不为其发明结果。
+- phase、`X-ServiceMantle-Request`、Management 速率限制、请求解析、Admin 权限与成功/失败结果不变；
+  处理器与消费方审计看到的操作员来自被选中方案认证出的合法 principal。调用方取消以原 token 传播。
+- **启动校验：** 方案名为空白、未注册、等于 `ServiceMantle.ManagementCookie`、等于上述 policy scheme
+  本身，或其 handler 是转发型 `PolicySchemeHandler`；management cookie 方案缺失；多次注册给出不同值
+  （无参重载等价于不设置，因此与启用的注册同样冲突）——都会让宿主启动失败，异常消息固定且不含方案
+  名或其它配置值。等价的重复注册是幂等的。
+- **传输：** ServiceMantle 不强制 HTTPS。HTTP 下 Bearer 凭据以明文传输；推荐 HTTPS，由部署者选择
+  传输方式。
+- **调用方责任：** 所配置的方案只签发管理身份（例如用 `ManagementIdentity` 构造 principal），不要把
+  业务或 OIDC token 方案配置为该选项；凭据签发、撤销与生命周期属于消费方。
+
 ## 两个条目
 
 | 条目 | 方法与路径 | 允许的阶段 | 授权 | 速率限制 |
 | --- | --- | --- | --- | --- |
 | 创建 | `POST {v1}/bootstrap` | `BootstrapConfiguration` | 匿名传输外加一个一次性凭据 Header | Setup 策略 |
-| 更新 | `PUT {v1}/bootstrap` | `Completed + Succeeded + Reachable` | `ServiceMantle.ManagementAdmin` **且** `ServiceMantle.ManagementSession`，即固定 management cookie | Management 策略 |
+| 更新 | `PUT {v1}/bootstrap` | `Completed + Succeeded + Reachable` | `ServiceMantle.ManagementAdmin` **且** `ServiceMantle.ManagementSession`，即固定 management cookie；显式启用可选 Bearer 后改为 `ServiceMantle.ManagementBootstrapUpdateSession`（见上节） | Management 策略 |
 
 两者都是版本化根的直接子级，映射在受保护的 `MapServiceMantleManagementApiV1` 组旁边而不是其
 内部，携带安全响应 Header，并要求恰好一个 `X-ServiceMantle-Request: 1` Header。更新条目从不
