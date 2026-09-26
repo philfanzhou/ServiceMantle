@@ -58,6 +58,9 @@ builder.Services
 - **选择规则：** 请求中**存在任意** `Authorization` Header（包括空值、多值、非 Bearer 形状）时，
   认证、challenge 与 forbid 全部只交给所配置的 Bearer 方案；否则交给 management cookie。每个请求只
   由一个方案决定，授权评估不会合并两个 principal，无效 Bearer 也不会回退到同时携带的有效 cookie。
+- **限流身份：** 启用后，更新条目在管理限流前认证所选方案；限流与授权使用同一方案的请求内认证结果。
+  同一 Bearer 操作员不能通过增删或更换未选中的 Cookie 改变额度；不同操作员按既有规则分区。所选方案
+  认证失败时使用匿名客户端分区，不借用 Cookie 身份；没有 `Authorization` 时保持 Cookie 操作员分区。
 - **失败归属：** 选中哪个方案，401/403 就由哪个方案给出。cookie 分支沿用既有 management
   401/403；Bearer 分支的状态码与正文由消费方方案决定，ServiceMantle 不为其发明结果。
 - phase、`X-ServiceMantle-Request`、Management 速率限制、请求解析、Admin 权限与成功/失败结果不变；

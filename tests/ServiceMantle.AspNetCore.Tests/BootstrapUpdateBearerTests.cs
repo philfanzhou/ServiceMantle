@@ -216,6 +216,73 @@ public sealed class BootstrapUpdateBearerTests
             BootstrapUpdateCredential.Select(context, BearerHandler.SchemeName));
     }
 
+    [Theory]
+    [InlineData(null, "cookie-one")]
+    [InlineData("cookie-one", null)]
+    [InlineData("cookie-one", "cookie-two")]
+    public async Task Unselected_cookies_cannot_change_a_bearer_operators_quota(
+        string? initialCookie, string? nextCookie)
+    {
+        await using var fixture = await StartAsync(enabled: true, managementPermitLimit: 1);
+        string[] bearer = ["Bearer " + BearerHandler.AdminToken];
+        using var first = await fixture.SendAsync(HttpMethod.Put,
+            cookie: initialCookie is null ? null : fixture.Cookie(ManagementPermission.Read, initialCookie),
+            authorization: bearer);
+        using var repeat = await fixture.SendAsync(HttpMethod.Put,
+            cookie: initialCookie is null ? null : fixture.Cookie(ManagementPermission.Read, initialCookie),
+            authorization: bearer);
+        using var changed = await fixture.SendAsync(HttpMethod.Put,
+            cookie: nextCookie is null ? null : fixture.Cookie(ManagementPermission.Read, nextCookie),
+            authorization: bearer);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, repeat.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, changed.StatusCode);
+        Assert.Equal(["bearer-admin"], fixture.AuthorizedOperators);
+        Assert.Equal(1, UpdateCalls(fixture));
+    }
+
+    [Fact]
+    public async Task Different_bearer_operators_and_a_cookie_operator_have_independent_quotas()
+    {
+        await using var fixture = await StartAsync(enabled: true, managementPermitLimit: 1);
+        var cookie = fixture.Cookie(ManagementPermission.Admin, "cookie-admin");
+        foreach (var token in new[] { BearerHandler.AdminToken, BearerHandler.OtherAdminToken })
+        {
+            using var first = await fixture.SendAsync(HttpMethod.Put,
+                cookie: cookie, authorization: ["Bearer " + token]);
+            using var repeat = await fixture.SendAsync(HttpMethod.Put,
+                authorization: ["Bearer " + token]);
+            Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+            Assert.Equal(HttpStatusCode.TooManyRequests, repeat.StatusCode);
+        }
+
+        using var cookieFirst = await fixture.PutAsync(cookie);
+        using var cookieRepeat = await fixture.PutAsync(cookie);
+        Assert.Equal(HttpStatusCode.OK, cookieFirst.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, cookieRepeat.StatusCode);
+        Assert.Equal(["bearer-admin", "bearer-other-admin", "cookie-admin"], fixture.AuthorizedOperators);
+    }
+
+    [Fact]
+    public async Task An_invalid_bearer_cannot_borrow_a_cookie_operators_quota()
+    {
+        await using var fixture = await StartAsync(enabled: true, managementPermitLimit: 1);
+        var cookie = fixture.Cookie(ManagementPermission.Admin, "cookie-admin");
+        using var invalid = await fixture.SendAsync(HttpMethod.Put,
+            cookie: cookie, authorization: ["Bearer invalid"]);
+        using var changedCookie = await fixture.SendAsync(HttpMethod.Put,
+            cookie: fixture.Cookie(ManagementPermission.Admin, "another-admin"),
+            authorization: ["Bearer invalid"]);
+        using var cookieOnly = await fixture.PutAsync(cookie);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode);
+        Assert.Equal(BearerHandler.UnauthenticatedCode, await ReadErrorCodeAsync(invalid));
+        Assert.Equal(HttpStatusCode.TooManyRequests, changedCookie.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, cookieOnly.StatusCode);
+        Assert.Equal(["cookie-admin"], fixture.AuthorizedOperators);
+    }
+
     // ---- The option widens nothing else ----
 
     [Fact]
@@ -363,11 +430,13 @@ public sealed class BootstrapUpdateBearerTests
     /// Starts a host whose Bootstrap file already exists - created through the anonymous creation
     /// entry - so the update entry has a file to replace, and resets the validator count.
     /// </summary>
-    private static async Task<BootstrapManagementHostFixture> StartAsync(bool enabled, bool mapStatus = false)
+    private static async Task<BootstrapManagementHostFixture> StartAsync(
+        bool enabled, bool mapStatus = false, int managementPermitLimit = 120)
     {
         var fixture = await BootstrapManagementHostFixture.StartAsync(
             snapshot: BootstrapManagementHostFixture.BeforeConfiguration,
             mapStatus: mapStatus,
+            managementPermitLimit: managementPermitLimit,
             updateBearerScheme: enabled ? BearerHandler.SchemeName : null,
             registerTestBearer: true);
         using (var created = await fixture.PostAsync(await fixture.ProvisionAsync()))

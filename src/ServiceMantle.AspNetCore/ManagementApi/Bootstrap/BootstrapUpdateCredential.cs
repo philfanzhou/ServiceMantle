@@ -1,7 +1,9 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Net.Http.Headers;
 using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Entries;
 
 namespace ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
 
@@ -64,6 +66,25 @@ internal sealed class BootstrapUpdateCredential(
         context.Request.Headers.ContainsKey(HeaderNames.Authorization)
             ? bearerScheme
             : ManagementSessionDefaults.AuthenticationScheme;
+
+    /// <summary>
+    /// Resolves the update entry's selected credential before rate limiting reads the operator.
+    /// Authorization later uses the same scheme and its per-request authentication result.
+    /// </summary>
+    internal static async Task AuthenticateBeforeRateLimitingAsync(HttpContext context, RequestDelegate next)
+    {
+        if (context.GetEndpoint()?.Metadata.GetMetadata<ManagementEntryMetadata>()?.Kind ==
+            ManagementEntryKind.BootstrapUpdate)
+        {
+            var result = await context.AuthenticateAsync(SelectorScheme).ConfigureAwait(false);
+            // A failed selected credential must not retain the default cookie's quota or identity.
+            context.User = result.Succeeded && result.Principal is not null
+                ? result.Principal
+                : new ClaimsPrincipal(new ClaimsIdentity());
+        }
+
+        await next(context).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Refuses an unusable configuration before the host serves anything. Every failure carries

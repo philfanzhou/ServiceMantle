@@ -539,7 +539,7 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
     }
 
     /// <summary>
-    /// A consuming service's management Bearer scheme: two fixed tokens, and its own closed 401 and
+    /// A consuming service's management Bearer scheme: fixed tokens, and its own closed 401 and
     /// 403 bodies so a test can tell which scheme answered.
     /// </summary>
     internal sealed class TestBearerHandler(
@@ -550,6 +550,7 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
     {
         internal const string SchemeName = "ServiceMantle.Tests.ManagementBearer";
         internal const string AdminToken = "bearer-admin-token";
+        internal const string OtherAdminToken = "bearer-other-admin-token";
         internal const string ReaderToken = "bearer-reader-token";
         internal const string UnauthenticatedCode = "tests.bearer.unauthenticated";
         internal const string ForbiddenCode = "tests.bearer.forbidden";
@@ -566,6 +567,7 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
             (string Operator, ManagementPermission Permission)? identity = header["Bearer ".Length..] switch
             {
                 AdminToken => ("bearer-admin", ManagementPermission.Admin),
+                OtherAdminToken => ("bearer-other-admin", ManagementPermission.Admin),
                 ReaderToken => ("bearer-reader", ManagementPermission.Read),
                 _ => null,
             };
