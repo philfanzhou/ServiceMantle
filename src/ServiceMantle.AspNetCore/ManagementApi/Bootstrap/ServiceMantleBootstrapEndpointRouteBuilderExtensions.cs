@@ -33,7 +33,11 @@ public static class ServiceMantleBootstrapEndpointRouteBuilderExtensions
     /// <c>X-ServiceMantle-Bootstrap-Credential</c> header holding the one-time credential, which is
     /// consumed before the file is written. The update entry adds the fixed management cookie
     /// session policy to the administrator policy, so its conclusion comes from this host's own
-    /// cookie; it never reads the creation credential. Mapping this group more than once, or
+    /// cookie; it never reads the creation credential. When the host enabled
+    /// <c>BootstrapManagementOptions.UpdateBearerAuthenticationScheme</c>, the update entry instead
+    /// adds the <c>ServiceMantle.ManagementBootstrapUpdateSession</c> policy, whose single
+    /// selector scheme hands a request carrying an <c>Authorization</c> header to that Bearer scheme
+    /// alone and every other request to the management cookie. Mapping this group more than once, or
     /// without a registered <c>IBootstrapCredentialStore</c> or the fixed cookie scheme, fails
     /// before the host starts.
     /// </para>
@@ -80,11 +84,14 @@ public static class ServiceMantleBootstrapEndpointRouteBuilderExtensions
                 ManagementEntryKind.BootstrapUpdate,
                 (HttpContext context) => BootstrapHandlers.UpdateAsync(context))
             // The shared administrator policy is authentication-method agnostic by design. This
-            // mapping adds the session policy, whose scheme list is the fixed management cookie, so
-            // rewriting a running instance's Bootstrap file cannot be authorized by an external
-            // default scheme. No shared entry file, general policy, or cookie implementation is
-            // changed by adding it here.
-            .RequireAuthorization(ManagementAuthorizationDefaults.SessionPolicyName);
+            // mapping adds the entry's session policy, whose scheme list is the fixed management
+            // cookie - or, when the host opted in, the one selector between its management Bearer
+            // scheme and that cookie - so rewriting a running instance's Bootstrap file cannot be
+            // authorized by an external default scheme. No shared entry file, general policy, or
+            // cookie implementation is changed by adding it here.
+            .RequireAuthorization(ManagementEntryDefaults.Get(
+                ManagementEntryKind.BootstrapUpdate,
+                endpoints.ServiceProvider).RequiredSchemePolicyName!);
         return endpoints;
     }
 }

@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.AspNetCore.Http;
 using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
 using ServiceMantle.AspNetCore.PhaseGate;
 using ServiceMantle.AspNetCore.RateLimiting;
 
@@ -52,6 +53,8 @@ public static class ServiceMantlePipelineApplicationBuilderExtensions
         app.UseServiceMantlePhaseGate();
         if (services.GetService<IAuthenticationSchemeProvider>() is not null)
             app.UseAuthentication();
+        if (services.GetService<BootstrapUpdateCredential>() is { IsEnabled: true })
+            app.Use(BootstrapUpdateCredential.AuthenticateBeforeRateLimitingAsync);
         app.UseRateLimiter();
         if (services.GetService<IAuthorizationPolicyProvider>() is not null)
             app.UseAuthorization();

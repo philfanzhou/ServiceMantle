@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -52,6 +53,7 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
 
     private readonly string directory;
     private readonly RecordingLoggerProvider logger;
+    private readonly List<string?> operators;
     private WebApplication? application;
     private HttpClient? client;
 
@@ -61,8 +63,10 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         string root,
         RecordingValidator validator,
         MutableSnapshot snapshot,
-        RecordingLoggerProvider logger)
+        RecordingLoggerProvider logger,
+        List<string?> operators)
     {
+        this.operators = operators;
         this.application = application;
         this.directory = directory;
         this.logger = logger;
@@ -75,7 +79,22 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
 
     internal RecordingValidator Validator { get; }
 
+    /// <summary>The validator calls a test's own seeding consumed, for tests that count updates.</summary>
+    internal int CreatedCalls { get; set; }
+
     internal MutableSnapshot Snapshot { get; }
+
+    /// <summary>The operator of every request that passed the entry's authorization.</summary>
+    internal IReadOnlyList<string?> AuthorizedOperators
+    {
+        get
+        {
+            lock (operators)
+            {
+                return operators.ToArray();
+            }
+        }
+    }
 
     /// <summary>Every formatted log line the host produced, for secret-output assertions.</summary>
     internal IReadOnlyList<string> Logs => logger.Lines;
@@ -103,7 +122,10 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         int mapCount = 1,
         ServiceHealthSnapshot? snapshot = null,
         int setupPermitLimit = 60,
-        int managementPermitLimit = 120)
+        int managementPermitLimit = 120,
+        string? updateBearerScheme = null,
+        bool registerTestBearer = false,
+        Action<ServiceMantleBuilder>? configureMantle = null)
     {
         var resolvedRoot = root ?? ManagementApiDefaults.DefaultRootPath;
         var directory = Path.Combine(
@@ -139,11 +161,31 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         }
 
         mantle.AddServiceMantleManagementApiV1(options => options.RootPath = resolvedRoot);
-        mantle.AddServiceMantleBootstrapManagement();
+        if (updateBearerScheme is null)
+        {
+            mantle.AddServiceMantleBootstrapManagement();
+        }
+        else
+        {
+            mantle.AddServiceMantleBootstrapManagement(
+                options => options.UpdateBearerAuthenticationScheme = updateBearerScheme);
+        }
+
+        if (registerTestBearer)
+        {
+            builder.Services
+                .AddAuthentication()
+                .AddScheme<AuthenticationSchemeOptions, TestBearerHandler>(
+                    TestBearerHandler.SchemeName,
+                    _ => { });
+        }
+
         if (mapStatus)
         {
             mantle.AddServiceMantleInstallationStatus();
         }
+
+        configureMantle?.Invoke(mantle);
 
         if (externalDefaultScheme)
         {
@@ -168,9 +210,30 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         }
 
         var application = builder.Build();
+        var operators = new List<string?>();
         try
         {
             application.UseServiceMantlePipeline();
+            // Runs after authorization, so it sees exactly the principal the entry was authorized
+            // with - the one a consuming service's audit attributes the update to.
+            application.Use(async (context, next) =>
+            {
+                if (!HttpMethods.IsPut(context.Request.Method))
+                {
+                    await next(context);
+                    return;
+                }
+
+                var resolved = context.RequestServices
+                    .GetRequiredService<IManagementCurrentOperatorResolver>()
+                    .Resolve(context.User);
+                lock (operators)
+                {
+                    operators.Add(resolved.Operator?.OperatorId);
+                }
+
+                await next(context);
+            });
             for (var index = 0; index < mapCount; index++)
             {
                 application.MapServiceMantleBootstrap();
@@ -194,7 +257,8 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
             resolvedRoot,
             validator,
             source,
-            recordingLogger);
+            recordingLogger,
+            operators);
     }
 
     internal static async Task<BootstrapManagementHostFixture> StartAsync(
@@ -204,7 +268,9 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         bool mapStatus = false,
         ServiceHealthSnapshot? snapshot = null,
         int setupPermitLimit = 60,
-        int managementPermitLimit = 120)
+        int managementPermitLimit = 120,
+        string? updateBearerScheme = null,
+        bool registerTestBearer = false)
     {
         var fixture = Create(
             root: root,
@@ -213,7 +279,9 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
             mapStatus: mapStatus,
             snapshot: snapshot,
             setupPermitLimit: setupPermitLimit,
-            managementPermitLimit: managementPermitLimit);
+            managementPermitLimit: managementPermitLimit,
+            updateBearerScheme: updateBearerScheme,
+            registerTestBearer: registerTestBearer);
         await fixture.StartAsync();
         return fixture;
     }
@@ -243,9 +311,15 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         string? cookie = null,
         string? path = null,
         string? contentEncoding = null,
-        CancellationTokenSource? abort = null)
+        CancellationTokenSource? abort = null,
+        string?[]? authorization = null)
     {
         var request = new HttpRequestMessage(method, path ?? EntryPath);
+        foreach (var value in authorization ?? [])
+        {
+            request.Headers.TryAddWithoutValidation("Authorization", value);
+        }
+
         foreach (var value in unsafeHeader ??
             [ManagementEntryDefaults.UnsafeRequestHeaderValue])
         {
@@ -358,6 +432,9 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
         /// <summary>Runs inside the validation, before the file is written.</summary>
         internal Func<BootstrapConfiguration, ValueTask>? Before { get; set; }
 
+        /// <summary>Runs inside the validation with the request's own cancellation token.</summary>
+        internal Func<CancellationToken, ValueTask>? BeforeObserving { get; set; }
+
         internal string? LastProvider { get; private set; }
 
         internal string? LastConnectionString { get; private set; }
@@ -378,6 +455,11 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
             if (Before is { } before)
             {
                 await before(candidate);
+            }
+
+            if (BeforeObserving is { } observing)
+            {
+                await observing(cancellationToken);
             }
 
             if (Failure is { } failure)
@@ -453,6 +535,63 @@ internal sealed class BootstrapManagementHostFixture : IAsyncDisposable
                         (exception is null ? string.Empty : " " + exception));
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// A consuming service's management Bearer scheme: fixed tokens, and its own closed 401 and
+    /// 403 bodies so a test can tell which scheme answered.
+    /// </summary>
+    internal sealed class TestBearerHandler(
+        IOptionsMonitor<AuthenticationSchemeOptions> options,
+        ILoggerFactory logger,
+        System.Text.Encodings.Web.UrlEncoder encoder)
+        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    {
+        internal const string SchemeName = "ServiceMantle.Tests.ManagementBearer";
+        internal const string AdminToken = "bearer-admin-token";
+        internal const string OtherAdminToken = "bearer-other-admin-token";
+        internal const string ReaderToken = "bearer-reader-token";
+        internal const string UnauthenticatedCode = "tests.bearer.unauthenticated";
+        internal const string ForbiddenCode = "tests.bearer.forbidden";
+
+        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+        {
+            var values = Request.Headers.Authorization;
+            if (values.Count != 1 || values[0] is not { } header ||
+                !header.StartsWith("Bearer ", StringComparison.Ordinal))
+            {
+                return Task.FromResult(AuthenticateResult.Fail("unauthenticated"));
+            }
+
+            (string Operator, ManagementPermission Permission)? identity = header["Bearer ".Length..] switch
+            {
+                AdminToken => ("bearer-admin", ManagementPermission.Admin),
+                OtherAdminToken => ("bearer-other-admin", ManagementPermission.Admin),
+                ReaderToken => ("bearer-reader", ManagementPermission.Read),
+                _ => null,
+            };
+            return Task.FromResult(identity is { } resolved
+                ? AuthenticateResult.Success(new AuthenticationTicket(
+                    ManagementIdentity.Create(
+                        WellKnownManagementAuditOperatorSources.InteractiveAdmin,
+                        resolved.Operator,
+                        [resolved.Permission]).ToClaimsPrincipal(),
+                    SchemeName))
+                : AuthenticateResult.Fail("unauthenticated"));
+        }
+
+        protected override Task HandleChallengeAsync(AuthenticationProperties properties) =>
+            WriteAsync(401, UnauthenticatedCode);
+
+        protected override Task HandleForbiddenAsync(AuthenticationProperties properties) =>
+            WriteAsync(403, ForbiddenCode);
+
+        private Task WriteAsync(int status, string code)
+        {
+            Response.StatusCode = status;
+            Response.ContentType = "application/json";
+            return Response.WriteAsync("{\"errorCode\":\"" + code + "\"}", Context.RequestAborted);
         }
     }
 

@@ -50,7 +50,7 @@ public static class ServiceMantleManagementEntryEndpointRouteBuilderExtensions
         var state = endpoints.ServiceProvider.GetService<ManagementEntryState>() ??
             throw ManagementEntryState.MissingCapability();
         var root = state.GetRootPath();
-        var definition = ManagementEntryDefaults.Get(kind);
+        var definition = ManagementEntryDefaults.Get(kind, endpoints.ServiceProvider);
         state.RecordMap(endpoints);
 
         var builder = endpoints.MapMethods(root + definition.PathSuffix, definition.Methods, handler);

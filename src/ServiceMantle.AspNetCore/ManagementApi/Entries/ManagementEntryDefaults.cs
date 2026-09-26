@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
 using ServiceMantle.AspNetCore.PhaseGate;
 using ServiceMantle.AspNetCore.RateLimiting;
 
@@ -175,6 +176,23 @@ public static class ManagementEntryDefaults
         };
 
     /// <summary>Reports whether the method is one this entry set treats as unsafe.</summary>
+    /// <summary>
+    /// The definition of one entry on one host. Only the Bootstrap update entry varies: when the
+    /// host enabled its opt-in Bearer credential, the entry pins the credential selector's session
+    /// policy instead of the fixed cookie session policy.
+    /// </summary>
+    internal static ManagementEntryDefinition Get(ManagementEntryKind kind, IServiceProvider services)
+    {
+        var definition = Get(kind);
+        return kind == ManagementEntryKind.BootstrapUpdate &&
+               services.GetService(typeof(BootstrapUpdateCredential)) is BootstrapUpdateCredential
+               {
+                   IsEnabled: true,
+               }
+            ? definition with { RequiredSchemePolicyName = BootstrapUpdateCredential.SessionPolicyName }
+            : definition;
+    }
+
     internal static bool IsUnsafeMethod(string method) =>
         !HttpMethods.IsGet(method) && !HttpMethods.IsHead(method) && !HttpMethods.IsOptions(method);
 }

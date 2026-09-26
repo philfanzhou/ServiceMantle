@@ -17,11 +17,12 @@ internal sealed class BootstrapManagementRegistration
 
 /// <summary>
 /// Rejects a host that mapped the Bootstrap update entry without the fixed management cookie
-/// authentication scheme its authorization resolves through.
+/// authentication scheme its authorization resolves through, and any host whose opt-in Bearer
+/// option for that entry is conflicting or unusable.
 /// </summary>
 /// <remarks>
-/// A host that did not map this group gains no prerequisite of its own. The check names no
-/// scheme value, operator, credential, or configuration value.
+/// A host that did not map this group and did not enable the Bearer option gains no prerequisite
+/// of its own. The check names no scheme value, operator, credential, or configuration value.
 /// </remarks>
 internal sealed class BootstrapManagementStartupValidator(
     BootstrapManagementRegistration registration,
@@ -30,6 +31,14 @@ internal sealed class BootstrapManagementStartupValidator(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var credential = services.GetService<BootstrapUpdateCredential>();
+        if (credential?.GetBearerScheme() is not null)
+        {
+            await credential.ValidateAsync(
+                services.GetService<IAuthenticationSchemeProvider>()
+                    ?? throw BootstrapMapping.InvalidUpdateCredential()).ConfigureAwait(false);
+        }
+
         if (!registration.Mapped)
         {
             return;

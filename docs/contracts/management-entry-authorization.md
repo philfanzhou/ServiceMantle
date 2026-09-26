@@ -16,7 +16,7 @@ opt-in 的入口约定与方法感知的 phase 分类。启动校验会拒绝以
 | --- | --- | --- | --- | --- |
 | 安装状态 | `GET`, `HEAD {v1}/status` | 所有已定义的 phase 与 migration/数据库状态 | 匿名 | 管理策略，匿名客户端分区 |
 | Bootstrap 创建 | `POST {v1}/bootstrap` | 仅 `BootstrapConfiguration`；migration 不得为 Running 或 Failed | 匿名传输加上一个本地 Bootstrap 凭据 | Setup 策略，客户端 IP 分区 |
-| Bootstrap 更新 | `PUT {v1}/bootstrap` | 仅 `Completed + Succeeded + Reachable` | 具备 Admin 权限的当前管理 cookie | 管理策略，操作员分区 |
+| Bootstrap 更新 | `PUT {v1}/bootstrap` | 仅 `Completed + Succeeded + Reachable` | 具备 Admin 权限的当前管理 cookie；消费方显式启用后，带 `Authorization` 的请求改由其管理 Bearer 方案认证 | 管理策略，操作员分区 |
 | Setup 状态 | `GET`, `HEAD {v1}/setup` | `PendingSetup + Succeeded + Reachable`，或 `Completed + Succeeded + Reachable` | 匿名 | Setup 策略，客户端 IP 分区 |
 | Setup 完成 | `POST {v1}/setup` | 与 Setup 状态相同，使完成后的重放到达稳定的冲突结果 | 匿名传输加上 pending 期间的当前 Setup Code | Setup 策略，客户端 IP 分区 |
 | 登录 | `POST {v1}/session/login` | 仅 `Completed + Succeeded + Reachable` | 匿名传输；消费方登录 adapter 从其受信任的 scoped accessor 获取凭据 | Setup 策略，客户端 IP 分区 |
@@ -129,7 +129,12 @@ restart 闩锁。它不返回任何凭据或配置值。
 
 `PUT {v1}/bootstrap` 绝不是匿名的，也绝不接受 Bootstrap 凭据。它的映射在既有的 Admin 策略之上
 增加固定的管理 cookie 会话策略，因此其授权结论来自主机自身的管理 cookie，而不是消费服务配置的
-任何默认方案；在没有注册该方案的情况下进行映射会在主机启动前失败。在 Ready 的 Gate 快照下，它
+任何默认方案；在没有注册该方案的情况下进行映射会在主机启动前失败。消费方可通过
+`AddServiceMantleBootstrapManagement(options => options.UpdateBearerAuthenticationScheme = ...)`
+显式让该条目改用固定 policy scheme `ServiceMantle.ManagementBootstrapUpdateCredential`：存在任意
+`Authorization` Header 时只由所配置的 Bearer 方案决定（不回退、不合并），否则仍为管理 cookie；
+启动校验要求该条目的有效方案集合恰好为这一个 policy scheme（未启用时恰好为管理 cookie），其余条目
+不受影响，详见 [Bootstrap 管理契约](management-bootstrap.md#可选更新条目接受管理-bearer)。在 Ready 的 Gate 快照下，它
 随后调用 `BootstrapConfigurationManager.UpdateAsync`。成功在原子替换之后返回
 `200 {"restartRequired":true}` 并设置同一个闩锁。Gate 接受之后的 phase 翻转不会撤销已完成的本地
 替换。
