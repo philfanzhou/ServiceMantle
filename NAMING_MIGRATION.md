@@ -9,8 +9,12 @@ ServiceMantle 现在由目录和 namespace 表达一个类型属于哪个模块�
 
 ## 规则
 
-1. 类型的 namespace 是它所在项目的根 namespace 加功能子目录。普通类型不带产品前缀，因为 namespace
-   已经带了。
+1. 类型的 namespace 按能力归属组织：能力 namespace 本身归核心包所有，适配包的自有类型放在对应
+   能力 namespace 的子空间（`ServiceMantle.Logging` 属核心包，`ServiceMantle.Logging.Pipeline`
+   属 Serilog 适配包），框架扩展入口除外（见第 2 条）。普通类型不带产品前缀，因为 namespace
+   已经表达了产品与能力。本条按 [#570](https://github.com/philfanzhou/ServiceMantle/issues/570)
+   固定的能力命名空间政策修订；本文此前条目按当时「项目根 namespace 加功能子目录」的规则交付，
+   历史映射保持原样，#570 各迁移切片的映射随后续切片在本文件增补。
 2. 扩展入口保留它们的框架 namespace（`Microsoft.Extensions.DependencyInjection`、
    `Microsoft.Extensions.Hosting`、`Microsoft.AspNetCore.*`），并且类名与方法名都保留产品前缀——
    `AddServiceMantle*`、`UseServiceMantle*`、`MapServiceMantle*`、`WithServiceMantle*`。这些

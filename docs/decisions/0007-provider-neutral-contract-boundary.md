@@ -2,7 +2,7 @@
 
 - 日期：2026-09-12；状态：已接受；实现由独立 task 交付
 - 决策 issue：[#432](https://github.com/philfanzhou/ServiceMantle/issues/432)
-- 重新评估：[#481](https://github.com/philfanzhou/ServiceMantle/issues/481)
+- 重新评估：[#481](https://github.com/philfanzhou/ServiceMantle/issues/481)（注册传输 SPI）、[#570](https://github.com/philfanzhou/ServiceMantle/issues/570)（能力命名空间）
 - 代码基线：`7d1f98edc7b6a91db77bc4a8ca38312e3c02dfef`
 - 本决策补充 `CONTRIBUTING.md` 的「命名规范」，不改变既有的包边界规则。
 
@@ -27,33 +27,36 @@ ServiceMantle 的初衷是让消费方拿到通用的底层能力，而不必关
 
 **命名空间回答「这个类型是什么」，不回答「哪个包发的」。** 由此得到三类归属：
 
-### A 类：中立契约住在 provider namespace —— 泄漏，必须迁移
+### A 类：中立契约住在适配包 namespace —— 泄漏，必须迁入核心包
 
 判定：消费方必须在**自己的源码**里点名该类型（实现接口、resolve 后调用、catch），
 而该类型的契约中没有任何 provider 特有成分。
 
-### B 类：provider 特有契约住在 provider namespace —— 正确，不得迁移
+### B 类：provider 特有契约留在适配包 —— 正确，不得迁入核心包
 
 判定：契约本身携带该产品的模型（认证方式、端点形状、模板语法）。
 
 把 B 类改成中立名字会**更糟**：它隐藏耦合。消费方看到 `ConsulClientConfiguration`
 就知道自己在跟 Consul 打交道；看到 `RegistryClientConfiguration` 反而会以为可移植，
 直到换 Nacos 时发现 `Token` 的语义对不上（Nacos 用 user/pass）。
-命名要诚实暴露耦合，不是用中立的名字把耦合藏起来。
+命名要诚实暴露耦合，不是用中立的名字把耦合藏起来。#570 之后这层诚实由类型名与包名承担：
+B 类类型的 namespace 按能力命名（见「重新评估：能力命名空间（#570）」），类型名保留产品词。
 
 ### C 类：注册入口住在框架 namespace —— 已全部做到，保持
 
 7 个入口全部位于 `Microsoft.Extensions.DependencyInjection` /
 `Microsoft.Extensions.Hosting`，`AddServiceMantleSerilog` 甚至在签名里写全限定名
 `ServiceMantle.Serilog.SerilogOptions` 以避免逼出 `using`。`samples/` 与 `docs/` 中
-provider 命名的 `using` 数量为 0。
+provider 命名的 `using` 数量为 0。#570 迁移后，签名中的全限定名随新 namespace 同步
+（如 `ServiceMantle.Logging.Pipeline.SerilogOptions`），入口位置与产品辨识方法名不变。
 
 ### 协议名不是库名
 
-`ServiceMantle.OpenTelemetry.Otlp` 与 `.Prometheus` 不是泄漏。OTLP 是 CNCF 线协议，
-Prometheus exposition 是格式标准。换掉 OTel SDK，OTLP 仍在；换掉 Serilog，Serilog
-模板语法就没了。同理 `Meter`/`ActivitySource` 是 BCL，OTel SDK 只是其 listener，
-`ServiceMantle.OpenTelemetry` 指的是「OTel SDK 绑定」，名副其实。
+OTLP 与 Prometheus 的 namespace 不是泄漏（#570 后为 `ServiceMantle.Diagnostics.Export.Otlp`
+与 `.Prometheus`，此前为 `ServiceMantle.OpenTelemetry.Otlp` 与 `.Prometheus`）。OTLP 是 CNCF
+线协议，Prometheus exposition 是格式标准。换掉 OTel SDK，OTLP 仍在；换掉 Serilog，Serilog
+模板语法就没了。同理 `Meter`/`ActivitySource` 是 BCL，OTel SDK 只是其 listener；「OTel SDK
+绑定」由类型名 `OpenTelemetryOptions` 表达，namespace 只说它是诊断能力的导出端。
 
 但「namespace 可接受」不等于「住在这里的每个类型都免迁」。判据看的是**契约**，不是
 namespace 拼写：协议名让 `OtlpOptions` / `OtlpProtocol` 这类**配置契约**留在 `.Otlp`
@@ -103,6 +106,12 @@ namespace 拼写：协议名让 `OtlpOptions` / `OtlpProtocol` 这类**配置契
 
 `OutputTemplate` 保留，但须在 XML 文档注释中明确声明它是 sink 实现相关的逃生舱，
 换实现时不保证兼容。本 ADR 不为它引入中立枚举：目前没有第二个实现来验证该枚举设计。
+
+上表类型的程序集归属不变，namespace 按 #570 的能力命名映射调整：Consul 契约迁往
+`ServiceMantle.Discovery.Registration`，Serilog 与 GrafanaLoki 契约迁往
+`ServiceMantle.Logging.Pipeline` / `ServiceMantle.Logging.Remote`，OTel 契约迁往
+`ServiceMantle.Diagnostics.Instrumentation` / `ServiceMantle.Diagnostics.Export.*`；
+类型名与所携带的 provider 模型保持不变，详见「重新评估：能力命名空间（#570）」。
 
 ### 已考虑并暂缓：中立凭据与寻址模型
 
@@ -158,6 +167,55 @@ registration 与凭据/寻址模型——这等于推翻上文「已考虑并暂
 
 **重评触发条件与中立凭据模型相同：第二个 registry provider 进入实现。** 届时 registrar 接口、
 结果枚举、registration 与凭据/寻址模型一起设计。
+
+### 重新评估：能力命名空间（#570）
+
+本 ADR 初版与 #481 重评都把「provider 命名的 namespace」当作 B 类契约的正当住址。#570
+（2026-09-28）的维护者决策修正了这一点：本 ADR 的核心判据「namespace 回答『这个类型是什么』，
+不回答『哪个包发的』」同样约束 ServiceMantle 自己——`ServiceMantle.Consul`、
+`ServiceMantle.Serilog`、`ServiceMantle.OpenTelemetry`、`ServiceMantle.AspNetCore` 都在用发包
+的技术选型回答「哪个包发的」。据此，可选适配包的自有 namespace 按能力重新命名，#570 固定的
+逐包映射为：
+
+| 包 | 旧自有 namespace | 新 namespace |
+| --- | --- | --- |
+| `ServiceMantle.AspNetCore` | `ServiceMantle.AspNetCore`（含 `Http`、`ManagementApi` 等子空间） | `ServiceMantle.Web`（含 `ServiceMantle.Web.Http` 等子空间） |
+| `ServiceMantle.Consul` | `ServiceMantle.Consul` | `ServiceMantle.Discovery.Registration`、`ServiceMantle.Discovery.Configuration` |
+| `ServiceMantle.Serilog` | `ServiceMantle.Serilog` | `ServiceMantle.Logging.Pipeline` |
+| `ServiceMantle.Serilog`（GrafanaLoki sink） | `ServiceMantle.Serilog.GrafanaLoki` | `ServiceMantle.Logging.Remote` |
+| `ServiceMantle.OpenTelemetry` | `ServiceMantle.OpenTelemetry`、`.Otlp`、`.Prometheus` | `ServiceMantle.Diagnostics.Instrumentation`、`.Export.Otlp`、`.Export.Prometheus` |
+| `ServiceMantle.Persistence.EntityFrameworkCore` | `ServiceMantle.Persistence.EntityFrameworkCore` | `ServiceMantle.Persistence.Relational`（含 `Mapping`、`Stores`、`DataProtection` 子空间） |
+
+**判据不变，住址改变。** A/B/C 三类的判定条件与 #481 的结论全部保持有效：
+
+- **A 类（中立契约）**继续迁入核心包，上移判据收紧为可检查的形式：公开契约**仅当签名只依赖
+  核心包既有类型**时才上移。两个推导实例：`IServiceStartupPhaseResolver` 的签名只依赖核心包
+  `ServiceMantle.Installation` 的 `ServiceStartupPhase` / `ServiceInstallationState`；
+  `IServiceHealthSnapshotSource` 只依赖 `ServiceMantle.Health` 的 `ServiceHealthSnapshot`。
+  反例是 `IServiceDbContext`：签名含 EF Core 的 `DbSet`，留在持久化适配包。名字看起来中立
+  不是上移理由。
+- **B 类（provider 特有契约）**不迁入核心包，类型名保留产品词（`ConsulClientConfiguration`、
+  `SerilogOptions.OutputTemplate`），namespace 从技术选型命名改为能力 namespace 的适配包
+  子空间。诚实命名原则从 namespace 转移到类型名：`ConsulClientConfiguration` 无论住在哪个
+  namespace 都如实暴露 Consul 耦合，把它改名 `RegistryClientConfiguration` 才是伪装。#481
+  改判的注册传输 SPI（`IConsulClient` / `IConsulClientFactory` / `ConsulClientResult`）结论
+  不变，随映射迁往 `ServiceMantle.Discovery.Registration`，不因此变中立。
+- **C 类（注册入口）**不变：仍住框架 namespace，`AddServiceMantle*` 等产品辨识名保持，签名中
+  的全限定名随新 namespace 同步。
+- **协议名不是库名**的结论随映射平移：OTLP 与 Prometheus 子空间现名
+  `ServiceMantle.Diagnostics.Export.Otlp` / `.Prometheus`，仍是标准名而非库名。
+
+**能力 namespace 的所有权。** 能力 namespace 本身归核心包所有（`ServiceMantle.Logging` 属核心
+包），适配包的自有类型放其子空间（`ServiceMantle.Logging.Pipeline` 属 Serilog 适配包）；一个
+namespace 不得跨越两个程序集。
+
+**数据库 provider 例外。** 六个 `ServiceMantle.Database.*` 包的 namespace、包名与实现不在 #570
+适用范围内，保持 provider 命名；其契约由 ADR 0001–0006 系列决策约束。
+
+**交付顺序与过渡状态。** 政策与判据先行交付（#571），六个代码切片随后逐包实施：#572（两个核心
+契约上移）、#573（AspNetCore→Web）、#574（Consul→Discovery）、#575（Serilog→Logging）、
+#576（OpenTelemetry→Diagnostics）、#577（EFCore→Persistence.Relational）。切片合并前主线代码
+仍使用旧 namespace；这是 #570 明确接受的过渡状态，不构成对本判据的违反。
 
 ## 生命周期状态机不在本次范围
 
