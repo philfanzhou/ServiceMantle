@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Xml.Linq;
-using ServiceMantle.Serilog;
+using ServiceMantle.Logging.Pipeline;
 using Xunit;
 
 namespace ServiceMantle.Serilog.Tests;

@@ -1,3 +1,4 @@
+using ServiceMantle.Logging.Pipeline;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;

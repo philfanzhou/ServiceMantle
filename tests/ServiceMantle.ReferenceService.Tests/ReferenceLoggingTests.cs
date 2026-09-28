@@ -12,7 +12,7 @@ using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.Logging;
 using ServiceMantle.ReferenceService.Data;
 using ServiceMantle.ReferenceService.Logging;
-using ServiceMantle.Serilog;
+using ServiceMantle.Logging.Pipeline;
 using Xunit;
 
 namespace ServiceMantle.ReferenceService.Tests;

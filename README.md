@@ -2202,11 +2202,12 @@ does not add disk buffering, unbounded retries, dynamic reload, query APIs, or e
 
 - Replace the package reference with `ServiceMantle.Serilog`. Already published versions of the
   retired package id are untouched; they simply receive no new versions.
-- Public type names, the `ServiceMantle.Serilog.GrafanaLoki` namespace, `AddServiceMantleGrafanaLoki`,
-  defaults, error codes, and configuration validation are unchanged, so no source edit is required
-  for the sink surface itself. The two provider-neutral contracts `IRemoteLogAuthorizationResolver`
-  and `RemoteLogDeliveryDiagnostics` moved to the core `ServiceMantle.Logging` namespace; see
-  `NAMING_MIGRATION.md` for the full rename mapping.
+- Public type names, `AddServiceMantleGrafanaLoki`, defaults, error codes, and configuration
+  validation are unchanged. The adapter's self-owned namespaces are the capability namespaces
+  `ServiceMantle.Logging.Pipeline` (console pipeline) and `ServiceMantle.Logging.Remote` (Grafana
+  Loki sink), so source files update their `using` directives accordingly; the two provider-neutral
+  contracts `IRemoteLogAuthorizationResolver` and `RemoteLogDeliveryDiagnostics` live in the core
+  `ServiceMantle.Logging` namespace. See `NAMING_MIGRATION.md` for the full rename mapping.
 - Recompile. The types moved to a different assembly, so binaries compiled against the retired
   assembly do not bind to the merged one.
 - Installing `ServiceMantle.Serilog` now brings `Serilog.Sinks.Grafana.Loki` in transitively.

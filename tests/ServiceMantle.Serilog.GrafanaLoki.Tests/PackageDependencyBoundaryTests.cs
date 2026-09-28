@@ -3,7 +3,8 @@ using System.Xml.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.Logging;
-using ServiceMantle.Serilog;
+using ServiceMantle.Logging.Pipeline;
+using ServiceMantle.Logging.Remote;
 using Xunit;
 
 namespace ServiceMantle.Serilog.GrafanaLoki.Tests;
@@ -11,7 +12,7 @@ namespace ServiceMantle.Serilog.GrafanaLoki.Tests;
 public sealed class PackageDependencyBoundaryTests
 {
     [Fact]
-    public void Loki_public_surface_ships_in_the_merged_assembly_with_its_namespace_unchanged()
+    public void Loki_public_surface_ships_in_the_merged_assembly_under_the_remote_capability_namespace()
     {
         foreach (var type in new[]
                  {
@@ -21,7 +22,7 @@ public sealed class PackageDependencyBoundaryTests
                  })
         {
             Assert.Equal("ServiceMantle.Serilog", type.Assembly.GetName().Name);
-            Assert.Equal("ServiceMantle.Serilog.GrafanaLoki", type.Namespace);
+            Assert.Equal("ServiceMantle.Logging.Remote", type.Namespace);
         }
 
         Assert.Equal(

@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
 
-namespace ServiceMantle.Serilog.GrafanaLoki;
+namespace ServiceMantle.Logging.Remote;
 
 internal interface ILokiHttpMessageHandlerFactory
 {
