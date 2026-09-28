@@ -1,6 +1,6 @@
 using ServiceMantle.Audit;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Mapping;
 
 /// <summary>
 /// Internal entity storing a management audit record in a shared business database.

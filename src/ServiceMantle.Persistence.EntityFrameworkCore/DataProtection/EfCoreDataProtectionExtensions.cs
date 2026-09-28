@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.DataProtection;
 
 /// <summary>Connects ASP.NET Core Data Protection to ServiceMantle EF Core persistence.</summary>
 public static class EfCoreDataProtectionExtensions

@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using ServiceMantle.Installation;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Mapping;
 using ServiceMantle.ReferenceService.Data;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.Testing;

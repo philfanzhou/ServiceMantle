@@ -1,4 +1,4 @@
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.DataProtection;
 
 internal sealed class DataProtectionKeyEntity
 {

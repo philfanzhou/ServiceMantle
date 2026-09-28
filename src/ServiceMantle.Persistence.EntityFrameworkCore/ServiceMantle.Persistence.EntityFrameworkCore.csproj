@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <RootNamespace>ServiceMantle.Persistence.EntityFrameworkCore</RootNamespace>
+    <RootNamespace>ServiceMantle.Persistence.Relational</RootNamespace>
     <AssemblyName>ServiceMantle.Persistence.EntityFrameworkCore</AssemblyName>
     <PackageId>ServiceMantle.Persistence.EntityFrameworkCore</PackageId>
     <IsPackable>true</IsPackable>

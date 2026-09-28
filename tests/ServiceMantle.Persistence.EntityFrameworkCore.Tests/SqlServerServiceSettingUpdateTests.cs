@@ -6,6 +6,7 @@ using ServiceMantle.Testing;
 using Testcontainers.MsSql;
 using Xunit;
 using static ServiceMantle.Persistence.EntityFrameworkCore.Tests.ServiceSettingUpdateTests;
+using ServiceMantle.Persistence.Relational.Mapping;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests;
 

@@ -1,7 +1,8 @@
+using ServiceMantle.Persistence.Relational.Mapping;
 using Microsoft.EntityFrameworkCore;
 using ServiceMantle.Audit;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Stores;
 
 /// <summary>
 /// EF Core-based <see cref="IManagementAuditWriter"/> that stages audit records on the caller's

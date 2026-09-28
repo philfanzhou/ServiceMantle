@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using ServiceMantle.Configuration;
 using ServiceMantle.Management;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Stores;
 using ServiceMantle.ReferenceService.Configuration;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.ReferenceService.Management;

@@ -1,3 +1,4 @@
+using ServiceMantle.Persistence.Relational.Mapping;
 using System.Collections.ObjectModel;
 using System.Data.Common;
 using System.Text.Json;
@@ -5,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using ServiceMantle.Configuration;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Stores;
 
 /// <summary>
 /// Stores one complete shared setting aggregate per service with optimistic concurrency.

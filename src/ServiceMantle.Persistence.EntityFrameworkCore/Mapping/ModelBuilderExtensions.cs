@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Mapping;
 
 /// <summary>
 /// Adds ServiceMantle entity configuration to application models.

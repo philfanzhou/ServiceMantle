@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging;
 using ServiceMantle.AspNetCore.Management;
 using ServiceMantle.Audit;
 using ServiceMantle.Management;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.DataProtection;
 using ServiceMantle.Testing;
 using Testcontainers.MsSql;
 using Xunit;

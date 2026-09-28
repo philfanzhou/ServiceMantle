@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using ServiceMantle.Audit;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Mapping;
 
 /// <summary>
 /// Adds ServiceMantle management audit entity configuration to application models.

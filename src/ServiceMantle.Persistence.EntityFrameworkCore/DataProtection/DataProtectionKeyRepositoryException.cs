@@ -1,4 +1,4 @@
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.DataProtection;
 
 /// <summary>Defines stable, non-sensitive Data Protection key repository failure codes.</summary>
 public static class WellKnownDataProtectionKeyRepositoryErrorCodes

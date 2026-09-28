@@ -358,3 +358,71 @@ ADR 0007 判定为 A 类的 `ConsulLifecycleOptions` 迁入核心包，成为 pr
 | `ServiceMantle.Serilog.Tests.ServiceMantleCoreOptionalCompositionTests` | `ServiceMantle.Serilog.Tests.CoreOptionalCompositionTests` |
 | `ServiceMantle.Serilog.Tests.ServiceMantleSerilogConsoleCollection` | `ServiceMantle.Serilog.Tests.SerilogConsoleCollection` |
 | `ServiceMantle.Serilog.Tests.ServiceMantleSerilogHostTests` | `ServiceMantle.Serilog.Tests.SerilogHostTests` |
+
+## EF Core 持久化能力命名空间迁移（#577）
+
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+`ServiceMantle.Persistence.EntityFrameworkCore` 包的自有 namespace 迁往
+`ServiceMantle.Persistence.Relational` 及其子空间。包 ID、程序集名
+`ServiceMantle.Persistence.EntityFrameworkCore`、依赖与运行时行为不变；数据库表列名、迁移锁键
+前缀、Data Protection purpose、错误码、`InternalsVisibleTo` 全部零变化。这是源码与二进制破坏性
+变更，只在后续新版本交付，不覆盖历史版本。
+
+### namespace 迁移
+
+| 原 namespace | 新 namespace |
+| --- | --- |
+| `ServiceMantle.Persistence.EntityFrameworkCore`（`IServiceDbContext.cs`，消费方实现的根契约） | `ServiceMantle.Persistence.Relational` |
+| `ServiceMantle.Persistence.EntityFrameworkCore`（实体与模型映射 9 个文件） | `ServiceMantle.Persistence.Relational.Mapping` |
+| `ServiceMantle.Persistence.EntityFrameworkCore`（读写服务与 store 7 个文件） | `ServiceMantle.Persistence.Relational.Stores` |
+| `ServiceMantle.Persistence.EntityFrameworkCore`（Data Protection 密钥环 5 个文件） | `ServiceMantle.Persistence.Relational.DataProtection` |
+
+目录随 namespace 调整为 `Mapping/`、`Stores/`、`DataProtection/`（契约文件留包根），
+`<RootNamespace>` 改为 `ServiceMantle.Persistence.Relational`。`PersistKeysToServiceMantleEfCore`
+方法名与 `EfCoreDataProtectionExtensions` 类名保持（本文件例外表先例）；`IServiceDbContext` 不上移
+核心包（签名含 EF Core `DbSet`）。
+
+### 公开 API 映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.Persistence.EntityFrameworkCore.IServiceDbContext` | `ServiceMantle.Persistence.Relational.IServiceDbContext` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ModelBuilderExtensions` | `ServiceMantle.Persistence.Relational.Mapping.ModelBuilderExtensions` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ServiceInstallationEntity` | `ServiceMantle.Persistence.Relational.Mapping.ServiceInstallationEntity` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ServiceSettingModelBuilderExtensions` | `ServiceMantle.Persistence.Relational.Mapping.ServiceSettingModelBuilderExtensions` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ManagementAuditModelBuilderExtensions` | `ServiceMantle.Persistence.Relational.Mapping.ManagementAuditModelBuilderExtensions` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ManagementAuditDatabaseDialect` | `ServiceMantle.Persistence.Relational.Mapping.ManagementAuditDatabaseDialect` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.DataProtectionKeyModelBuilderExtensions` | `ServiceMantle.Persistence.Relational.DataProtection.DataProtectionKeyModelBuilderExtensions` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.WellKnownDataProtectionKeyRepositoryErrorCodes` | `ServiceMantle.Persistence.Relational.DataProtection.WellKnownDataProtectionKeyRepositoryErrorCodes` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.DataProtectionKeyRepositoryException` | `ServiceMantle.Persistence.Relational.DataProtection.DataProtectionKeyRepositoryException` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.EfCoreDataProtectionExtensions` | `ServiceMantle.Persistence.Relational.DataProtection.EfCoreDataProtectionExtensions` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.EfCoreDataProtectionKeyRepository` | `ServiceMantle.Persistence.Relational.DataProtection.EfCoreDataProtectionKeyRepository` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.EfCoreManagementAuditQueryService` | `ServiceMantle.Persistence.Relational.Stores.EfCoreManagementAuditQueryService` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.EfCoreManagementAuditWriter` | `ServiceMantle.Persistence.Relational.Stores.EfCoreManagementAuditWriter` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.EfCoreServiceInstallationStore` | `ServiceMantle.Persistence.Relational.Stores.EfCoreServiceInstallationStore` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.EfCoreServiceSettingStore` | `ServiceMantle.Persistence.Relational.Stores.EfCoreServiceSettingStore` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.EfCoreServiceSettingUpdateTransaction` | `ServiceMantle.Persistence.Relational.Stores.EfCoreServiceSettingUpdateTransaction` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.EfCoreServiceSetupCodeStore` | `ServiceMantle.Persistence.Relational.Stores.EfCoreServiceSetupCodeStore` |
+
+### 内部类型映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ServiceInstallationEntityStateMapper` | `ServiceMantle.Persistence.Relational.Mapping.ServiceInstallationEntityStateMapper` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ServiceSettingEntity` | `ServiceMantle.Persistence.Relational.Mapping.ServiceSettingEntity` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ManagementAuditEntityMapper` | `ServiceMantle.Persistence.Relational.Mapping.ManagementAuditEntityMapper` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ManagementAuditLogEntity` | `ServiceMantle.Persistence.Relational.Mapping.ManagementAuditLogEntity` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ManagementAuditDatabaseFunctions` | `ServiceMantle.Persistence.Relational.Mapping.ManagementAuditDatabaseFunctions` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.DataProtectionKeyEntity` | `ServiceMantle.Persistence.Relational.DataProtection.DataProtectionKeyEntity` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ManagementAuditBoundedRow` | `ServiceMantle.Persistence.Relational.Stores.ManagementAuditBoundedRow` |
+| `ServiceMantle.Persistence.EntityFrameworkCore.ManagementAuditContinuationCursor` | `ServiceMantle.Persistence.Relational.Stores.ManagementAuditContinuationCursor` |
+
+### 名称敏感反射与快照
+
+- `tests/ServiceMantle.Tests` 的 SignaCore 遗留迁移清单测试以
+  `typeof(ServiceMantle.Persistence.EntityFrameworkCore.EfCoreManagementAuditWriter<>)` 定位替换程序集，
+  随类型全名同步为 `ServiceMantle.Persistence.Relational.Stores.EfCoreManagementAuditWriter<>`；清单
+  数据本身不含旧 namespace。
+- ReferenceService 的 EF Core 迁移历史文件（`Migrations/*.cs`）中的实体全名字符串是消费方拥有的
+  历史记录，按「已应用迁移不回改」保持原样；表名与列名为显式映射，relational 模型按表名比较，实体
+  CLR 全名变化不产生 schema 差异。

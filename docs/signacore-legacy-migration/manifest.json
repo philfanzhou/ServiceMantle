@@ -558,7 +558,7 @@
         }
       ],
       "replacement": {
-        "reference": "ServiceMantle.Persistence.EntityFrameworkCore.EfCoreManagementAuditWriter<TDbContext>",
+        "reference": "ServiceMantle.Persistence.Relational.Stores.EfCoreManagementAuditWriter<TDbContext>",
         "state": "implemented"
       },
       "prerequisites": ["#98", "#100", "#101"],

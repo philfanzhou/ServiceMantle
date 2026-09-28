@@ -1,8 +1,9 @@
+using ServiceMantle.Persistence.Relational.Mapping;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Stores;
 
 /// <summary>
 /// EF Core-based implementation for shared service installation state.

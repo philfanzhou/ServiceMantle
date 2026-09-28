@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using ServiceMantle.Configuration;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Stores;
 using ServiceMantle.Testing;
 using Testcontainers.PostgreSql;
 using Xunit;
+using ServiceMantle.Persistence.Relational.Mapping;
 
 namespace ServiceMantle.Database.PostgreSql.Tests;
 

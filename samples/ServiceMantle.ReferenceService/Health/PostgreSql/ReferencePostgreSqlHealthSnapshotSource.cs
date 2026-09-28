@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Stores;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 
 namespace ServiceMantle.ReferenceService.Health.PostgreSql;

@@ -1,4 +1,4 @@
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Mapping;
 
 internal sealed class ServiceSettingEntity
 {

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Mapping;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational;
 
 /// <summary>
 /// Contract that a business DbContext must implement for ServiceMantle installation persistence.

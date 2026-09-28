@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.DataProtection;
 
 /// <summary>Adds encrypted ASP.NET Core Data Protection key persistence to consuming EF Core models.</summary>
 public static class DataProtectionKeyModelBuilderExtensions
