@@ -1,4 +1,4 @@
-namespace ServiceMantle.OpenTelemetry.Prometheus;
+namespace ServiceMantle.Diagnostics.Export.Prometheus;
 
 /// <summary>Configures the authorized ServiceMantle Prometheus scraping endpoint.</summary>
 public sealed class PrometheusOptions

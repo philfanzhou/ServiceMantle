@@ -1,4 +1,4 @@
-namespace ServiceMantle.OpenTelemetry;
+namespace ServiceMantle.Diagnostics.Instrumentation;
 
 /// <summary>
 /// Configures the explicitly enabled OpenTelemetry instrumentation owned by ServiceMantle.

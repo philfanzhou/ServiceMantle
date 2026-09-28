@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.Web;
 using ServiceMantle.Diagnostics;
-using ServiceMantle.OpenTelemetry.Otlp;
+using ServiceMantle.Diagnostics.Export.Otlp;
 
 namespace ServiceMantle.ReferenceService.Telemetry;
 

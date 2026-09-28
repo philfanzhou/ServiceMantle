@@ -376,8 +376,8 @@ public sealed class ReferenceTelemetryTests
 
     private static bool IsExporterOwned(Type? type) =>
         type?.Namespace is { } space &&
-        (space.StartsWith("ServiceMantle.OpenTelemetry.Otlp", StringComparison.Ordinal) ||
-            space.StartsWith("ServiceMantle.OpenTelemetry.Prometheus", StringComparison.Ordinal) ||
+        (space.StartsWith("ServiceMantle.Diagnostics.Export.Otlp", StringComparison.Ordinal) ||
+            space.StartsWith("ServiceMantle.Diagnostics.Export.Prometheus", StringComparison.Ordinal) ||
             space.StartsWith("OpenTelemetry.Exporter", StringComparison.Ordinal));
 
     /// <summary>

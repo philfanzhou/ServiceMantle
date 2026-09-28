@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Diagnostics;
+using ServiceMantle.Diagnostics.Export.Otlp;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Otlp.Tests;
@@ -7,7 +8,7 @@ namespace ServiceMantle.OpenTelemetry.Otlp.Tests;
 public sealed class PackageDependencyBoundaryTests
 {
     [Fact]
-    public void Otlp_public_surface_ships_in_the_merged_assembly_with_its_namespace_unchanged()
+    public void Otlp_public_surface_ships_in_the_merged_assembly_under_its_dedicated_namespace()
     {
         foreach (var type in new[]
                  {
@@ -18,7 +19,7 @@ public sealed class PackageDependencyBoundaryTests
                  })
         {
             Assert.Equal("ServiceMantle.OpenTelemetry", type.Assembly.GetName().Name);
-            Assert.Equal("ServiceMantle.OpenTelemetry.Otlp", type.Namespace);
+            Assert.Equal("ServiceMantle.Diagnostics.Export.Otlp", type.Namespace);
         }
 
         Assert.Equal(

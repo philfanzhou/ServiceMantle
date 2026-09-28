@@ -761,3 +761,88 @@ namespace 同步（如 `ServiceMantle.Logging.Pipeline.SerilogOptions`）。目�
   所需框架 namespace（暴露 CS0104）；`opentelemetry`、`provider-neutral` 项目保持不 using 任何适配包
   自有 namespace 的既有约束（`provider-neutral` 的约束注释随本切片改述为不以 `ServiceMantle.Web`
   点名 #572 上移契约）。
+
+## OpenTelemetry 能力命名空间迁移（#576）
+
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+`ServiceMantle.OpenTelemetry` 包的自有 namespace 迁往 `ServiceMantle.Diagnostics` 能力 namespace 的
+适配包子空间。包 ID、程序集名 `ServiceMantle.OpenTelemetry`、依赖（含 OpenTelemetry SDK 依赖）与
+运行时行为不变；OTLP 配置节名 `ServiceMantle.Otlp.Traces` / `ServiceMantle.Otlp.Metrics`、meter 名
+`ServiceMantle` 与全部指标名、Prometheus scrape 路由与 Header、`otlp.*` / `prometheus.*` 错误码、
+`InternalsVisibleTo` 全部零变化。这是源码与二进制破坏性变更，只在后续新版本交付，不覆盖历史版本。
+
+### namespace 迁移
+
+| 原 namespace | 新 namespace |
+| --- | --- |
+| `ServiceMantle.OpenTelemetry`（根 2 个文件：插桩选项、注册与启动校验） | `ServiceMantle.Diagnostics.Instrumentation` |
+| `ServiceMantle.OpenTelemetry.Otlp`（3 个文件：OTLP 选项、错误码、运行时） | `ServiceMantle.Diagnostics.Export.Otlp` |
+| `ServiceMantle.OpenTelemetry.Prometheus`（5 个文件：Prometheus 选项、默认值、错误码、注册快照、scrape 门） | `ServiceMantle.Diagnostics.Export.Prometheus` |
+
+`Microsoft.Extensions.DependencyInjection` 的 4 个入口与 `Microsoft.AspNetCore.Builder` 的 1 个
+入口不变（框架 namespace 入口，类名与方法名保留产品辨识名）；仅其中的 `using` 行随新 namespace
+同步。目录调整为根文件移入 `Instrumentation/`（`Otlp/`、`Prometheus/` 目录名与子空间末段一致，
+保持不变），`<RootNamespace>` 改为 `ServiceMantle.Diagnostics.Instrumentation`。能力 namespace
+层次：`ServiceMantle.Diagnostics` 与 `ServiceMantle.Diagnostics.Instrumentation` 中的核心自有类型
+（`ServiceMetrics` 等，见上文 #433/#443 映射）归核心包，子空间 `Instrumentation` / `Export.Otlp` /
+`Export.Prometheus` 归 OpenTelemetry 适配包，互不跨越程序集。OTLP 与 Prometheus 是标准协议名而非
+库名，住 `Export` 子空间（ADR 0007「协议名不是库名」）。
+
+### 公开 API 映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.OpenTelemetry.OpenTelemetryOptions` | `ServiceMantle.Diagnostics.Instrumentation.OpenTelemetryOptions` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpOptions` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpOptions` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpProtocol` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpProtocol` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpSignalOptions` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpSignalOptions` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpTraceOptions` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpTraceOptions` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpMetricOptions` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpMetricOptions` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpConfigurationException` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpConfigurationException` |
+| `ServiceMantle.OpenTelemetry.Otlp.WellKnownOtlpErrorCodes` | `ServiceMantle.Diagnostics.Export.Otlp.WellKnownOtlpErrorCodes` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusOptions` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusOptions` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusDefaults` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusDefaults` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusConfigurationException` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusConfigurationException` |
+| `ServiceMantle.OpenTelemetry.Prometheus.WellKnownPrometheusErrorCodes` | `ServiceMantle.Diagnostics.Export.Prometheus.WellKnownPrometheusErrorCodes` |
+
+### 内部类型映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.OpenTelemetry.OpenTelemetryRegistration` | `ServiceMantle.Diagnostics.Instrumentation.OpenTelemetryRegistration` |
+| `ServiceMantle.OpenTelemetry.OpenTelemetryRegistrationValidator` | `ServiceMantle.Diagnostics.Instrumentation.OpenTelemetryRegistrationValidator` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpSignal` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpSignal` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpSignalRegistration` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpSignalRegistration` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpRegistration` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpRegistration` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpSignalConfiguration` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpSignalConfiguration` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpRuntime` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpRuntime` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpOptionsConfigurator` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpOptionsConfigurator` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpStartupValidator` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpStartupValidator` |
+| `ServiceMantle.OpenTelemetry.Otlp.OtlpNames` | `ServiceMantle.Diagnostics.Export.Otlp.OtlpNames` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusRegistration` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusRegistration` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusSnapshot` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusSnapshot` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusSnapshotProvider` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusSnapshotProvider` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusExporterOptionsPolicy` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusExporterOptionsPolicy` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusEndpointState` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusEndpointState` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusEndpointMetadata` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusEndpointMetadata` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusScrapeGate` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusScrapeGate` |
+| `ServiceMantle.OpenTelemetry.Prometheus.PrometheusStartupValidator` | `ServiceMantle.Diagnostics.Export.Prometheus.PrometheusStartupValidator` |
+
+类型名全部保留（`OpenTelemetryOptions`、`OtlpOptions` 等协议与模块词是调用方同时引用多个同类
+options 时的唯一区分；`Otlp*` / `Prometheus*` 前缀诚实暴露协议契约归属）。
+
+### 名称敏感反射与消费编译
+
+- 三个测试项目（`ServiceMantle.OpenTelemetry.Tests|Otlp.Tests|Prometheus.Tests`）的程序集名与
+  namespace 保持不变（`InternalsVisibleTo` 字符串契约零变化，含核心包指向程序集名
+  `ServiceMantle.OpenTelemetry` 的既有条目）；其中的 `using` 与 `typeof(...).Namespace` 断言随新
+  namespace 同步，两个 `PackageDependencyBoundaryTests` 的测试名从
+  `with_its_namespace_unchanged` 改述为 `under_its_dedicated_namespace`（断言对象从"合并程序集后
+  namespace 不变"变为"合并程序集内 namespace 独立"，装配名断言不变）。
+- `tests/ServiceMantle.ReferenceService.Tests` 的 namespace 前缀断言（`IsOtlpOwned`、
+  `IsPrometheusOwned`、`IsExporterOwned`）随新 namespace 同步；`ReferencePackageSmokeTests` 的
+  装配名断言与 `ReferenceServiceTests` 的 csproj 路径为装配/路径契约，不变。
+- `eng/tests/consumers` 的 `composed` 项目三个 using 随新 namespace 更新并继续同时 using 所需框架
+  namespace；`opentelemetry` 项目保持不 using 任何适配包自有 namespace 的既有约束，其约束注释随
+  本切片改述为新 namespace 名（`ServiceMantle.Diagnostics.Instrumentation` /
+  `.Export.Otlp`）；`provider-neutral` 项目仅持有包引用，包 ID 不变，无需改动。

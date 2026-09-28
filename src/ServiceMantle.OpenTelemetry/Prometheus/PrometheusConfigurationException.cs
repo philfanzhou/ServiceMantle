@@ -1,4 +1,4 @@
-namespace ServiceMantle.OpenTelemetry.Prometheus;
+namespace ServiceMantle.Diagnostics.Export.Prometheus;
 
 /// <summary>Defines stable Prometheus endpoint configuration error codes.</summary>
 public static class WellKnownPrometheusErrorCodes

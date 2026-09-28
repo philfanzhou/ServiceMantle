@@ -5,7 +5,7 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Trace;
 using ServiceMantle.Diagnostics;
 
-namespace ServiceMantle.OpenTelemetry.Otlp;
+namespace ServiceMantle.Diagnostics.Export.Otlp;
 
 internal enum OtlpSignal
 {

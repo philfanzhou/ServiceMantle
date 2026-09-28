@@ -309,7 +309,7 @@ public sealed class ReferencePrometheusTests : IAsyncLifetime
 
     private static bool IsPrometheusOwned(Type? type) =>
         type?.Namespace is { } space &&
-        space.StartsWith("ServiceMantle.OpenTelemetry.Prometheus", StringComparison.Ordinal);
+        space.StartsWith("ServiceMantle.Diagnostics.Export.Prometheus", StringComparison.Ordinal);
 
     private static void AssertNoSecret(string body)
     {

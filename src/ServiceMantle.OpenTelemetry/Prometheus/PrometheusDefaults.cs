@@ -1,4 +1,4 @@
-namespace ServiceMantle.OpenTelemetry.Prometheus;
+namespace ServiceMantle.Diagnostics.Export.Prometheus;
 
 /// <summary>Defines the fixed ServiceMantle Prometheus endpoint limits.</summary>
 public static class PrometheusDefaults

@@ -1,4 +1,4 @@
-namespace ServiceMantle.OpenTelemetry.Otlp;
+namespace ServiceMantle.Diagnostics.Export.Otlp;
 
 /// <summary>Identifies the supported OTLP transport protocols.</summary>
 public enum OtlpProtocol
