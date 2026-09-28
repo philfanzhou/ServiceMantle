@@ -3,12 +3,14 @@
 // contract through the neutral namespaces only - the telemetry contracts and the phase publisher
 // through ServiceMantle.Diagnostics, the log authorization resolver and delivery diagnostics
 // through ServiceMantle.Logging, and the registration lifecycle timing through
-// ServiceMantle.Discovery. Next to those, the framework namespaces the entries live in are all
-// in scope: the Web SDK implicit usings plus explicit Microsoft.Extensions.DependencyInjection,
-// Microsoft.Extensions.Hosting, Microsoft.Extensions.Logging, and
-// Microsoft.AspNetCore.Authorization. Any category-A type that moved back into a provider-named
-// namespace, or that collides with a framework type of the same name, fails this file at compile
-// time instead of a consumer's.
+// ServiceMantle.Discovery. The two contracts uplifted from the ASP.NET Core adapter (#572), the
+// startup phase resolver and the health snapshot source, are named through
+// ServiceMantle.Installation and ServiceMantle.Health. Next to those, the framework namespaces
+// the entries live in are all in scope: the Web SDK implicit usings plus explicit
+// Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Hosting,
+// Microsoft.Extensions.Logging, and Microsoft.AspNetCore.Authorization. Any category-A type that
+// moved back into a provider-named namespace, or that collides with a framework type of the same
+// name, fails this file at compile time instead of a consumer's.
 //
 // Provider names appear in exactly two places: the package references in Consumer.csproj and the
 // Add*() method names below. The remote endpoints are deliberately invalid hosts; nothing here
@@ -20,6 +22,7 @@ using Microsoft.Extensions.Logging;
 using ServiceMantle;
 using ServiceMantle.Diagnostics;
 using ServiceMantle.Discovery;
+using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using ServiceMantle.Logging;
 
@@ -36,6 +39,12 @@ try
     builder.Services.AddSingleton<IRemoteLogAuthorizationResolver, NeutralLogResolver>();
     builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
         new FixedTelemetryResolver("trace-auth", "provider-neutral-placeholder"));
+
+    // The two contracts uplifted from the ASP.NET Core adapter into the core package (#572): the
+    // consumer-owned health snapshot source is implemented and registered through
+    // ServiceMantle.Health, next to the framework usings above, without any
+    // ServiceMantle.AspNetCore* namespace in scope.
+    builder.Services.AddSingleton<IServiceHealthSnapshotSource, NeutralSnapshotSource>();
 
     var serviceMantle = builder.Services.AddServiceMantle(
         ServiceId.Parse("provider-neutral-consumer"),
@@ -70,10 +79,18 @@ try
     // The delivery diagnostics counter is named unqualified through ServiceMantle.Logging and
     // read without asserting any values.
     var deliveryDiagnostics = application.Services.GetRequiredService<RemoteLogDeliveryDiagnostics>();
+
+    // The uplifted startup phase resolver (#572) is named unqualified through
+    // ServiceMantle.Installation and resolved from the AddServiceMantle registration; the
+    // resolved interface's assembly is the assertion, the phase value is incidental.
+    var phaseResolver = application.Services.GetRequiredService<IServiceStartupPhaseResolver>();
+    _ = phaseResolver.Resolve(hasBootstrapConfiguration: false, installationState: null);
+
     Console.WriteLine(
         "Provider-neutral consumer started with all three optional provider packages: the " +
-        $"phase publisher resolved as {typeof(ServiceMetrics).FullName}, and the delivery " +
-        $"diagnostics report {deliveryDiagnostics}.");
+        $"phase publisher resolved as {typeof(ServiceMetrics).FullName}, the delivery " +
+        $"diagnostics report {deliveryDiagnostics}, and the phase resolver interface is " +
+        $"{typeof(IServiceStartupPhaseResolver).FullName}.");
 
     await application.StopAsync();
 }
@@ -111,6 +128,18 @@ Console.WriteLine(
 sealed class NeutralLogResolver : IRemoteLogAuthorizationResolver
 {
     public string? ResolveAuthorizationHeader(string name) => "Bearer provider-neutral-placeholder";
+}
+
+// The uplifted health snapshot contract from ServiceMantle.Health (#572): the consumer owns the
+// snapshot; the values here are placeholders, and the source is never resolved by this program.
+sealed class NeutralSnapshotSource : IServiceHealthSnapshotSource
+{
+    public ValueTask<ServiceHealthSnapshot> GetSnapshotAsync(
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(new ServiceHealthSnapshot(
+            ServiceStartupPhase.Completed,
+            ServiceMigrationReadinessState.Succeeded,
+            ServiceDatabaseReadinessState.Reachable));
 }
 
 // The neutral telemetry authentication contract from ServiceMantle.Diagnostics: the provider
