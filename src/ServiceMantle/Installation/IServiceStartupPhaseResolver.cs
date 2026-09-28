@@ -1,6 +1,4 @@
-using ServiceMantle.Installation;
-
-namespace ServiceMantle.AspNetCore;
+namespace ServiceMantle.Installation;
 
 /// <summary>
 /// Resolves the core startup phase for host-level gates without coupling the core package to ASP.NET Core.
@@ -13,12 +11,4 @@ public interface IServiceStartupPhaseResolver
     ServiceStartupPhase Resolve(
         bool hasBootstrapConfiguration,
         ServiceInstallationState? installationState);
-}
-
-internal sealed class DefaultServiceStartupPhaseResolver : IServiceStartupPhaseResolver
-{
-    public ServiceStartupPhase Resolve(
-        bool hasBootstrapConfiguration,
-        ServiceInstallationState? installationState) =>
-        ServiceStartupPhaseResolver.Resolve(hasBootstrapConfiguration, installationState);
 }
