@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <RootNamespace>ServiceMantle.Consul</RootNamespace>
+    <RootNamespace>ServiceMantle.Discovery.Registration</RootNamespace>
     <AssemblyName>ServiceMantle.Consul</AssemblyName>
     <PackageId>ServiceMantle.Consul</PackageId>
     <PackageDescription>Optional snapshot-bound Consul client and registration contracts for ServiceMantle.</PackageDescription>

@@ -3,7 +3,8 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Configuration;
-using ServiceMantle.Consul;
+using ServiceMantle.Discovery.Configuration;
+using ServiceMantle.Discovery.Registration;
 using ServiceMantle.Discovery;
 using Xunit;
 

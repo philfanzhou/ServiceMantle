@@ -1,4 +1,4 @@
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Registration;
 
 /// <summary>Owns one snapshot-bound client and projects all transport failures to safe results.</summary>
 /// <remarks>Dispose after all operations finish. Disposing does not deregister the service.</remarks>

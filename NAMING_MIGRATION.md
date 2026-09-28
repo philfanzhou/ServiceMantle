@@ -358,3 +358,56 @@ ADR 0007 判定为 A 类的 `ConsulLifecycleOptions` 迁入核心包，成为 pr
 | `ServiceMantle.Serilog.Tests.ServiceMantleCoreOptionalCompositionTests` | `ServiceMantle.Serilog.Tests.CoreOptionalCompositionTests` |
 | `ServiceMantle.Serilog.Tests.ServiceMantleSerilogConsoleCollection` | `ServiceMantle.Serilog.Tests.SerilogConsoleCollection` |
 | `ServiceMantle.Serilog.Tests.ServiceMantleSerilogHostTests` | `ServiceMantle.Serilog.Tests.SerilogHostTests` |
+
+## Consul 能力命名空间迁移（#574）
+
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+`ServiceMantle.Consul` 包的自有 namespace 迁往能力 namespace。包 ID、程序集名
+`ServiceMantle.Consul`、依赖与运行时行为不变；`discovery.*` 设置键、诊断码、HTTP 路径与
+Header、wire 字段、`InternalsVisibleTo` 全部零变化。这是源码与二进制破坏性变更，只在后续
+新版本交付，不覆盖历史版本。
+
+### namespace 迁移
+
+| 原 namespace | 新 namespace |
+| --- | --- |
+| `ServiceMantle.Consul`（10 个文件：client 契约、client、异常、生命周期状态机、快照绑定） | `ServiceMantle.Discovery.Registration` |
+| `ServiceMantle.Consul`（`ConsulSettingDefinitions.cs`，设置目录与校验） | `ServiceMantle.Discovery.Configuration` |
+
+`Microsoft.Extensions.DependencyInjection.ServiceMantleConsulServiceCollectionExtensions` 不变
+（框架 namespace 入口，类名保留产品前缀）。目录随 namespace 调整为
+`src/ServiceMantle.Consul/Registration/` 与 `src/ServiceMantle.Consul/Configuration/`，
+`<RootNamespace>` 改为 `ServiceMantle.Discovery.Registration`。
+
+### 公开 API 映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.Consul.ConsulServiceRegistration` | `ServiceMantle.Discovery.Registration.ConsulServiceRegistration` |
+| `ServiceMantle.Consul.ConsulClientConfiguration` | `ServiceMantle.Discovery.Registration.ConsulClientConfiguration` |
+| `ServiceMantle.Consul.ConsulClientResult` | `ServiceMantle.Discovery.Registration.ConsulClientResult` |
+| `ServiceMantle.Consul.IConsulClient` | `ServiceMantle.Discovery.Registration.IConsulClient` |
+| `ServiceMantle.Consul.IConsulClientFactory` | `ServiceMantle.Discovery.Registration.IConsulClientFactory` |
+| `ServiceMantle.Consul.ConsulClientProvider` | `ServiceMantle.Discovery.Registration.ConsulClientProvider` |
+| `ServiceMantle.Consul.ConsulClientSession` | `ServiceMantle.Discovery.Registration.ConsulClientSession` |
+| `ServiceMantle.Consul.ConsulConfigurationError` | `ServiceMantle.Discovery.Registration.ConsulConfigurationError` |
+| `ServiceMantle.Consul.ConsulConfigurationException` | `ServiceMantle.Discovery.Registration.ConsulConfigurationException` |
+| `ServiceMantle.Consul.ConsulHttpClientFactory` | `ServiceMantle.Discovery.Registration.ConsulHttpClientFactory` |
+| `ServiceMantle.Consul.ConsulLifecycleState` | `ServiceMantle.Discovery.Registration.ConsulLifecycleState` |
+| `ServiceMantle.Consul.ConsulRemotePresence` | `ServiceMantle.Discovery.Registration.ConsulRemotePresence` |
+| `ServiceMantle.Consul.ConsulSettingDefinitions` | `ServiceMantle.Discovery.Configuration.ConsulSettingDefinitions` |
+
+### 内部类型映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.Consul.ConsulInstanceAdvertisement` | `ServiceMantle.Discovery.Registration.ConsulInstanceAdvertisement` |
+| `ServiceMantle.Consul.ConsulLifecycleSettings` | `ServiceMantle.Discovery.Registration.ConsulLifecycleSettings` |
+| `ServiceMantle.Consul.ConsulLifecycleDiagnostics` | `ServiceMantle.Discovery.Registration.ConsulLifecycleDiagnostics` |
+| `ServiceMantle.Consul.ConsulLifecycleDiagnostic` | `ServiceMantle.Discovery.Registration.ConsulLifecycleDiagnostic` |
+| `ServiceMantle.Consul.ConsulLifecycleObserver` | `ServiceMantle.Discovery.Registration.ConsulLifecycleObserver` |
+| `ServiceMantle.Consul.ConsulRegistrationLifecycle` | `ServiceMantle.Discovery.Registration.ConsulRegistrationLifecycle` |
+| `ServiceMantle.Consul.ConsulSnapshotBinding` | `ServiceMantle.Discovery.Registration.ConsulSnapshotBinding` |
+| `ServiceMantle.Consul.ConsulSnapshotSourceSelection` | `ServiceMantle.Discovery.Registration.ConsulSnapshotSourceSelection` |
+
+类型名全部保留（含 `Consul` 产品词，B 类契约由类型名诚实暴露耦合）。

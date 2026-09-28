@@ -1,6 +1,6 @@
 using ServiceMantle.Discovery;
 
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Registration;
 
 /// <summary>The finite control state of the Consul registration lifecycle.</summary>
 public enum ConsulLifecycleState
