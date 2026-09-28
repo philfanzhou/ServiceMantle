@@ -31,8 +31,8 @@ using ServiceMantle.OpenTelemetry;
 using ServiceMantle.OpenTelemetry.Otlp;
 using ServiceMantle.OpenTelemetry.Prometheus;
 using ServiceMantle.Persistence.EntityFrameworkCore;
-using ServiceMantle.Serilog;
-using ServiceMantle.Serilog.GrafanaLoki;
+using ServiceMantle.Logging.Pipeline;
+using ServiceMantle.Logging.Remote;
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-consumer");
 try

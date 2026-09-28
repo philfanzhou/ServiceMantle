@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging;
 using Serilog.Events;
 using Serilog.Formatting.Display;
 
-namespace ServiceMantle.Serilog;
+namespace ServiceMantle.Logging.Pipeline;
 
 internal sealed class SerilogRegistration
 {

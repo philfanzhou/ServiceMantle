@@ -10,8 +10,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ServiceMantle.Logging;
-using ServiceMantle.Serilog;
-using ServiceMantle.Serilog.GrafanaLoki;
+using ServiceMantle.Logging.Pipeline;
+using ServiceMantle.Logging.Remote;
 using Xunit;
 
 namespace ServiceMantle.Serilog.GrafanaLoki.Tests;

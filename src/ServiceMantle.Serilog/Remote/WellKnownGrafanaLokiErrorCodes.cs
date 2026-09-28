@@ -1,4 +1,4 @@
-namespace ServiceMantle.Serilog.GrafanaLoki;
+namespace ServiceMantle.Logging.Remote;
 
 /// <summary>Defines stable Grafana Loki configuration and delivery error codes.</summary>
 public static class WellKnownGrafanaLokiErrorCodes

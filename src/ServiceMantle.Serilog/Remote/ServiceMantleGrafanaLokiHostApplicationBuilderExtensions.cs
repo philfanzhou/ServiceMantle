@@ -1,8 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using ServiceMantle.Logging;
-using ServiceMantle.Serilog;
-using ServiceMantle.Serilog.GrafanaLoki;
+using ServiceMantle.Logging.Pipeline;
+using ServiceMantle.Logging.Remote;
 
 namespace Microsoft.Extensions.Hosting;
 

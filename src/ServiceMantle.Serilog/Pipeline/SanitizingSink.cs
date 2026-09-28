@@ -4,7 +4,7 @@ using Serilog.Core;
 using Serilog.Events;
 using ServiceMantle.Logging;
 
-namespace ServiceMantle.Serilog;
+namespace ServiceMantle.Logging.Pipeline;
 
 internal interface ILogFieldSanitizer
 {

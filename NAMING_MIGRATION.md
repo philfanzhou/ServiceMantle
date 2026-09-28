@@ -429,3 +429,69 @@ Header、wire 字段、`InternalsVisibleTo` 全部零变化。这是源码与二
 | `ServiceMantle.Consul.ConsulSnapshotSourceSelection` | `ServiceMantle.Discovery.Registration.ConsulSnapshotSourceSelection` |
 
 类型名全部保留（含 `Consul` 产品词，B 类契约由类型名诚实暴露耦合）。
+
+## Serilog 能力命名空间迁移（#575）
+
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+`ServiceMantle.Serilog` 包的自有 namespace 迁往能力 namespace 的适配包子空间。包 ID、程序集名
+`ServiceMantle.Serilog`、依赖与运行时行为不变；`serilog.*` / `loki.*` 错误码取值、配置节名、
+`InternalsVisibleTo` 全部零变化。这是源码与二进制破坏性变更，只在后续新版本交付，不覆盖历史版本。
+
+### namespace 迁移
+
+| 原 namespace | 新 namespace |
+| --- | --- |
+| `ServiceMantle.Serilog`（6 个文件：选项、默认值、异常、包标记、运行时、净化 sink） | `ServiceMantle.Logging.Pipeline` |
+| `ServiceMantle.Serilog.GrafanaLoki`（6 个文件：远程 sink 全部契约） | `ServiceMantle.Logging.Remote` |
+
+`Microsoft.Extensions.Hosting` 的两个入口（`ServiceMantleSerilogHostApplicationBuilderExtensions`、
+`ServiceMantleGrafanaLokiHostApplicationBuilderExtensions`）不变；签名与方法体中的全限定名随新
+namespace 同步（如 `ServiceMantle.Logging.Pipeline.SerilogOptions`）。目录调整为
+`src/ServiceMantle.Serilog/Pipeline/` 与 `src/ServiceMantle.Serilog/Remote/`，
+`<RootNamespace>` 改为 `ServiceMantle.Logging.Pipeline`。能力 namespace 层次：`ServiceMantle.Logging`
+归核心包，子空间 `Pipeline` / `Remote` 归 Serilog 适配包，互不跨越程序集。
+
+### 公开 API 映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.Serilog.SerilogConfigurationException` | `ServiceMantle.Logging.Pipeline.SerilogConfigurationException` |
+| `ServiceMantle.Serilog.SerilogOptions` | `ServiceMantle.Logging.Pipeline.SerilogOptions` |
+| `ServiceMantle.Serilog.SerilogDefaults` | `ServiceMantle.Logging.Pipeline.SerilogDefaults` |
+| `ServiceMantle.Serilog.SerilogPackage` | `ServiceMantle.Logging.Pipeline.SerilogPackage` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiOptions` | `ServiceMantle.Logging.Remote.GrafanaLokiOptions` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiDefaults` | `ServiceMantle.Logging.Remote.GrafanaLokiDefaults` |
+| `ServiceMantle.Serilog.GrafanaLoki.WellKnownGrafanaLokiErrorCodes` | `ServiceMantle.Logging.Remote.WellKnownGrafanaLokiErrorCodes` |
+
+### 内部类型映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.Serilog.ILogFieldSanitizer` | `ServiceMantle.Logging.Pipeline.ILogFieldSanitizer` |
+| `ServiceMantle.Serilog.LogFieldSanitizer` | `ServiceMantle.Logging.Pipeline.LogFieldSanitizer` |
+| `ServiceMantle.Serilog.ISerilogSinkFactory` | `ServiceMantle.Logging.Pipeline.ISerilogSinkFactory` |
+| `ServiceMantle.Serilog.ConsoleSinkFactory` | `ServiceMantle.Logging.Pipeline.ConsoleSinkFactory` |
+| `ServiceMantle.Serilog.SanitizingSink` | `ServiceMantle.Logging.Pipeline.SanitizingSink` |
+| `ServiceMantle.Serilog.SerilogRegistration` | `ServiceMantle.Logging.Pipeline.SerilogRegistration` |
+| `ServiceMantle.Serilog.SerilogConfiguration` | `ServiceMantle.Logging.Pipeline.SerilogConfiguration` |
+| `ServiceMantle.Serilog.SerilogMarker` | `ServiceMantle.Logging.Pipeline.SerilogMarker` |
+| `ServiceMantle.Serilog.SerilogRuntime` | `ServiceMantle.Logging.Pipeline.SerilogRuntime` |
+| `ServiceMantle.Serilog.RuntimeLoggerProvider` | `ServiceMantle.Logging.Pipeline.RuntimeLoggerProvider` |
+| `ServiceMantle.Serilog.SerilogLifecycle` | `ServiceMantle.Logging.Pipeline.SerilogLifecycle` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiRegistration` | `ServiceMantle.Logging.Remote.GrafanaLokiRegistration` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiConfiguration` | `ServiceMantle.Logging.Remote.GrafanaLokiConfiguration` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiConfigurationProvider` | `ServiceMantle.Logging.Remote.GrafanaLokiConfigurationProvider` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiRuntime` | `ServiceMantle.Logging.Remote.GrafanaLokiRuntime` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiLifecycle` | `ServiceMantle.Logging.Remote.GrafanaLokiLifecycle` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiSinkFactory` | `ServiceMantle.Logging.Remote.GrafanaLokiSinkFactory` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiFailureListener` | `ServiceMantle.Logging.Remote.GrafanaLokiFailureListener` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiCompositeSink` | `ServiceMantle.Logging.Remote.GrafanaLokiCompositeSink` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiRemoteSink` | `ServiceMantle.Logging.Remote.GrafanaLokiRemoteSink` |
+| `ServiceMantle.Serilog.GrafanaLoki.ILokiHttpMessageHandlerFactory` | `ServiceMantle.Logging.Remote.ILokiHttpMessageHandlerFactory` |
+| `ServiceMantle.Serilog.GrafanaLoki.LokiHttpMessageHandlerFactory` | `ServiceMantle.Logging.Remote.LokiHttpMessageHandlerFactory` |
+| `ServiceMantle.Serilog.GrafanaLoki.LokiHttpMessageHandler` | `ServiceMantle.Logging.Remote.LokiHttpMessageHandler` |
+| `ServiceMantle.Serilog.GrafanaLoki.GrafanaLokiDeliveryCounter` | `ServiceMantle.Logging.Remote.GrafanaLokiDeliveryCounter` |
+| `ServiceMantle.Serilog.GrafanaLoki.LokiDeliveryException` | `ServiceMantle.Logging.Remote.LokiDeliveryException` |
+
+类型名全部保留（`SerilogOptions` 等模块词是调用方同时引用多个同类 options 时的唯一区分，
+`OutputTemplate` 等 B 类模型保留 Serilog 模板语义）。
