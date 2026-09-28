@@ -4,7 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Exporter;
 
-namespace ServiceMantle.OpenTelemetry.Prometheus;
+namespace ServiceMantle.Diagnostics.Export.Prometheus;
 
 internal sealed record PrometheusRegistration(PrometheusOptions Options);
 

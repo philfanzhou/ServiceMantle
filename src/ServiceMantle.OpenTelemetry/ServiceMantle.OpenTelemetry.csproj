@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <RootNamespace>ServiceMantle.OpenTelemetry</RootNamespace>
+    <RootNamespace>ServiceMantle.Diagnostics.Instrumentation</RootNamespace>
     <AssemblyName>ServiceMantle.OpenTelemetry</AssemblyName>
     <PackageId>ServiceMantle.OpenTelemetry</PackageId>
     <PackageDescription>OpenTelemetry host instrumentation, OTLP exporting, and authorized Prometheus scraping for ServiceMantle.</PackageDescription>

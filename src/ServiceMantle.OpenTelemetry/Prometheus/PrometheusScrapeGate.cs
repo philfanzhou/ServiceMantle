@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Http;
 
-namespace ServiceMantle.OpenTelemetry.Prometheus;
+namespace ServiceMantle.Diagnostics.Export.Prometheus;
 
 internal sealed class PrometheusScrapeGate(
     RequestDelegate next,

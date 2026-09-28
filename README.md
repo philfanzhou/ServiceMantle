@@ -241,12 +241,12 @@ published. Their implementation now ships inside `ServiceMantle.OpenTelemetry`:
 
 - Replace both package references with a single `ServiceMantle.OpenTelemetry` reference. Already
   published versions of the retired package ids are untouched; they simply receive no new versions.
-- Public type names, namespaces (`ServiceMantle.OpenTelemetry.Otlp`,
-  `ServiceMantle.OpenTelemetry.Prometheus`), registration entry points, defaults, error codes, and
-  configuration validation are unchanged, so no source edit is required for the exporter surface
-  itself. The two provider-neutral contracts `IRemoteTelemetryAuthenticationResolver` and
-  `RemoteTelemetryAuthenticationHeader` moved to the core `ServiceMantle.Diagnostics` namespace; see
-  `NAMING_MIGRATION.md` for the full rename mapping.
+- Public type names, registration entry points, defaults, error codes, and configuration
+  validation are unchanged, so no source edit is required for the exporter surface itself beyond
+  the `using` directives: the exporter types now live in the `ServiceMantle.Diagnostics.Export.Otlp`
+  and `ServiceMantle.Diagnostics.Export.Prometheus` namespaces. The two provider-neutral contracts
+  `IRemoteTelemetryAuthenticationResolver` and `RemoteTelemetryAuthenticationHeader` moved to the
+  core `ServiceMantle.Diagnostics` namespace; see `NAMING_MIGRATION.md` for the full rename mapping.
 - Recompile. The types moved to a different assembly, so binaries compiled against the retired
   assemblies do not bind to the merged one.
 - Installing `ServiceMantle.OpenTelemetry` now brings the OTLP and Prometheus exporter drivers in

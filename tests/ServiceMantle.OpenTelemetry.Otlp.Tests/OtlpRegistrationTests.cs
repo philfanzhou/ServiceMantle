@@ -14,7 +14,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using ServiceMantle.Web;
 using ServiceMantle.Diagnostics;
-using ServiceMantle.OpenTelemetry.Otlp;
+using ServiceMantle.Diagnostics.Export.Otlp;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Otlp.Tests;

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using ServiceMantle.Diagnostics.Export.Prometheus;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Prometheus.Tests;
@@ -6,7 +7,7 @@ namespace ServiceMantle.OpenTelemetry.Prometheus.Tests;
 public sealed class PackageDependencyBoundaryTests
 {
     [Fact]
-    public void Prometheus_public_surface_ships_in_the_merged_assembly_with_its_namespace_unchanged()
+    public void Prometheus_public_surface_ships_in_the_merged_assembly_under_its_dedicated_namespace()
     {
         foreach (var type in new[]
                  {
@@ -16,7 +17,7 @@ public sealed class PackageDependencyBoundaryTests
                  })
         {
             Assert.Equal("ServiceMantle.OpenTelemetry", type.Assembly.GetName().Name);
-            Assert.Equal("ServiceMantle.OpenTelemetry.Prometheus", type.Namespace);
+            Assert.Equal("ServiceMantle.Diagnostics.Export.Prometheus", type.Namespace);
         }
 
         Assert.Equal(

@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using ServiceMantle.Diagnostics;
-using ServiceMantle.OpenTelemetry.Otlp;
+using ServiceMantle.Diagnostics.Export.Otlp;
 using ServiceMantle.ReferenceService.Telemetry;
 using Xunit;
 
@@ -284,7 +284,7 @@ public sealed class ReferenceOtlpTests
 
     private static bool IsOtlpOwned(Type? type) =>
         type?.Namespace is { } space &&
-        space.StartsWith("ServiceMantle.OpenTelemetry.Otlp", StringComparison.Ordinal);
+        space.StartsWith("ServiceMantle.Diagnostics.Export.Otlp", StringComparison.Ordinal);
 
     private static int ReserveUnusedPort()
     {

@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.OpenTelemetry.Prometheus;
+using ServiceMantle.Diagnostics.Export.Prometheus;
 
 namespace Microsoft.AspNetCore.Builder;
 

@@ -2,7 +2,7 @@ using OpenTelemetry.Metrics;
 using ServiceMantle.Web;
 using ServiceMantle.Web.Logging;
 using ServiceMantle.Diagnostics;
-using ServiceMantle.OpenTelemetry;
+using ServiceMantle.Diagnostics.Instrumentation;
 
 namespace Microsoft.Extensions.DependencyInjection;
 

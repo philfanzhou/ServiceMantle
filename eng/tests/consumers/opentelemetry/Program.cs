@@ -4,11 +4,11 @@
 //
 // It also proves the provider-neutral contract boundary: implementing and registering the remote
 // telemetry authentication resolver, resolving ServiceMetrics, and publishing an installation
-// phase require no provider-named using at all. The resolver contracts and ServiceMetrics live in
+// phase require no adapter-owned using at all. The resolver contracts and ServiceMetrics live in
 // the core package's ServiceMantle.Diagnostics namespace, and the registration entries live in
 // Microsoft.Extensions.DependencyInjection, so this file deliberately contains neither
-// using ServiceMantle.OpenTelemetry nor using ServiceMantle.OpenTelemetry.Otlp. The OTLP
-// configuration types themselves remain provider-specific; this file asserts nothing about
+// using ServiceMantle.Diagnostics.Instrumentation nor using ServiceMantle.Diagnostics.Export.Otlp.
+// The OTLP configuration types themselves remain provider-specific; this file asserts nothing about
 // naming them, and the OTLP settings are shaped through a target-typed lambda.
 using Microsoft.AspNetCore.Authorization;
 using ServiceMantle;

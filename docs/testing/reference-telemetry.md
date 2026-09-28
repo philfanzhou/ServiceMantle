@@ -74,7 +74,7 @@ PostgreSQL 启动 gate 下开启**：抓取由 gate 注册的管理会话授权�
 
 | 入口与状态 | `GET /metrics` 结果 |
 | --- | --- |
-| Prometheus 关（缺失/false/空/yes/1） | 404，容器无 `ServiceMantle.OpenTelemetry.Prometheus` 服务 |
+| Prometheus 关（缺失/false/空/yes/1） | 404，容器无 `ServiceMantle.Diagnostics.Export.Prometheus` 服务 |
 | Prometheus 开、PostgreSQL 关 | `CreateBuilder` 抛 `InvalidOperationException`，无副作用 |
 | gate 未 Ready 或安装 Pending | 503 `{"errorCode":"service.phase.unavailable"}`（gate，认证之前） |
 | Completed，无 cookie | 401 |
@@ -105,7 +105,7 @@ PostgreSQL 启动 gate 下开启**：抓取由 gate 注册的管理会话授权�
 - `AllowInsecureLoopbackForTesting`（仅 Development 生效，其他环境忽略）。
 
 两个信号的 `Enabled` 都不为 `true` 时不调用 `AddOpenTelemetryOtlpExporter`，也不注册解析器，
-容器中没有 `ServiceMantle.OpenTelemetry.Otlp` 命名空间的服务。样例只做解析：无法识别的
+容器中没有 `ServiceMantle.Diagnostics.Export.Otlp` 命名空间的服务。样例只做解析：无法识别的
 `Protocol`、非绝对 URI 的 `Endpoint`、只有一半的认证键都在 `CreateBuilder` 失败且不回显值；缺
 失的 `Endpoint` 传 `null`，由包在启动时报 `otlp.endpoint_required`；HTTPS、超时与批量边界全部交
 给包的启动校验，样例不暴露也不改动批量配置。认证齐全时注册样例内解析器（只认查找名
@@ -147,7 +147,7 @@ OTLP 合法，只是没有数据可导出。
 | 等价的重复注册 | `true`，注册两次 | 仍然只有一个 `TracerProvider`、一个 `MeterProvider`、一个 instrumentation 实例，以及每个请求一个服务端 span |
 | 冲突的额外注册 | `true` 加上一个禁用运行时指标的注册 | 公开包自己的启动校验拒绝它；`ApplicationStarted` 从不被触发，也没有监听器被挂接。示例不绕过也不弱化该校验 |
 | 还原后的依赖图 | - | 示例的 `project.assets.json` 包含基础 instrumentation 包，也包含 `ServiceMantle.OpenTelemetry` 现在随一个包一起提供的 OTLP 和 Prometheus exporter 驱动 |
-| 启用时的组合 | `true` | 示例的容器中没有任何属于 `ServiceMantle.OpenTelemetry.Otlp`、`ServiceMantle.OpenTelemetry.Prometheus` 或 `OpenTelemetry.Exporter` 的服务，因此依赖图中存在驱动仍不等于激活了 exporter |
+| 启用时的组合 | `true` | 示例的容器中没有任何属于 `ServiceMantle.Diagnostics.Export.Otlp`、`ServiceMantle.Diagnostics.Export.Prometheus` 或 `OpenTelemetry.Exporter` 的服务，因此依赖图中存在驱动仍不等于激活了 exporter |
 
 ## 隔离
 

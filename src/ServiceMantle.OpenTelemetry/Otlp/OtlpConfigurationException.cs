@@ -1,4 +1,4 @@
-namespace ServiceMantle.OpenTelemetry.Otlp;
+namespace ServiceMantle.Diagnostics.Export.Otlp;
 
 /// <summary>Stable error codes for safe OTLP configuration failures.</summary>
 public static class WellKnownOtlpErrorCodes

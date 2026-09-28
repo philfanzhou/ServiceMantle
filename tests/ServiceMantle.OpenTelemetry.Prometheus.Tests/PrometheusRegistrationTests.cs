@@ -14,7 +14,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
-using ServiceMantle.OpenTelemetry.Prometheus;
+using ServiceMantle.Diagnostics.Export.Prometheus;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Prometheus.Tests;

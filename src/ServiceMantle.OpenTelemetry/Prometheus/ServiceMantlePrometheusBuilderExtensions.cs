@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using ServiceMantle.Web;
-using ServiceMantle.OpenTelemetry.Prometheus;
+using ServiceMantle.Diagnostics.Export.Prometheus;
 
 namespace Microsoft.Extensions.DependencyInjection;
 

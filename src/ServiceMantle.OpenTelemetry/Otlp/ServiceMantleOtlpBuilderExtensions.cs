@@ -5,7 +5,7 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using ServiceMantle.Web;
-using ServiceMantle.OpenTelemetry.Otlp;
+using ServiceMantle.Diagnostics.Export.Otlp;
 
 namespace Microsoft.Extensions.DependencyInjection;
 

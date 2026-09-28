@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Hosting;
 
-namespace ServiceMantle.OpenTelemetry;
+namespace ServiceMantle.Diagnostics.Instrumentation;
 
 internal sealed record OpenTelemetryRegistration(
     bool Enabled,
