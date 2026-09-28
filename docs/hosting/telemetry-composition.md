@@ -44,7 +44,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle;
-using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 

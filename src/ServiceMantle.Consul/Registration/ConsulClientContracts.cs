@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Registration;
 
 /// <summary>Contains one immutable, credential-free agent service registration.</summary>
 public sealed class ConsulServiceRegistration

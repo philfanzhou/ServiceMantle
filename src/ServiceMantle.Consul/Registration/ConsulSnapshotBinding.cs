@@ -1,7 +1,8 @@
 using System.Net;
 using ServiceMantle.Configuration;
+using ServiceMantle.Discovery.Configuration;
 
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Registration;
 
 internal sealed class ConsulSnapshotBinding
 {

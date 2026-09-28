@@ -14,6 +14,7 @@ using ServiceMantle.AspNetCore.Management;
 using ServiceMantle.AspNetCore.RateLimiting;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Health;
+using ServiceMantle.Installation;
 using ServiceMantle.Logging;
 using ServiceMantle.Management;
 using ServiceMantle.Migration;

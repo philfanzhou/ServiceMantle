@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.Consul;
+using ServiceMantle.Discovery.Registration;
 using ServiceMantle.Discovery;
 using ServiceMantle.Health;
 using Xunit;

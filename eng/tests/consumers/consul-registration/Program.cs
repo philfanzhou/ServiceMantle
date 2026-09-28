@@ -16,6 +16,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.Configuration;
 using ServiceMantle.Discovery;
+using ServiceMantle.Discovery.Configuration;
+using ServiceMantle.Discovery.Registration;
 
 var services = new ServiceCollection();
 
@@ -42,6 +44,20 @@ _ = services.AddServiceMantleConsul(Configure);
 if (services.Count(descriptor => descriptor.ServiceType == typeof(IHostedService)) != 1)
 {
     throw new InvalidOperationException("Repeated Consul registrations duplicated the hosted lifecycle.");
+}
+
+// The capability-namespace half of the assertion (#574): the adapter's own contracts now live in
+// ServiceMantle.Discovery.Registration and ServiceMantle.Discovery.Configuration, named here
+// unqualified next to the framework namespaces above. The setting catalog and the replaceable
+// transport factory are the two public shapes a consumer sees; no client, session, or timer is
+// created by inspecting them.
+if (!services.Any(descriptor =>
+        descriptor.ServiceType == typeof(IServiceSettingDefinitionProvider) &&
+        descriptor.ImplementationType == typeof(ConsulSettingDefinitions)) ||
+    !services.Any(descriptor => descriptor.ServiceType == typeof(IConsulClientFactory)))
+{
+    throw new InvalidOperationException(
+        "The Consul entry did not register the capability-namespace catalog and transport factory.");
 }
 
 // The typed snapshot-source entry: a dedicated consumer-owned accessor type replaces the

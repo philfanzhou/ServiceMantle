@@ -1,4 +1,3 @@
-using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Diagnostics;
 using ServiceMantle.Health;
 using ServiceMantle.ReferenceService.Health.PostgreSql;
