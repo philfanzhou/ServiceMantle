@@ -1,7 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Registration;
 
 /// <summary>Creates the default single-call HTTP adapter with redirects disabled and normal TLS verification.</summary>
 public sealed class ConsulHttpClientFactory : IConsulClientFactory

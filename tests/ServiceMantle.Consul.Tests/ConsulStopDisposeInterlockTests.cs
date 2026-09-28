@@ -1,4 +1,4 @@
-using ServiceMantle.Consul;
+using ServiceMantle.Discovery.Registration;
 using Xunit;
 
 namespace ServiceMantle.Consul.Tests;

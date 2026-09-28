@@ -1,3 +1,5 @@
+using ServiceMantle.Discovery.Configuration;
+using ServiceMantle.Discovery.Registration;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;

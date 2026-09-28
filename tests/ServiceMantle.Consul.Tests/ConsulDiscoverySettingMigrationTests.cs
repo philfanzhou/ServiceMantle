@@ -1,5 +1,7 @@
 using System.Text.Json;
 using ServiceMantle.Configuration;
+using ServiceMantle.Discovery.Configuration;
+using ServiceMantle.Discovery.Registration;
 using Xunit;
 
 namespace ServiceMantle.Consul.Tests;

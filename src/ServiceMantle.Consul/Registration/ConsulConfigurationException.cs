@@ -1,4 +1,4 @@
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Registration;
 
 /// <summary>Contains finite, value-free Consul configuration and ownership failure categories.</summary>
 public enum ConsulConfigurationError

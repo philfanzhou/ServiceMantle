@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Configuration;
 
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Registration;
 
 /// <summary>
 /// Pins which setting-snapshot source the Consul client boundary reads: the process-global

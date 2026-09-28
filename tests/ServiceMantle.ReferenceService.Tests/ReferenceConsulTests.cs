@@ -9,7 +9,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using ServiceMantle.Configuration;
-using ServiceMantle.Consul;
+using ServiceMantle.Discovery.Registration;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.ReferenceService.Discovery;
 using ServiceMantle.Testing;
