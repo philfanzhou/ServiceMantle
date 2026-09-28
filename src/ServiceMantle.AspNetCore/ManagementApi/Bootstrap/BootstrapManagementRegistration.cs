@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.Web.Management;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
+namespace ServiceMantle.Web.ManagementApi.Bootstrap;
 
 /// <summary>Records whether this host actually mapped the Bootstrap management entries.</summary>
 internal sealed class BootstrapManagementRegistration

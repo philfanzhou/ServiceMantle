@@ -2,8 +2,8 @@ using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
-using ServiceMantle.AspNetCore.Http;
-using ServiceMantle.AspNetCore.ManagementApi.AuditQueries;
+using ServiceMantle.Web.Http;
+using ServiceMantle.Web.ManagementApi.AuditQueries;
 using ServiceMantle.Audit;
 using Xunit;
 

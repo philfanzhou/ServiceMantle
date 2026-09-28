@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.RuntimeInfo;
+namespace ServiceMantle.Web.ManagementApi.RuntimeInfo;
 
 /// <summary>
 /// Owns the endpoint-local mapping rules of the management API v1 runtime information endpoint.

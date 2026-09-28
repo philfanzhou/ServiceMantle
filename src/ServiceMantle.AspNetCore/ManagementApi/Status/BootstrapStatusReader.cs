@@ -1,6 +1,6 @@
 using ServiceMantle.Bootstrap;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Status;
+namespace ServiceMantle.Web.ManagementApi.Status;
 
 /// <summary>
 /// The single boundary through which the anonymous installation status entry may observe the local

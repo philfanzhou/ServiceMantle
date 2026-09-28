@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.AspNetCore.ManagementApi.Status;
+using ServiceMantle.Web;
+using ServiceMantle.Web.ManagementApi.Status;
 
 namespace Microsoft.Extensions.DependencyInjection;
 

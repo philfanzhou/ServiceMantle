@@ -11,7 +11,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.Web.Management;
 using ServiceMantle.Audit;
 using ServiceMantle.Management;
 using ServiceMantle.Persistence.Relational.DataProtection;

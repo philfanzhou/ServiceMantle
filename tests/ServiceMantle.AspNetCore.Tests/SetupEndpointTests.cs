@@ -1,8 +1,8 @@
 using System.Net;
 using Microsoft.AspNetCore.Builder;
-using ServiceMantle.AspNetCore.Http;
-using ServiceMantle.AspNetCore.ManagementApi;
-using ServiceMantle.AspNetCore.ManagementApi.Setup;
+using ServiceMantle.Web.Http;
+using ServiceMantle.Web.ManagementApi;
+using ServiceMantle.Web.ManagementApi.Setup;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using Xunit;

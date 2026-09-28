@@ -1,7 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Http;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
+namespace ServiceMantle.Web.ManagementApi.Bootstrap;
 
 /// <summary>
 /// The single serialization exit of the Bootstrap management entries.

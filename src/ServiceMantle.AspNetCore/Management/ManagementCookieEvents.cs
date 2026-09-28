@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Net.Http.Headers;
 
-namespace ServiceMantle.AspNetCore.Management;
+namespace ServiceMantle.Web.Management;
 
 internal static class ManagementCookieEvents
 {

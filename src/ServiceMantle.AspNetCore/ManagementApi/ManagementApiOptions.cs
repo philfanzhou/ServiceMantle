@@ -1,6 +1,6 @@
-using ServiceMantle.AspNetCore.PhaseGate;
+using ServiceMantle.Web.PhaseGate;
 
-namespace ServiceMantle.AspNetCore.ManagementApi;
+namespace ServiceMantle.Web.ManagementApi;
 
 /// <summary>
 /// Configures the versioned root of the protected ServiceMantle management API v1 group.

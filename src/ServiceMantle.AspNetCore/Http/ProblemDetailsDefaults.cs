@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 /// <summary>
 /// Defines the stable fields and fail-closed response used by ServiceMantle Problem Details.

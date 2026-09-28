@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Routing;
-using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Web.Logging;
 
 namespace ServiceMantle.ReferenceService.Logging;
 

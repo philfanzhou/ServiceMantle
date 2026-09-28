@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Logging;
+namespace ServiceMantle.Web.Logging;
 
 /// <summary>Defines stable sensitive-Header startup configuration error codes.</summary>
 public static class WellKnownSensitiveHeaderConfigurationErrorCodes

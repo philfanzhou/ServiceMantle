@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
-using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Web.Logging;
 
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 /// <summary>
 /// Resolves the Correlation ID exactly once per request and publishes the same value to the request

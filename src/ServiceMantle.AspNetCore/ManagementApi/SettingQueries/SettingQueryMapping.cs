@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Configuration;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.SettingQueries;
+namespace ServiceMantle.Web.ManagementApi.SettingQueries;
 
 /// <summary>
 /// Owns the mapping rules and the bounded input parsing of the management API v1 setting queries.

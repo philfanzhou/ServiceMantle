@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.Web.Health;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Status;
+namespace ServiceMantle.Web.ManagementApi.Status;
 
 /// <summary>
 /// Assembles the one coherent installation observation the anonymous status entry answers with.

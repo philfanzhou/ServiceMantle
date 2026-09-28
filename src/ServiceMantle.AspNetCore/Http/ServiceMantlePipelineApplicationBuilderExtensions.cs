@@ -1,12 +1,12 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.AspNetCore.Http;
-using ServiceMantle.AspNetCore.Logging;
-using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
-using ServiceMantle.AspNetCore.PhaseGate;
-using ServiceMantle.AspNetCore.RateLimiting;
+using ServiceMantle.Web;
+using ServiceMantle.Web.Http;
+using ServiceMantle.Web.Logging;
+using ServiceMantle.Web.ManagementApi.Bootstrap;
+using ServiceMantle.Web.PhaseGate;
+using ServiceMantle.Web.RateLimiting;
 
 namespace Microsoft.AspNetCore.Builder;
 

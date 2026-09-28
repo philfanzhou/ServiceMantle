@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Npgsql;
-using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.Web.Management;
 using ServiceMantle.Management;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.ReferenceService.Management;

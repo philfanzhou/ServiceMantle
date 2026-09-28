@@ -1,9 +1,9 @@
 using System.Buffers;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
-using ServiceMantle.AspNetCore.Http;
+using ServiceMantle.Web.Http;
 
-namespace ServiceMantle.AspNetCore.ManagementApi;
+namespace ServiceMantle.Web.ManagementApi;
 
 /// <summary>
 /// Produces the two fixed public error results of the ServiceMantle management API v1 surface.

@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.Health;
 
-namespace ServiceMantle.AspNetCore.Health;
+namespace ServiceMantle.Web.Health;
 
 /// <summary>Well-known safe health probe error codes.</summary>
 public static class WellKnownServiceHealthErrorCodes

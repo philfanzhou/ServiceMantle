@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 using Serilog.Core;
 using Serilog.Events;
 using ServiceMantle;
-using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Web.Logging;
 using ServiceMantle.Logging;
 using ServiceMantle.Logging.Pipeline;
 using Xunit;

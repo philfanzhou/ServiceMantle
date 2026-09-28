@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore.ManagementApi;
-using ServiceMantle.AspNetCore.PhaseGate;
-using ServiceMantle.AspNetCore.RateLimiting;
+using ServiceMantle.Web.ManagementApi;
+using ServiceMantle.Web.PhaseGate;
+using ServiceMantle.Web.RateLimiting;
 
 namespace Microsoft.AspNetCore.Builder;
 

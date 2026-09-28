@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Setup;
+namespace ServiceMantle.Web.ManagementApi.Setup;
 
 /// <summary>The finite outcome of one consumer-owned Setup completion transaction.</summary>
 public enum SetupCompletionStatus

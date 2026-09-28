@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Configuration;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.SettingQueries;
+namespace ServiceMantle.Web.ManagementApi.SettingQueries;
 
 /// <summary>
 /// Projects the existing safe setting query service onto the two fixed read-only responses.

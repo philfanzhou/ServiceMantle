@@ -1,4 +1,4 @@
-using ServiceMantle.AspNetCore.Http;
+using ServiceMantle.Web.Http;
 
 namespace Microsoft.AspNetCore.Builder;
 

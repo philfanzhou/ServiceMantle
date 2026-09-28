@@ -2,7 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Primitives;
-using ServiceMantle.AspNetCore.ManagementApi.SettingQueries;
+using ServiceMantle.Web.ManagementApi.SettingQueries;
 using ServiceMantle.Configuration;
 using Xunit;
 

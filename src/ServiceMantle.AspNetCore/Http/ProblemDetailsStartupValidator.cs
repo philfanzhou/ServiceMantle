@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Hosting;
 
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 internal sealed class ProblemDetailsStartupValidator(
     ExceptionMappingRegistry mappingRegistry) : IHostedService

@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
+namespace ServiceMantle.Web.ManagementApi.Bootstrap;
 
 /// <summary>
 /// Configures the opt-in ServiceMantle Bootstrap management entries.

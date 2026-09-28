@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.AspNetCore.Health;
-using ServiceMantle.AspNetCore.PhaseGate;
+using ServiceMantle.Web;
+using ServiceMantle.Web.Health;
+using ServiceMantle.Web.PhaseGate;
 using ServiceMantle.Health;
 
 namespace Microsoft.AspNetCore.Builder;

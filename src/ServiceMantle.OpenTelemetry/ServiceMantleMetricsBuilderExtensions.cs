@@ -1,6 +1,6 @@
 using OpenTelemetry.Metrics;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Web;
+using ServiceMantle.Web.Logging;
 using ServiceMantle.Diagnostics;
 using ServiceMantle.OpenTelemetry;
 

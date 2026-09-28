@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Setup;
+namespace ServiceMantle.Web.ManagementApi.Setup;
 
 /// <summary>
 /// Owns the endpoint-local mapping rules and closed error codes of the Setup entries.

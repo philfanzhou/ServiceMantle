@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.AspNetCore.Http;
+using ServiceMantle.Web.Http;
 using Xunit;
 
 namespace ServiceMantle.AspNetCore.Tests;

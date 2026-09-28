@@ -1,7 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Http;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.SettingQueries;
+namespace ServiceMantle.Web.ManagementApi.SettingQueries;
 
 /// <summary>
 /// The single serialization exit shared by the management API v1 setting query responses.

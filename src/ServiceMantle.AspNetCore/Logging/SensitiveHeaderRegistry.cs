@@ -1,7 +1,7 @@
 using System.Collections.Frozen;
 using ServiceMantle.Logging;
 
-namespace ServiceMantle.AspNetCore.Logging;
+namespace ServiceMantle.Web.Logging;
 
 internal sealed record SensitiveHeaderRegistration(
     SensitiveHeadersOptions Options,

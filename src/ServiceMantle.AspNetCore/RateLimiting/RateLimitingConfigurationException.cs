@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.RateLimiting;
+namespace ServiceMantle.Web.RateLimiting;
 
 /// <summary>Reports an invalid or conflicting ServiceMantle rate-limiting registration.</summary>
 public sealed class RateLimitingConfigurationException : InvalidOperationException

@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore.Management;
-using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
-using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.Web.Management;
+using ServiceMantle.Web.ManagementApi.Bootstrap;
+using ServiceMantle.Web.ManagementApi.Entries;
 using ServiceMantle.Bootstrap;
 
 namespace Microsoft.AspNetCore.Builder;

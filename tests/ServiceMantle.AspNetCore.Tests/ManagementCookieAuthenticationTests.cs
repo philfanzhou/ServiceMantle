@@ -12,7 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.Web.Management;
 using ServiceMantle.Audit;
 using ServiceMantle.Management;
 using Xunit;

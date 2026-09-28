@@ -12,7 +12,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.Web;
 using ServiceMantle.Diagnostics;
 using ServiceMantle.OpenTelemetry.Otlp;
 using Xunit;

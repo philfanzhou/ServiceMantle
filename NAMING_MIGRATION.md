@@ -563,3 +563,201 @@ namespace 同步（如 `ServiceMantle.Logging.Pipeline.SerilogOptions`）。目�
 - ReferenceService 的 EF Core 迁移历史文件（`Migrations/*.cs`）中的实体全名字符串是消费方拥有的
   历史记录，按「已应用迁移不回改」保持原样；表名与列名为显式映射，relational 模型按表名比较，实体
   CLR 全名变化不产生 schema 差异。
+
+## AspNetCore 能力命名空间迁移（#573）
+
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+`ServiceMantle.AspNetCore` 包的自有 namespace 迁往 `ServiceMantle.Web` 及其子空间（子空间名不变，
+仅包自有前缀替换）。包 ID、程序集名 `ServiceMantle.AspNetCore`、依赖与运行时行为不变；日志分类
+`ServiceMantle.Http.CorrelationId|ProblemDetails|RateLimiting`、认证方案
+`ServiceMantle.ManagementCookie|ManagementAdmin|ManagementSession`、Data Protection purpose
+`ServiceMantle.Management:<serviceId>`、meter 名与全部指标名、HTTP 路由与 Header、JSON 字段、配置键、
+`InternalsVisibleTo` 全部零变化。这是源码与二进制破坏性变更，只在后续新版本交付，不覆盖历史版本。
+
+### namespace 迁移
+
+| 原 namespace | 新 namespace |
+| --- | --- |
+| `ServiceMantle.AspNetCore`（根 3 个文件：builder、宿主注册、上移契约的默认实现） | `ServiceMantle.Web` |
+| `ServiceMantle.AspNetCore.Health` | `ServiceMantle.Web.Health` |
+| `ServiceMantle.AspNetCore.Http` | `ServiceMantle.Web.Http` |
+| `ServiceMantle.AspNetCore.Logging` | `ServiceMantle.Web.Logging` |
+| `ServiceMantle.AspNetCore.Management` | `ServiceMantle.Web.Management` |
+| `ServiceMantle.AspNetCore.ManagementApi` | `ServiceMantle.Web.ManagementApi` |
+| `ServiceMantle.AspNetCore.ManagementApi.AuditQueries` | `ServiceMantle.Web.ManagementApi.AuditQueries` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap` | `ServiceMantle.Web.ManagementApi.Bootstrap` |
+| `ServiceMantle.AspNetCore.ManagementApi.Entries` | `ServiceMantle.Web.ManagementApi.Entries` |
+| `ServiceMantle.AspNetCore.ManagementApi.RuntimeInfo` | `ServiceMantle.Web.ManagementApi.RuntimeInfo` |
+| `ServiceMantle.AspNetCore.ManagementApi.Session` | `ServiceMantle.Web.ManagementApi.Session` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingQueries` | `ServiceMantle.Web.ManagementApi.SettingQueries` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingUpdates` | `ServiceMantle.Web.ManagementApi.SettingUpdates` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup` | `ServiceMantle.Web.ManagementApi.Setup` |
+| `ServiceMantle.AspNetCore.ManagementApi.Status` | `ServiceMantle.Web.ManagementApi.Status` |
+| `ServiceMantle.AspNetCore.PhaseGate` | `ServiceMantle.Web.PhaseGate` |
+| `ServiceMantle.AspNetCore.RateLimiting` | `ServiceMantle.Web.RateLimiting` |
+
+框架 namespace 入口（`Microsoft.AspNetCore.Builder` 19 个、`Microsoft.AspNetCore.Http` 1 个、
+`Microsoft.Extensions.DependencyInjection` 7 个、`Microsoft.Extensions.Hosting` 1 个文件）全部不变，
+类名与方法名保留 `ServiceMantle*` 产品前缀；仅其中的 `using` 行随新 namespace 同步。目录与文件名
+保持，`<RootNamespace>` 改为 `ServiceMantle.Web`。`ServiceMantle.AspNetCore.Health` 下
+`ServiceMantleHealthEndpointRouteBuilderExtensions.cs` 属框架 namespace，位置与类名均不动。#572 上移
+核心包的两个契约（`ServiceMantle.Installation.IServiceStartupPhaseResolver`、
+`ServiceMantle.Health.IServiceHealthSnapshotSource`）不在本切片范围；其包内默认实现
+`DefaultServiceStartupPhaseResolver` 的完整类型名随本切片变为
+`ServiceMantle.Web.DefaultServiceStartupPhaseResolver`。
+
+### 公开 API 映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.AspNetCore.ServiceMantleBuilder` | `ServiceMantle.Web.ServiceMantleBuilder` |
+| `ServiceMantle.AspNetCore.Health.HealthOptions` | `ServiceMantle.Web.Health.HealthOptions` |
+| `ServiceMantle.AspNetCore.Health.WellKnownServiceHealthErrorCodes` | `ServiceMantle.Web.Health.WellKnownServiceHealthErrorCodes` |
+| `ServiceMantle.AspNetCore.Http.ForwardedHeadersConfigurationException` | `ServiceMantle.Web.Http.ForwardedHeadersConfigurationException` |
+| `ServiceMantle.AspNetCore.Http.ForwardedHeadersTrustOptions` | `ServiceMantle.Web.Http.ForwardedHeadersTrustOptions` |
+| `ServiceMantle.AspNetCore.Http.ProblemDetailsDefaults` | `ServiceMantle.Web.Http.ProblemDetailsDefaults` |
+| `ServiceMantle.AspNetCore.Http.SecurityResponseHeadersMetadata` | `ServiceMantle.Web.Http.SecurityResponseHeadersMetadata` |
+| `ServiceMantle.AspNetCore.Http.ServiceHeaderNames` | `ServiceMantle.Web.Http.ServiceHeaderNames` |
+| `ServiceMantle.AspNetCore.Http.WellKnownForwardedHeadersConfigurationErrorCodes` | `ServiceMantle.Web.Http.WellKnownForwardedHeadersConfigurationErrorCodes` |
+| `ServiceMantle.AspNetCore.Logging.RequestHeaderDiagnosticProjector` | `ServiceMantle.Web.Logging.RequestHeaderDiagnosticProjector` |
+| `ServiceMantle.AspNetCore.Logging.SensitiveHeaderConfigurationException` | `ServiceMantle.Web.Logging.SensitiveHeaderConfigurationException` |
+| `ServiceMantle.AspNetCore.Logging.SensitiveHeaderRegistry` | `ServiceMantle.Web.Logging.SensitiveHeaderRegistry` |
+| `ServiceMantle.AspNetCore.Logging.SensitiveHeadersOptions` | `ServiceMantle.Web.Logging.SensitiveHeadersOptions` |
+| `ServiceMantle.AspNetCore.Logging.ServiceLogContext` | `ServiceMantle.Web.Logging.ServiceLogContext` |
+| `ServiceMantle.AspNetCore.Logging.ServiceLogFieldNames` | `ServiceMantle.Web.Logging.ServiceLogFieldNames` |
+| `ServiceMantle.AspNetCore.Logging.WellKnownSensitiveHeaderConfigurationErrorCodes` | `ServiceMantle.Web.Logging.WellKnownSensitiveHeaderConfigurationErrorCodes` |
+| `ServiceMantle.AspNetCore.Management.ManagementAuthorizationDefaults` | `ServiceMantle.Web.Management.ManagementAuthorizationDefaults` |
+| `ServiceMantle.AspNetCore.Management.ManagementCookieOptions` | `ServiceMantle.Web.Management.ManagementCookieOptions` |
+| `ServiceMantle.AspNetCore.Management.ManagementPermissionAuthorizationHandler` | `ServiceMantle.Web.Management.ManagementPermissionAuthorizationHandler` |
+| `ServiceMantle.AspNetCore.Management.ManagementPermissionRequirement` | `ServiceMantle.Web.Management.ManagementPermissionRequirement` |
+| `ServiceMantle.AspNetCore.Management.ManagementSessionAuthorizationHandler` | `ServiceMantle.Web.Management.ManagementSessionAuthorizationHandler` |
+| `ServiceMantle.AspNetCore.Management.ManagementSessionDefaults` | `ServiceMantle.Web.Management.ManagementSessionDefaults` |
+| `ServiceMantle.AspNetCore.Management.ManagementSessionRequirement` | `ServiceMantle.Web.Management.ManagementSessionRequirement` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapManagementOptions` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapManagementOptions` |
+| `ServiceMantle.AspNetCore.ManagementApi.Entries.ManagementEntryDefaults` | `ServiceMantle.Web.ManagementApi.Entries.ManagementEntryDefaults` |
+| `ServiceMantle.AspNetCore.ManagementApi.Entries.ManagementEntryKind` | `ServiceMantle.Web.ManagementApi.Entries.ManagementEntryKind` |
+| `ServiceMantle.AspNetCore.ManagementApi.ManagementApiDefaults` | `ServiceMantle.Web.ManagementApi.ManagementApiDefaults` |
+| `ServiceMantle.AspNetCore.ManagementApi.ManagementApiOptions` | `ServiceMantle.Web.ManagementApi.ManagementApiOptions` |
+| `ServiceMantle.AspNetCore.ManagementApi.ManagementApiResults` | `ServiceMantle.Web.ManagementApi.ManagementApiResults` |
+| `ServiceMantle.AspNetCore.ManagementApi.Session.ManagementLoginAdapter` | `ServiceMantle.Web.ManagementApi.Session.ManagementLoginAdapter` |
+| `ServiceMantle.AspNetCore.ManagementApi.Session.ManagementSessionOptions` | `ServiceMantle.Web.ManagementApi.Session.ManagementSessionOptions` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingUpdates.SettingUpdateExecutor` | `ServiceMantle.Web.ManagementApi.SettingUpdates.SettingUpdateExecutor` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup.SetupCompletionResult` | `ServiceMantle.Web.ManagementApi.Setup.SetupCompletionResult` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup.SetupCompletionStatus` | `ServiceMantle.Web.ManagementApi.Setup.SetupCompletionStatus` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup.SetupExecutor` | `ServiceMantle.Web.ManagementApi.Setup.SetupExecutor` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup.SetupInput` | `ServiceMantle.Web.ManagementApi.Setup.SetupInput` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup.SetupInputExecutor` | `ServiceMantle.Web.ManagementApi.Setup.SetupInputExecutor` |
+| `ServiceMantle.AspNetCore.PhaseGate.ManagementSurface` | `ServiceMantle.Web.PhaseGate.ManagementSurface` |
+| `ServiceMantle.AspNetCore.PhaseGate.PhaseGateOptions` | `ServiceMantle.Web.PhaseGate.PhaseGateOptions` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitPolicyOptions` | `ServiceMantle.Web.RateLimiting.RateLimitPolicyOptions` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitingConfigurationException` | `ServiceMantle.Web.RateLimiting.RateLimitingConfigurationException` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitingDefaults` | `ServiceMantle.Web.RateLimiting.RateLimitingDefaults` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitingOptions` | `ServiceMantle.Web.RateLimiting.RateLimitingOptions` |
+
+### 内部类型映射
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.AspNetCore.DefaultServiceStartupPhaseResolver` | `ServiceMantle.Web.DefaultServiceStartupPhaseResolver` |
+| `ServiceMantle.AspNetCore.HostRegistration` | `ServiceMantle.Web.HostRegistration` |
+| `ServiceMantle.AspNetCore.Health.HealthRegistration` | `ServiceMantle.Web.Health.HealthRegistration` |
+| `ServiceMantle.AspNetCore.Health.HealthStartupValidator` | `ServiceMantle.Web.Health.HealthStartupValidator` |
+| `ServiceMantle.AspNetCore.Health.ReadinessDecisionSource` | `ServiceMantle.Web.Health.ReadinessDecisionSource` |
+| `ServiceMantle.AspNetCore.Http.CorrelationIdMiddleware` | `ServiceMantle.Web.Http.CorrelationIdMiddleware` |
+| `ServiceMantle.AspNetCore.Http.CorrelationIdRequestSlot` | `ServiceMantle.Web.Http.CorrelationIdRequestSlot` |
+| `ServiceMantle.AspNetCore.Http.CorrelationIdValue` | `ServiceMantle.Web.Http.CorrelationIdValue` |
+| `ServiceMantle.AspNetCore.Http.ExceptionMapping` | `ServiceMantle.Web.Http.ExceptionMapping` |
+| `ServiceMantle.AspNetCore.Http.ExceptionMappingRegistration` | `ServiceMantle.Web.Http.ExceptionMappingRegistration` |
+| `ServiceMantle.AspNetCore.Http.ExceptionMappingRegistry` | `ServiceMantle.Web.Http.ExceptionMappingRegistry` |
+| `ServiceMantle.AspNetCore.Http.ForwardedHeadersMiddleware` | `ServiceMantle.Web.Http.ForwardedHeadersMiddleware` |
+| `ServiceMantle.AspNetCore.Http.ForwardedHeadersRegistration` | `ServiceMantle.Web.Http.ForwardedHeadersRegistration` |
+| `ServiceMantle.AspNetCore.Http.ForwardedHeadersSnapshotProvider` | `ServiceMantle.Web.Http.ForwardedHeadersSnapshotProvider` |
+| `ServiceMantle.AspNetCore.Http.ForwardedHeadersStartupValidator` | `ServiceMantle.Web.Http.ForwardedHeadersStartupValidator` |
+| `ServiceMantle.AspNetCore.Http.IExceptionMappingRegistration` | `ServiceMantle.Web.Http.IExceptionMappingRegistration` |
+| `ServiceMantle.AspNetCore.Http.PipelineComposition` | `ServiceMantle.Web.Http.PipelineComposition` |
+| `ServiceMantle.AspNetCore.Http.ProblemDetailsMiddleware` | `ServiceMantle.Web.Http.ProblemDetailsMiddleware` |
+| `ServiceMantle.AspNetCore.Http.ProblemDetailsStartupValidator` | `ServiceMantle.Web.Http.ProblemDetailsStartupValidator` |
+| `ServiceMantle.AspNetCore.Http.ProblemExtensionFactory` | `ServiceMantle.Web.Http.ProblemExtensionFactory` |
+| `ServiceMantle.AspNetCore.Http.ProblemValue` | `ServiceMantle.Web.Http.ProblemValue` |
+| `ServiceMantle.AspNetCore.Http.SecurityResponseHeadersMiddleware` | `ServiceMantle.Web.Http.SecurityResponseHeadersMiddleware` |
+| `ServiceMantle.AspNetCore.Http.SecurityResponseHeadersRegistration` | `ServiceMantle.Web.Http.SecurityResponseHeadersRegistration` |
+| `ServiceMantle.AspNetCore.Logging.SensitiveHeaderRegistration` | `ServiceMantle.Web.Logging.SensitiveHeaderRegistration` |
+| `ServiceMantle.AspNetCore.Logging.SensitiveHeaderSanitizer` | `ServiceMantle.Web.Logging.SensitiveHeaderSanitizer` |
+| `ServiceMantle.AspNetCore.Logging.SensitiveHeaderStartupValidator` | `ServiceMantle.Web.Logging.SensitiveHeaderStartupValidator` |
+| `ServiceMantle.AspNetCore.Management.ManagementCookieEvents` | `ServiceMantle.Web.Management.ManagementCookieEvents` |
+| `ServiceMantle.AspNetCore.Management.ManagementCookieRegistration` | `ServiceMantle.Web.Management.ManagementCookieRegistration` |
+| `ServiceMantle.AspNetCore.Management.ManagementCookieStartupValidator` | `ServiceMantle.Web.Management.ManagementCookieStartupValidator` |
+| `ServiceMantle.AspNetCore.ManagementApi.AuditQueries.AuditQueryHandlers` | `ServiceMantle.Web.ManagementApi.AuditQueries.AuditQueryHandlers` |
+| `ServiceMantle.AspNetCore.ManagementApi.AuditQueries.AuditQueryMapping` | `ServiceMantle.Web.ManagementApi.AuditQueries.AuditQueryMapping` |
+| `ServiceMantle.AspNetCore.ManagementApi.AuditQueries.AuditQueryResult` | `ServiceMantle.Web.ManagementApi.AuditQueries.AuditQueryResult` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapHandlers` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapHandlers` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapManagementRegistration` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapManagementRegistration` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapManagementStartupValidator` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapManagementStartupValidator` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapMapping` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapMapping` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapRequest` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapRequest` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapRequestParser` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapRequestParser` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapResult` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapResult` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapUpdateCredential` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapUpdateCredential` |
+| `ServiceMantle.AspNetCore.ManagementApi.Bootstrap.BootstrapUpdateCredentialRegistration` | `ServiceMantle.Web.ManagementApi.Bootstrap.BootstrapUpdateCredentialRegistration` |
+| `ServiceMantle.AspNetCore.ManagementApi.Entries.ManagementEntryDefinition` | `ServiceMantle.Web.ManagementApi.Entries.ManagementEntryDefinition` |
+| `ServiceMantle.AspNetCore.ManagementApi.Entries.ManagementEntryMetadata` | `ServiceMantle.Web.ManagementApi.Entries.ManagementEntryMetadata` |
+| `ServiceMantle.AspNetCore.ManagementApi.Entries.ManagementEntryStartupValidator` | `ServiceMantle.Web.ManagementApi.Entries.ManagementEntryStartupValidator` |
+| `ServiceMantle.AspNetCore.ManagementApi.Entries.ManagementEntryState` | `ServiceMantle.Web.ManagementApi.Entries.ManagementEntryState` |
+| `ServiceMantle.AspNetCore.ManagementApi.Entries.UnsafeRequestFilter` | `ServiceMantle.Web.ManagementApi.Entries.UnsafeRequestFilter` |
+| `ServiceMantle.AspNetCore.ManagementApi.Entries.UnsafeRequestGuardMetadata` | `ServiceMantle.Web.ManagementApi.Entries.UnsafeRequestGuardMetadata` |
+| `ServiceMantle.AspNetCore.ManagementApi.ManagementApiMetadata` | `ServiceMantle.Web.ManagementApi.ManagementApiMetadata` |
+| `ServiceMantle.AspNetCore.ManagementApi.ManagementApiProblemResult` | `ServiceMantle.Web.ManagementApi.ManagementApiProblemResult` |
+| `ServiceMantle.AspNetCore.ManagementApi.ManagementApiRegistration` | `ServiceMantle.Web.ManagementApi.ManagementApiRegistration` |
+| `ServiceMantle.AspNetCore.ManagementApi.ManagementApiStartupValidator` | `ServiceMantle.Web.ManagementApi.ManagementApiStartupValidator` |
+| `ServiceMantle.AspNetCore.ManagementApi.ManagementApiState` | `ServiceMantle.Web.ManagementApi.ManagementApiState` |
+| `ServiceMantle.AspNetCore.ManagementApi.RuntimeInfo.RuntimeInfoMapping` | `ServiceMantle.Web.ManagementApi.RuntimeInfo.RuntimeInfoMapping` |
+| `ServiceMantle.AspNetCore.ManagementApi.RuntimeInfo.RuntimeInfoResult` | `ServiceMantle.Web.ManagementApi.RuntimeInfo.RuntimeInfoResult` |
+| `ServiceMantle.AspNetCore.ManagementApi.Session.ManagementSessionBodyAdmission` | `ServiceMantle.Web.ManagementApi.Session.ManagementSessionBodyAdmission` |
+| `ServiceMantle.AspNetCore.ManagementApi.Session.ManagementSessionBodyStatus` | `ServiceMantle.Web.ManagementApi.Session.ManagementSessionBodyStatus` |
+| `ServiceMantle.AspNetCore.ManagementApi.Session.ManagementSessionHandlers` | `ServiceMantle.Web.ManagementApi.Session.ManagementSessionHandlers` |
+| `ServiceMantle.AspNetCore.ManagementApi.Session.ManagementSessionMapping` | `ServiceMantle.Web.ManagementApi.Session.ManagementSessionMapping` |
+| `ServiceMantle.AspNetCore.ManagementApi.Session.ManagementSessionResult` | `ServiceMantle.Web.ManagementApi.Session.ManagementSessionResult` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingQueries.SettingQueryHandlers` | `ServiceMantle.Web.ManagementApi.SettingQueries.SettingQueryHandlers` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingQueries.SettingQueryMapping` | `ServiceMantle.Web.ManagementApi.SettingQueries.SettingQueryMapping` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingQueries.SettingQueryResult` | `ServiceMantle.Web.ManagementApi.SettingQueries.SettingQueryResult` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingUpdates.SettingUpdateHandlers` | `ServiceMantle.Web.ManagementApi.SettingUpdates.SettingUpdateHandlers` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingUpdates.SettingUpdateMapping` | `ServiceMantle.Web.ManagementApi.SettingUpdates.SettingUpdateMapping` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingUpdates.SettingUpdateRequestParser` | `ServiceMantle.Web.ManagementApi.SettingUpdates.SettingUpdateRequestParser` |
+| `ServiceMantle.AspNetCore.ManagementApi.SettingUpdates.SettingUpdateResult` | `ServiceMantle.Web.ManagementApi.SettingUpdates.SettingUpdateResult` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup.SetupHandlers` | `ServiceMantle.Web.ManagementApi.Setup.SetupHandlers` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup.SetupMapping` | `ServiceMantle.Web.ManagementApi.Setup.SetupMapping` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup.SetupRequestParser` | `ServiceMantle.Web.ManagementApi.Setup.SetupRequestParser` |
+| `ServiceMantle.AspNetCore.ManagementApi.Setup.SetupResult` | `ServiceMantle.Web.ManagementApi.Setup.SetupResult` |
+| `ServiceMantle.AspNetCore.ManagementApi.Status.BootstrapRestartLatch` | `ServiceMantle.Web.ManagementApi.Status.BootstrapRestartLatch` |
+| `ServiceMantle.AspNetCore.ManagementApi.Status.BootstrapStatusReader` | `ServiceMantle.Web.ManagementApi.Status.BootstrapStatusReader` |
+| `ServiceMantle.AspNetCore.ManagementApi.Status.IBootstrapStatusReader` | `ServiceMantle.Web.ManagementApi.Status.IBootstrapStatusReader` |
+| `ServiceMantle.AspNetCore.ManagementApi.Status.InstallationStatusHandler` | `ServiceMantle.Web.ManagementApi.Status.InstallationStatusHandler` |
+| `ServiceMantle.AspNetCore.ManagementApi.Status.InstallationStatusMapping` | `ServiceMantle.Web.ManagementApi.Status.InstallationStatusMapping` |
+| `ServiceMantle.AspNetCore.ManagementApi.Status.InstallationStatusResult` | `ServiceMantle.Web.ManagementApi.Status.InstallationStatusResult` |
+| `ServiceMantle.AspNetCore.PhaseGate.ManagementSurfaceMetadata` | `ServiceMantle.Web.PhaseGate.ManagementSurfaceMetadata` |
+| `ServiceMantle.AspNetCore.PhaseGate.PhaseAdmissionMetadata` | `ServiceMantle.Web.PhaseGate.PhaseAdmissionMetadata` |
+| `ServiceMantle.AspNetCore.PhaseGate.PhaseGateMiddleware` | `ServiceMantle.Web.PhaseGate.PhaseGateMiddleware` |
+| `ServiceMantle.AspNetCore.PhaseGate.PhaseGateRegistration` | `ServiceMantle.Web.PhaseGate.PhaseGateRegistration` |
+| `ServiceMantle.AspNetCore.PhaseGate.PhaseGateStartupValidator` | `ServiceMantle.Web.PhaseGate.PhaseGateStartupValidator` |
+| `ServiceMantle.AspNetCore.PhaseGate.PhaseGateState` | `ServiceMantle.Web.PhaseGate.PhaseGateState` |
+| `ServiceMantle.AspNetCore.PhaseGate.PhaseHealthMetadata` | `ServiceMantle.Web.PhaseGate.PhaseHealthMetadata` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitPolicySnapshot` | `ServiceMantle.Web.RateLimiting.RateLimitPolicySnapshot` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitingPolicy` | `ServiceMantle.Web.RateLimiting.RateLimitingPolicy` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitingRegistration` | `ServiceMantle.Web.RateLimiting.RateLimitingRegistration` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitingSnapshot` | `ServiceMantle.Web.RateLimiting.RateLimitingSnapshot` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitingSnapshotProvider` | `ServiceMantle.Web.RateLimiting.RateLimitingSnapshotProvider` |
+| `ServiceMantle.AspNetCore.RateLimiting.RateLimitingStartupValidator` | `ServiceMantle.Web.RateLimiting.RateLimitingStartupValidator` |
+
+类型名全部保留（含例外表先例 `ServiceMantleBuilder` 与框架入口的 `ServiceMantle*` 前缀类名；
+4 个消费方实现的 `delegate` 契约 `SettingUpdateExecutor`、`SetupExecutor`、`SetupInputExecutor`、
+`ManagementLoginAdapter` 同样只换 namespace）。
+
+### 名称敏感反射与消费编译
+
+- 对 `HealthStartupValidator` 与 `SensitiveHeaderStartupValidator` 的按名字断言（`GetType().Name`）
+  按类型短名匹配，类型名未变，断言与验证代码均零变化；本文件「没有变化的部分」一节列出的两处
+  诊断在此继续有效。
+- `eng/tests/consumers` 的 `aspnetcore`、`composed` 项目随新 namespace 更新 using，并继续同时 using
+  所需框架 namespace（暴露 CS0104）；`opentelemetry`、`provider-neutral` 项目保持不 using 任何适配包
+  自有 namespace 的既有约束（`provider-neutral` 的约束注释随本切片改述为不以 `ServiceMantle.Web`
+  点名 #572 上移契约）。

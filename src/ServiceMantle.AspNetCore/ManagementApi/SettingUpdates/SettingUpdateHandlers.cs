@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Configuration;
 using ServiceMantle.Management;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.SettingUpdates;
+namespace ServiceMantle.Web.ManagementApi.SettingUpdates;
 
 internal static class SettingUpdateHandlers
 {

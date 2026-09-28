@@ -3,7 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 internal sealed class ProblemDetailsMiddleware
 {

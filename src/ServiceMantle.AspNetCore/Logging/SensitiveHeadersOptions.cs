@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Logging;
+namespace ServiceMantle.Web.Logging;
 
 /// <summary>Configures additional request Header names whose values are always redacted.</summary>
 public sealed class SensitiveHeadersOptions

@@ -3,7 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.Web;
 using ServiceMantle.OpenTelemetry.Prometheus;
 
 namespace Microsoft.Extensions.DependencyInjection;

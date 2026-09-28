@@ -2,10 +2,10 @@ using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
-using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.Web.Management;
 using ServiceMantle.Management;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Session;
+namespace ServiceMantle.Web.ManagementApi.Session;
 
 /// <summary>
 /// The single serialization exit of the management session entries.

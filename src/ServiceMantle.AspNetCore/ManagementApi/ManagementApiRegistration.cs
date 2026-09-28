@@ -5,12 +5,12 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.AspNetCore.Http;
-using ServiceMantle.AspNetCore.Management;
-using ServiceMantle.AspNetCore.PhaseGate;
-using ServiceMantle.AspNetCore.RateLimiting;
+using ServiceMantle.Web.Http;
+using ServiceMantle.Web.Management;
+using ServiceMantle.Web.PhaseGate;
+using ServiceMantle.Web.RateLimiting;
 
-namespace ServiceMantle.AspNetCore.ManagementApi;
+namespace ServiceMantle.Web.ManagementApi;
 
 internal sealed record ManagementApiRegistration(string? RootPath, TimeSpan SnapshotTimeout);
 

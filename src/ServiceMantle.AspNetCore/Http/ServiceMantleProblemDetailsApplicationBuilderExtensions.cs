@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.AspNetCore.Http;
+using ServiceMantle.Web;
+using ServiceMantle.Web.Http;
 
 namespace Microsoft.AspNetCore.Builder;
 

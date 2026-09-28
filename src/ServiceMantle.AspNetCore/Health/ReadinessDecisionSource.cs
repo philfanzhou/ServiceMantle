@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Health;
 
-namespace ServiceMantle.AspNetCore.Health;
+namespace ServiceMantle.Web.Health;
 
 /// <summary>
 /// The default decision source: it reads the consumer-owned base snapshot once, applies the finite

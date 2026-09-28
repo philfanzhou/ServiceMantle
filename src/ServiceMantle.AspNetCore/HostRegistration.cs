@@ -1,6 +1,6 @@
 using ServiceMantle;
 
-namespace ServiceMantle.AspNetCore;
+namespace ServiceMantle.Web;
 
 /// <summary>
 /// Records the host identity fixed by <c>AddServiceMantle</c> and marks the container as having

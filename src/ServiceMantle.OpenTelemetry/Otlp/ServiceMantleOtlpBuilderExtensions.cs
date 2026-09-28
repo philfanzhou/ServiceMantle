@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.Web;
 using ServiceMantle.OpenTelemetry.Otlp;
 
 namespace Microsoft.Extensions.DependencyInjection;

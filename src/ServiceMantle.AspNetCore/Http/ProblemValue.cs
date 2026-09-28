@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 internal static class ProblemValue
 {

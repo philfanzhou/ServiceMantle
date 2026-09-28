@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Hosting;
 
-namespace ServiceMantle.AspNetCore.PhaseGate;
+namespace ServiceMantle.Web.PhaseGate;
 
 internal sealed record PhaseGateRegistration(string Prefix, TimeSpan Timeout);
 

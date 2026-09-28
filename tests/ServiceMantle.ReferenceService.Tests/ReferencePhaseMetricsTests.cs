@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
-using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.Web.Health;
 using ServiceMantle.Diagnostics;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;

@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Primitives;
-using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Web.Logging;
 using ServiceMantle.Logging;
 using Xunit;
 

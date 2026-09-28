@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.CookiePolicy;
 using Microsoft.AspNetCore.Http;
 
-namespace ServiceMantle.AspNetCore.Management;
+namespace ServiceMantle.Web.Management;
 
 /// <summary>
 /// Configures the security and lifetime of the ServiceMantle management session cookie.

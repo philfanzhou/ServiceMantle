@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.PhaseGate;
+namespace ServiceMantle.Web.PhaseGate;
 
 /// <summary>Identifies a finite endpoint surface within the management namespace.</summary>
 public enum ManagementSurface

@@ -3,7 +3,7 @@ using System.IO.Pipelines;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Session;
+namespace ServiceMantle.Web.ManagementApi.Session;
 
 /// <summary>
 /// Reads the raw login body into memory before the consumer adapter runs, so the admitted envelope

@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Net.Http.Headers;
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Setup;
+namespace ServiceMantle.Web.ManagementApi.Setup;
 
 /// <summary>
 /// Parses the one property the Setup completion entry accepts.
