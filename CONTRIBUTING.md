@@ -36,16 +36,32 @@
 
 目录与 namespace 表达类型属于哪个模块，类型名表达它做什么。两者不重复同一段信息。
 
-### 1. namespace 由项目根 namespace 加功能子目录决定
+### 1. namespace 按能力组织，能力 namespace 归核心包
 
-C# 不会从文件夹推导 namespace，因此移动文件时必须同时改声明和 using。一个 namespace 不得跨越两个
-程序集：`ServiceMantle.AspNetCore` 的类型放在 `ServiceMantle.AspNetCore.<子目录>` 下，不放进核心包的
-`ServiceMantle.Logging`、`ServiceMantle.Management`。
+C# 不会从文件夹推导 namespace，因此移动文件时必须同时改声明和 using。可选适配包的自有类型放在
+它实现的能力所对应的 namespace 或其子空间，而不是技术选型命名的 namespace：ASP.NET Core 适配包
+的自有类型放 `ServiceMantle.Web` 及其子空间（如 `ServiceMantle.Web.Http`），Consul 适配包放
+`ServiceMantle.Discovery.Registration` / `ServiceMantle.Discovery.Configuration`，Serilog 适配包放
+`ServiceMantle.Logging.Pipeline` / `ServiceMantle.Logging.Remote`，OpenTelemetry 适配包放
+`ServiceMantle.Diagnostics.Instrumentation` / `ServiceMantle.Diagnostics.Export.*`，EF Core 持久化包
+放 `ServiceMantle.Persistence.Relational` 及其子空间。逐包固定映射见
+[ADR 0007](docs/decisions/0007-provider-neutral-contract-boundary.md) 的「重新评估：能力命名空间」。
+
+能力 namespace 本身归核心包所有：`ServiceMantle.Logging` 是核心包的 namespace，子空间
+`ServiceMantle.Logging.Pipeline` 才是 Serilog 适配包的自有 namespace。一个 namespace 不得跨越两个
+程序集，能力 namespace 与其子空间的所有权划分保证这一点。
+
+公开契约上移核心包的判据是**签名只依赖核心包既有类型**：`IServiceStartupPhaseResolver` 的签名只
+依赖 `ServiceStartupPhase` / `ServiceInstallationState`，可以上移；`IServiceDbContext` 的签名含
+EF Core 的 `DbSet`，留在持久化适配包。名字看起来中立不构成上移理由。
+
+六个数据库 provider 包（`ServiceMantle.Database.*`）的 namespace 与包名保持 provider 命名，不适用
+本条。
 
 ### 2. 普通类型不重复产品名与所在模块名
 
-namespace 已经写明产品和模块，类型名就只写职责：`ServiceMantle.AspNetCore.Http.CorrelationIdMiddleware`，
-不是 `ServiceMantle.Http.ServiceMantleCorrelationIdMiddleware`。
+namespace 已经写明产品和能力，类型名就只写职责：`ServiceMantle.Web.Http.CorrelationIdMiddleware`，
+不是 `ServiceMantle.Web.Http.ServiceMantleCorrelationIdMiddleware`。
 
 去前缀不是把名字压到最短。当模块词是调用方同时引用多个同类类型时的唯一区分（`SerilogOptions`、
 `GrafanaLokiOptions`、`OtlpOptions`），保留它；不要把所有配置类都缩成 `Options`，那会把负担转嫁成
@@ -82,28 +98,34 @@ namespace 已经写明产品和模块，类型名就只写职责：`ServiceMantl
 公开类型改名同时是源码和二进制破坏性变更：完整映射写入 `NAMING_MIGRATION.md`，在后续新版本交付，
 不覆盖历史版本。
 
-### 7. provider 命名的 namespace 只放 provider 特有契约
+### 7. provider 特有契约留在适配包，由类型名诚实暴露
 
-namespace 回答「这个类型是什么」，不回答「哪个包发的」。判定一个公开类型该放哪里，看消费方在
-**自己的源码**里是否必须点名它（实现接口、resolve 后调用、catch），以及它的契约里是否含有该
-产品特有的模型：
+namespace 回答「这个类型是什么」，不回答「哪个包发的」。技术选型（Consul、Serilog、
+OpenTelemetry、EF Core、ASP.NET Core）出现在包名和必要的类型名里，不出现在适配包的自有
+namespace 里。判定一个公开类型该放哪里，看消费方在**自己的源码**里是否必须点名它（实现接口、
+resolve 后调用、catch），以及它的契约里是否含有该产品特有的模型：
 
-- **中立契约不得住在 provider 命名的 namespace。** 消费方必须点名、且契约中没有 provider 成分
-  的类型，放核心包。例如「从非机密名字解析出 Authorization header」对任何远程日志端点都成立，
-  不属于某个后端产品。
-- **provider 特有契约必须留在 provider 命名的 namespace。** 契约本身携带该产品的认证方式、端点
-  形状或模板语法时，中立的名字会**隐藏**耦合而不是消除它：调用方看到 `RegistryClientConfiguration`
-  会以为可移植，直到换实现时发现 `Token` 的语义对不上。命名要诚实暴露耦合。
+- **中立契约进核心包。** 消费方必须点名、且契约中没有 provider 成分的类型，放核心包的能力
+  namespace，上移判据按 §1 的签名检查执行。例如「从非机密名字解析出 Authorization header」对
+  任何远程日志端点都成立，不属于某个后端产品。
+- **provider 特有契约留在适配包，类型名保留产品词。** 契约本身携带该产品的认证方式、端点形状
+  或模板语法时，中立的名字会**隐藏**耦合而不是消除它：调用方看到 `RegistryClientConfiguration`
+  会以为可移植，直到换实现时发现 `Token` 的语义对不上。命名要诚实暴露耦合；这些类型住在能力
+  namespace 的适配包子空间（如 `ServiceMantle.Discovery.Registration`），不因 namespace 中立而
+  伪装成可移植。
 - **注册入口放框架 namespace**，按 §3 保留 `AddServiceMantle*` 前缀，使消费方的组合根不需要
-  provider 命名的 `using`。
-- **协议名不是库名。** OTLP、Prometheus exposition 是标准而非实现，对应 namespace 不属于泄漏。
+  为注册本身增加 `using`。
+- **协议名不是库名。** OTLP、Prometheus exposition 是标准而非实现，对应 namespace 不属于泄漏，
+  随能力命名住在 `ServiceMantle.Diagnostics.Export.*`。
 
-可断言的形式：消费方源码中不允许出现 provider 命名的 `using`，provider 的名字只允许出现在
-`.csproj` 的 `PackageReference` 和组合根的一行 `Add*()`。`eng/tests/consumers` 下的消费项目
-以编译失败的方式守住这条。
+可断言的形式：消费方源码中不允许出现技术选型命名的 namespace（`ServiceMantle.Consul`、
+`ServiceMantle.Serilog`、`ServiceMantle.OpenTelemetry`、`ServiceMantle.AspNetCore`）的
+`using`；适配器的名字只出现在 `.csproj` 的 `PackageReference`、组合根的一行 `Add*()`，以及
+provider 特有类型与成员的名字（`ConsulClientConfiguration`、`SerilogOptions.OutputTemplate`）
+里。`eng/tests/consumers` 下的消费项目以编译失败的方式守住这条。
 
 替换 provider 特有传输或凭据的扩展点（[ADR 0007](docs/decisions/0007-provider-neutral-contract-boundary.md)
 的 B 类 SPI，例如 Consul 传输）属于 provider 特有代码，不在该断言范围内。
 
-判据全文、三层改动模型与现有类型的分类清单见
+判据全文、三层改动模型、现有类型的分类清单与逐包映射见
 [ADR 0007](docs/decisions/0007-provider-neutral-contract-boundary.md)。
