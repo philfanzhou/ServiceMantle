@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.Serilog;
+using ServiceMantle.Logging.Pipeline;
 
-namespace ServiceMantle.Serilog.GrafanaLoki;
+namespace ServiceMantle.Logging.Remote;
 
 internal sealed class GrafanaLokiRuntime
 {

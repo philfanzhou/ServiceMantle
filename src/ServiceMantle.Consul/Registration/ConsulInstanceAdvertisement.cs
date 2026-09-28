@@ -1,6 +1,6 @@
 using ServiceMantle.Discovery;
 
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Registration;
 
 /// <summary>
 /// The validated immutable per-instance advertisement copy the client provider captures into

@@ -1,4 +1,4 @@
-namespace ServiceMantle.Serilog;
+namespace ServiceMantle.Logging.Pipeline;
 
 /// <summary>Reports a safe, startup-time ServiceMantle Serilog configuration failure.</summary>
 public sealed class SerilogConfigurationException : InvalidOperationException

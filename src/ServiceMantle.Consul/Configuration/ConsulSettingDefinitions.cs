@@ -1,6 +1,7 @@
 using ServiceMantle.Configuration;
+using ServiceMantle.Discovery.Registration;
 
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Configuration;
 
 /// <summary>Defines the restart-bound Consul catalog and enabled-only combination validation.</summary>
 public sealed class ConsulSettingDefinitions : IServiceSettingDefinitionProvider, IServiceSettingCompositeValidator

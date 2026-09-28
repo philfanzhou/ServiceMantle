@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <RootNamespace>ServiceMantle.Serilog</RootNamespace>
+    <RootNamespace>ServiceMantle.Logging.Pipeline</RootNamespace>
     <AssemblyName>ServiceMantle.Serilog</AssemblyName>
     <PackageId>ServiceMantle.Serilog</PackageId>
     <PackageDescription>Serilog hosting, sanitizing console output, and an opt-in Grafana Loki sink for ServiceMantle.</PackageDescription>

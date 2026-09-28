@@ -1,4 +1,4 @@
-namespace ServiceMantle.Serilog.GrafanaLoki;
+namespace ServiceMantle.Logging.Remote;
 
 /// <summary>Configures the isolated ServiceMantle Grafana Loki sink.</summary>
 public sealed class GrafanaLokiOptions

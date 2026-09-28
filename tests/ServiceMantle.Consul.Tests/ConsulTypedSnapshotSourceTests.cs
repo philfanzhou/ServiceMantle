@@ -1,8 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.Configuration;
+using ServiceMantle.Discovery.Configuration;
+using ServiceMantle.Discovery.Registration;
 using Xunit;
-using static ServiceMantle.Consul.ConsulSettingDefinitions;
+using static ServiceMantle.Discovery.Configuration.ConsulSettingDefinitions;
 
 namespace ServiceMantle.Consul.Tests;
 

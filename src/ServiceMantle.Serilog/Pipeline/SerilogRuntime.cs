@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 using Serilog.Core;
 using Serilog.Extensions.Logging;
 
-namespace ServiceMantle.Serilog;
+namespace ServiceMantle.Logging.Pipeline;
 
 internal sealed class SerilogMarker;
 

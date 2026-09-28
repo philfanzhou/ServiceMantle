@@ -9,7 +9,7 @@ using Serilog.Events;
 using ServiceMantle;
 using ServiceMantle.AspNetCore.Logging;
 using ServiceMantle.Logging;
-using ServiceMantle.Serilog;
+using ServiceMantle.Logging.Pipeline;
 using Xunit;
 
 namespace ServiceMantle.Serilog.Tests;

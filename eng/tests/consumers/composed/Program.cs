@@ -34,8 +34,8 @@ using ServiceMantle.Persistence.Relational;
 using ServiceMantle.Persistence.Relational.Mapping;
 using ServiceMantle.Persistence.Relational.DataProtection;
 using ServiceMantle.Persistence.Relational.Stores;
-using ServiceMantle.Serilog;
-using ServiceMantle.Serilog.GrafanaLoki;
+using ServiceMantle.Logging.Pipeline;
+using ServiceMantle.Logging.Remote;
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-consumer");
 try

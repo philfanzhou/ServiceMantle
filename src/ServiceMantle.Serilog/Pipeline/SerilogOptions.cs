@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-namespace ServiceMantle.Serilog;
+namespace ServiceMantle.Logging.Pipeline;
 
 /// <summary>Configures the bounded ServiceMantle Serilog host and Console pipeline.</summary>
 /// <remarks>

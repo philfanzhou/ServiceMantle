@@ -5,9 +5,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog.Core;
 using Serilog.Events;
 using ServiceMantle.Logging;
-using ServiceMantle.Serilog;
+using ServiceMantle.Logging.Pipeline;
 
-namespace ServiceMantle.Serilog.GrafanaLoki;
+namespace ServiceMantle.Logging.Remote;
 
 internal sealed class GrafanaLokiSinkFactory(
     IServiceProvider serviceProvider,

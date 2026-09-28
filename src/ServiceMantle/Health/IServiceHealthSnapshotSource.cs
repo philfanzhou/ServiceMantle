@@ -1,6 +1,4 @@
-using ServiceMantle.Health;
-
-namespace ServiceMantle.AspNetCore.Health;
+namespace ServiceMantle.Health;
 
 /// <summary>
 /// Supplies one caller-owned, read-only health snapshot without performing setup or migration.

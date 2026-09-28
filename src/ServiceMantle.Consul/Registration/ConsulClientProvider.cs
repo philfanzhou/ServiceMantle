@@ -1,6 +1,6 @@
 using ServiceMantle.Configuration;
 
-namespace ServiceMantle.Consul;
+namespace ServiceMantle.Discovery.Registration;
 
 /// <summary>Creates explicit owned sessions from a single atomically captured active snapshot.</summary>
 public sealed class ConsulClientProvider

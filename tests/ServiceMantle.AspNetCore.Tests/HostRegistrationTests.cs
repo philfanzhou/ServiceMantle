@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.AspNetCore;
 using ServiceMantle.Bootstrap;
+using ServiceMantle.Installation;
 using ServiceMantle.Migration;
 using Xunit;
 

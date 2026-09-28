@@ -2,8 +2,9 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle;
 using ServiceMantle.Configuration;
-using ServiceMantle.Consul;
 using ServiceMantle.Discovery;
+using ServiceMantle.Discovery.Configuration;
+using ServiceMantle.Discovery.Registration;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
