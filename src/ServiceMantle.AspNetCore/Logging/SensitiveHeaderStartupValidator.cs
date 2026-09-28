@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ServiceMantle.Logging;
 
-namespace ServiceMantle.AspNetCore.Logging;
+namespace ServiceMantle.Web.Logging;
 
 internal sealed class SensitiveHeaderStartupValidator(
     IServiceProvider serviceProvider) : IHostedService

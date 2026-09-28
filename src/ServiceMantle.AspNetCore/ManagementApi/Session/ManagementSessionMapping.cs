@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Session;
+namespace ServiceMantle.Web.ManagementApi.Session;
 
 /// <summary>
 /// Owns the endpoint-local mapping rules, limits, and closed error code of the session entries.

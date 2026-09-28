@@ -3,10 +3,10 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
-using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.Web.Management;
 using ServiceMantle.Management;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Session;
+namespace ServiceMantle.Web.ManagementApi.Session;
 
 /// <summary>
 /// Answers the three management session entries: login, the current-session read, and local logout.

@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 /// <summary>Defines the explicit trust boundary for ServiceMantle forwarded headers.</summary>
 public sealed class ForwardedHeadersTrustOptions

@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore.ManagementApi;
-using ServiceMantle.AspNetCore.ManagementApi.AuditQueries;
+using ServiceMantle.Web.ManagementApi;
+using ServiceMantle.Web.ManagementApi.AuditQueries;
 
 namespace Microsoft.AspNetCore.Builder;
 

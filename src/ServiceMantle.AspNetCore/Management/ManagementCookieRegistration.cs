@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
-namespace ServiceMantle.AspNetCore.Management;
+namespace ServiceMantle.Web.Management;
 
 internal sealed record ManagementCookieRegistration(
     bool HttpOnly,

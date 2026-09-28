@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.Web;
 using ServiceMantle.Diagnostics;
 using ServiceMantle.OpenTelemetry.Otlp;
 

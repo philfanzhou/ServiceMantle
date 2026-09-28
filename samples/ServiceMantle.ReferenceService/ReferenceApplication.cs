@@ -2,7 +2,7 @@ using System.Globalization;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.Web.Health;
 using ServiceMantle.Configuration;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
@@ -242,7 +242,7 @@ public static class ReferenceApplication
                 {
                     options.Enabled = true;
                     options.AuthorizationPolicyName =
-                        ServiceMantle.AspNetCore.Management.ManagementAuthorizationDefaults.AdminPolicyName;
+                        ServiceMantle.Web.Management.ManagementAuthorizationDefaults.AdminPolicyName;
                 });
             }
         }

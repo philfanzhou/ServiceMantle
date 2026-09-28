@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 /// <summary>
 /// Defines the stable HTTP header names owned by ServiceMantle.

@@ -7,8 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
-using ServiceMantle.AspNetCore.Http;
-using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Web.Http;
+using ServiceMantle.Web.Logging;
 using Xunit;
 
 namespace ServiceMantle.AspNetCore.Tests;

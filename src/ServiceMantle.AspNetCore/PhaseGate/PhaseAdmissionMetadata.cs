@@ -1,6 +1,6 @@
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.AspNetCore.PhaseGate;
+namespace ServiceMantle.Web.PhaseGate;
 
 /// <summary>
 /// Declares the fixed set of startup phases in which an endpoint outside the management prefix

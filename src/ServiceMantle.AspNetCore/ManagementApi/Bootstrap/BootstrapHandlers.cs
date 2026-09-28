@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore.ManagementApi.Status;
+using ServiceMantle.Web.ManagementApi.Status;
 using ServiceMantle.Bootstrap;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
+namespace ServiceMantle.Web.ManagementApi.Bootstrap;
 
 /// <summary>
 /// Answers the two Bootstrap management entries from the existing instance-local file manager and

@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Http;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Status;
+namespace ServiceMantle.Web.ManagementApi.Status;
 
 /// <summary>
 /// The single serialization exit of the anonymous installation status entry.

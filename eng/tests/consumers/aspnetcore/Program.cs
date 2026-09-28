@@ -2,7 +2,7 @@
 // identity registered, and a host that starts. It exists to prove the published package is usable
 // on its own, so it deliberately enables no optional capability.
 using ServiceMantle;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.Web;
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-consumer");
 try

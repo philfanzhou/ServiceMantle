@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Http;
 using ServiceMantle.Installation;
 using ServiceMantle.Logging;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Setup;
+namespace ServiceMantle.Web.ManagementApi.Setup;
 
 /// <summary>
 /// The consumer-defined installation input of one Setup completion request.

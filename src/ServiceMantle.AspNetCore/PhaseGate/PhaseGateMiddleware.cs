@@ -1,11 +1,11 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore.Health;
-using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.Web.Health;
+using ServiceMantle.Web.ManagementApi.Entries;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.AspNetCore.PhaseGate;
+namespace ServiceMantle.Web.PhaseGate;
 
 internal sealed class PhaseGateMiddleware(RequestDelegate next, PhaseGateState state)
 {

@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 /// <summary>Defines stable forwarded-header startup configuration error codes.</summary>
 public static class WellKnownForwardedHeadersConfigurationErrorCodes

@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
+namespace ServiceMantle.Web.ManagementApi.Bootstrap;
 
 /// <summary>
 /// Owns the endpoint-local mapping rules, fixed limits, and closed error codes of the Bootstrap

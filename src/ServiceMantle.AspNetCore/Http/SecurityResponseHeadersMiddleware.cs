@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Http;
 
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 internal sealed class SecurityResponseHeadersMiddleware(RequestDelegate next)
 {

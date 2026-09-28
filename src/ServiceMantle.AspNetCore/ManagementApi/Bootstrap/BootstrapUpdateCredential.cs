@@ -2,10 +2,10 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Net.Http.Headers;
-using ServiceMantle.AspNetCore.Management;
-using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.Web.Management;
+using ServiceMantle.Web.ManagementApi.Entries;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
+namespace ServiceMantle.Web.ManagementApi.Bootstrap;
 
 /// <summary>One <c>AddServiceMantleBootstrapManagement</c> call's Bearer scheme choice.</summary>
 internal sealed record BootstrapUpdateCredentialRegistration(string? BearerScheme);

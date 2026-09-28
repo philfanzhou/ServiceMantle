@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
-using ServiceMantle.AspNetCore.ManagementApi.SettingUpdates;
+using ServiceMantle.Web.ManagementApi.SettingUpdates;
 using ServiceMantle.Configuration;
 using ServiceMantle.Persistence.Relational.Stores;
 using ServiceMantle.ReferenceService.Database.PostgreSql;

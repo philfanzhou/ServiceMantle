@@ -1,6 +1,6 @@
 using System.Threading.RateLimiting;
 
-namespace ServiceMantle.AspNetCore.RateLimiting;
+namespace ServiceMantle.Web.RateLimiting;
 
 internal sealed record RateLimitingRegistration(
     RateLimitingOptions Options);

@@ -11,7 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.Web.Health;
 using ServiceMantle.Health;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.ReferenceService.Management;

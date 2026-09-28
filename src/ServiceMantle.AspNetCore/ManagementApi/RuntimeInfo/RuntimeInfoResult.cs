@@ -1,9 +1,9 @@
 using System.Buffers;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
-using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Web.Logging;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.RuntimeInfo;
+namespace ServiceMantle.Web.ManagementApi.RuntimeInfo;
 
 /// <summary>
 /// The closed result of the management API v1 runtime information endpoint.

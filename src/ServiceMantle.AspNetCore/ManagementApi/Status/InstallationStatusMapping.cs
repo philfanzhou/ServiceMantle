@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Status;
+namespace ServiceMantle.Web.ManagementApi.Status;
 
 /// <summary>
 /// Owns the endpoint-local mapping rules and closed error code of the installation status entry.

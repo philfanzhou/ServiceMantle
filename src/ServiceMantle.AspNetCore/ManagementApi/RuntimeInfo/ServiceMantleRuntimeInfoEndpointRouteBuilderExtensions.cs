@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore.Logging;
-using ServiceMantle.AspNetCore.ManagementApi;
-using ServiceMantle.AspNetCore.ManagementApi.RuntimeInfo;
+using ServiceMantle.Web.Logging;
+using ServiceMantle.Web.ManagementApi;
+using ServiceMantle.Web.ManagementApi.RuntimeInfo;
 
 namespace Microsoft.AspNetCore.Builder;
 

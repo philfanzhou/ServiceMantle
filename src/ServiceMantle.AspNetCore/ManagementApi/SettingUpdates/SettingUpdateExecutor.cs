@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using ServiceMantle.Configuration;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.SettingUpdates;
+namespace ServiceMantle.Web.ManagementApi.SettingUpdates;
 
 /// <summary>
 /// Executes one validated management setting update inside a consumer-owned unit of work.

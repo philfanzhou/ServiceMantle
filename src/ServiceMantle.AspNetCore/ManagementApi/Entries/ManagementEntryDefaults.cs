@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Http;
-using ServiceMantle.AspNetCore.Management;
-using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
-using ServiceMantle.AspNetCore.PhaseGate;
-using ServiceMantle.AspNetCore.RateLimiting;
+using ServiceMantle.Web.Management;
+using ServiceMantle.Web.ManagementApi.Bootstrap;
+using ServiceMantle.Web.PhaseGate;
+using ServiceMantle.Web.RateLimiting;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Entries;
+namespace ServiceMantle.Web.ManagementApi.Entries;
 
 /// <summary>
 /// The finite set of shared management entries served directly under the configured versioned root.

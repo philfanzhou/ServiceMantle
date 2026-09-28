@@ -6,13 +6,13 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.AspNetCore.Http;
-using ServiceMantle.AspNetCore.Management;
-using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
-using ServiceMantle.AspNetCore.PhaseGate;
-using ServiceMantle.AspNetCore.RateLimiting;
+using ServiceMantle.Web.Http;
+using ServiceMantle.Web.Management;
+using ServiceMantle.Web.ManagementApi.Bootstrap;
+using ServiceMantle.Web.PhaseGate;
+using ServiceMantle.Web.RateLimiting;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Entries;
+namespace ServiceMantle.Web.ManagementApi.Entries;
 
 /// <summary>
 /// Records the opt-in management entries a host mapped and validates their fixed baseline before

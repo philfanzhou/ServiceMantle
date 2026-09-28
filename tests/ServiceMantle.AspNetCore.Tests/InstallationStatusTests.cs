@@ -1,9 +1,9 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
-using ServiceMantle.AspNetCore.Http;
-using ServiceMantle.AspNetCore.ManagementApi;
-using ServiceMantle.AspNetCore.ManagementApi.Status;
+using ServiceMantle.Web.Http;
+using ServiceMantle.Web.ManagementApi;
+using ServiceMantle.Web.ManagementApi.Status;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using Xunit;

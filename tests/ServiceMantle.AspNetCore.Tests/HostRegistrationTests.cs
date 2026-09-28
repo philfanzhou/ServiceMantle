@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.Web;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Installation;
 using ServiceMantle.Migration;

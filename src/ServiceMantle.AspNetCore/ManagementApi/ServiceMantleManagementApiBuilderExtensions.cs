@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.AspNetCore.ManagementApi;
+using ServiceMantle.Web;
+using ServiceMantle.Web.ManagementApi;
 
 namespace Microsoft.Extensions.DependencyInjection;
 

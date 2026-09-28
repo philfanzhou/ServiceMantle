@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.Web;
 using Xunit;
 
 namespace ServiceMantle.OpenTelemetry.Tests;

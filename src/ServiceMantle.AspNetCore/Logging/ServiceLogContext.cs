@@ -2,7 +2,7 @@ using System.Collections;
 using System.Reflection;
 using Microsoft.Extensions.Logging;
 
-namespace ServiceMantle.AspNetCore.Logging;
+namespace ServiceMantle.Web.Logging;
 
 /// <summary>
 /// Creates structured logging scopes containing stable service and instance identity.

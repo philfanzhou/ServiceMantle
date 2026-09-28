@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.ManagementApi.Status;
+namespace ServiceMantle.Web.ManagementApi.Status;
 
 /// <summary>
 /// The process-local latch that records whether this process wrote local Bootstrap configuration

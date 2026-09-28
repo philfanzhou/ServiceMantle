@@ -31,8 +31,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ServiceMantle;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.Web;
+using ServiceMantle.Web.Health;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 

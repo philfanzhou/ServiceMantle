@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Hosting;
 
-namespace ServiceMantle.AspNetCore.RateLimiting;
+namespace ServiceMantle.Web.RateLimiting;
 
 internal sealed class RateLimitingStartupValidator(
     RateLimitingSnapshotProvider snapshotProvider) : IHostedService

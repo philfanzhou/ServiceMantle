@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.ManagementApi.Session;
+namespace ServiceMantle.Web.ManagementApi.Session;
 
 /// <summary>
 /// Configures the endpoint-local behaviour of the management login entry.

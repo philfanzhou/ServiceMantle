@@ -2,7 +2,7 @@ using System.Net;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
-using ServiceMantle.AspNetCore.Management;
+using ServiceMantle.Web.Management;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.ReferenceService.Management;
 using ServiceMantle.Testing;

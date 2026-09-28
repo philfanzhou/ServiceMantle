@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Management;
+namespace ServiceMantle.Web.Management;
 
 /// <summary>
 /// Fixed defaults of the ServiceMantle management authorization surface.

@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.ManagementApi;
+namespace ServiceMantle.Web.ManagementApi;
 
 /// <summary>
 /// Defines the fixed root, version segment, error codes, and titles of the protected ServiceMantle

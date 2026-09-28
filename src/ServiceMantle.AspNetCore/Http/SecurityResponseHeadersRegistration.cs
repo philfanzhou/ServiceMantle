@@ -1,3 +1,3 @@
-namespace ServiceMantle.AspNetCore.Http;
+namespace ServiceMantle.Web.Http;
 
 internal sealed class SecurityResponseHeadersRegistration;

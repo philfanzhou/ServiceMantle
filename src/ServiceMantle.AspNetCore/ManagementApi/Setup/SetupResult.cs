@@ -1,7 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Http;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Setup;
+namespace ServiceMantle.Web.ManagementApi.Setup;
 
 /// <summary>
 /// The single serialization exit of the Setup entries.

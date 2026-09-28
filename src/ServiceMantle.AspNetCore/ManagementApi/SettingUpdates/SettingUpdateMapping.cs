@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.SettingUpdates;
+namespace ServiceMantle.Web.ManagementApi.SettingUpdates;
 
 internal static class SettingUpdateMapping
 {

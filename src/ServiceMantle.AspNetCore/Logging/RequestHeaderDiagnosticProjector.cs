@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 using ServiceMantle.Logging;
 
-namespace ServiceMantle.AspNetCore.Logging;
+namespace ServiceMantle.Web.Logging;
 
 internal sealed class SensitiveHeaderSanitizer : IStructuredLogSanitizerProvider
 {

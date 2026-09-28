@@ -3,8 +3,8 @@ using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Web;
+using ServiceMantle.Web.Logging;
 using ServiceMantle.OpenTelemetry;
 
 namespace Microsoft.Extensions.DependencyInjection;

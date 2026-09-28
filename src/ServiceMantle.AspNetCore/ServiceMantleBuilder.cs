@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 
-namespace ServiceMantle.AspNetCore;
+namespace ServiceMantle.Web;
 
 /// <summary>
 /// Exposes the service collection used to compose optional ServiceMantle host capabilities.

@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using ServiceMantle.AspNetCore.Health;
+using ServiceMantle.Web.Health;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using Xunit;

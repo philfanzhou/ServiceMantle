@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.Web;
 using ServiceMantle.Installation;
 using Xunit;
 

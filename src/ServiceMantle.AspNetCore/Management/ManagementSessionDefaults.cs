@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Management;
+namespace ServiceMantle.Web.Management;
 
 /// <summary>
 /// Fixed names, lifetimes, and safe API result codes for ServiceMantle management sessions.

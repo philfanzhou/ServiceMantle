@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Audit;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.AuditQueries;
+namespace ServiceMantle.Web.ManagementApi.AuditQueries;
 
 /// <summary>
 /// Adapts the bounded management audit query contract to its closed HTTP response.

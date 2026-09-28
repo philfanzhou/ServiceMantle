@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
-using ServiceMantle.AspNetCore.ManagementApi.Setup;
+using ServiceMantle.Web.ManagementApi.Setup;
 using ServiceMantle.Audit;
 using ServiceMantle.Installation;
 using ServiceMantle.Persistence.Relational.Stores;

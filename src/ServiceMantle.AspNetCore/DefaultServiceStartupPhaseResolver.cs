@@ -1,6 +1,6 @@
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.AspNetCore;
+namespace ServiceMantle.Web;
 
 internal sealed class DefaultServiceStartupPhaseResolver : IServiceStartupPhaseResolver
 {

@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.SettingUpdates;
+namespace ServiceMantle.Web.ManagementApi.SettingUpdates;
 
 internal sealed class SettingUpdateResult : IResult
 {

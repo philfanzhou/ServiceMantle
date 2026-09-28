@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle.Audit;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.AuditQueries;
+namespace ServiceMantle.Web.ManagementApi.AuditQueries;
 
 /// <summary>
 /// Owns mapping validation and bounded HTTP input parsing for management audit queries.

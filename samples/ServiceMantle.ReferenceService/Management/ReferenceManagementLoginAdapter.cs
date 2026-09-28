@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Net.Http.Headers;
-using ServiceMantle.AspNetCore.ManagementApi.Session;
+using ServiceMantle.Web.ManagementApi.Session;
 using ServiceMantle.Management;
 
 namespace ServiceMantle.ReferenceService.Management;

@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.PhaseGate;
+namespace ServiceMantle.Web.PhaseGate;
 
 /// <summary>Configures the fixed management namespace and phase observation wait.</summary>
 public sealed class PhaseGateOptions

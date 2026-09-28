@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.Logging;
+namespace ServiceMantle.Web.Logging;
 
 /// <summary>
 /// Defines the stable structured field names emitted by <see cref="ServiceLogContext"/>.

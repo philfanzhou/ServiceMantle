@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Http;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Entries;
+namespace ServiceMantle.Web.ManagementApi.Entries;
 
 /// <summary>
 /// Rejects an unsafe management entry request that does not carry exactly one

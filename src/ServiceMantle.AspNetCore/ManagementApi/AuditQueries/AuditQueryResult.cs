@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using ServiceMantle.Audit;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.AuditQueries;
+namespace ServiceMantle.Web.ManagementApi.AuditQueries;
 
 /// <summary>
 /// The closed serialization exit for management audit query responses.

@@ -5,7 +5,7 @@ using Microsoft.Net.Http.Headers;
 using ServiceMantle.Audit;
 using ServiceMantle.Configuration;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.SettingUpdates;
+namespace ServiceMantle.Web.ManagementApi.SettingUpdates;
 
 internal static class SettingUpdateRequestParser
 {

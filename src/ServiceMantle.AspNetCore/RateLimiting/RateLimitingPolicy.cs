@@ -8,11 +8,11 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using ServiceMantle.AspNetCore.Http;
-using ServiceMantle.AspNetCore.ManagementApi.Entries;
+using ServiceMantle.Web.Http;
+using ServiceMantle.Web.ManagementApi.Entries;
 using ServiceMantle.Management;
 
-namespace ServiceMantle.AspNetCore.RateLimiting;
+namespace ServiceMantle.Web.RateLimiting;
 
 internal static class RateLimitingPolicy
 {

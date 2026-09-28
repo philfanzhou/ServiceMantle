@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using ServiceMantle.Management;
 
-namespace ServiceMantle.AspNetCore.ManagementApi.Session;
+namespace ServiceMantle.Web.ManagementApi.Session;
 
 /// <summary>
 /// Obtains one management identity for a login request from credentials the consuming service owns.

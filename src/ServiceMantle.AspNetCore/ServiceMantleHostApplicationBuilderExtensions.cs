@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using ServiceMantle;
-using ServiceMantle.AspNetCore;
+using ServiceMantle.Web;
 
 namespace Microsoft.Extensions.Hosting;
 

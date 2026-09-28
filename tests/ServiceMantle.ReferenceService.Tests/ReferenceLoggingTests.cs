@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using ServiceMantle.AspNetCore.Logging;
+using ServiceMantle.Web.Logging;
 using ServiceMantle.Logging;
 using ServiceMantle.ReferenceService.Data;
 using ServiceMantle.ReferenceService.Logging;

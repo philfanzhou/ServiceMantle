@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using ServiceMantle.AspNetCore.Http;
-using ServiceMantle.AspNetCore.PhaseGate;
+using ServiceMantle.Web.Http;
+using ServiceMantle.Web.PhaseGate;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 

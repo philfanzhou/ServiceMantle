@@ -1,4 +1,4 @@
-namespace ServiceMantle.AspNetCore.RateLimiting;
+namespace ServiceMantle.Web.RateLimiting;
 
 /// <summary>Defines the stable ServiceMantle rate-limiting policies and defaults.</summary>
 public static class RateLimitingDefaults

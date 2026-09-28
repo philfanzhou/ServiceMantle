@@ -2,10 +2,10 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using ServiceMantle.AspNetCore;
-using ServiceMantle.AspNetCore.Management;
-using ServiceMantle.AspNetCore.ManagementApi.Bootstrap;
-using ServiceMantle.AspNetCore.ManagementApi.Status;
+using ServiceMantle.Web;
+using ServiceMantle.Web.Management;
+using ServiceMantle.Web.ManagementApi.Bootstrap;
+using ServiceMantle.Web.ManagementApi.Status;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
