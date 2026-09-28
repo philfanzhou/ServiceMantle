@@ -263,6 +263,18 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/consul-registration
 
+      # The EF Core persistence package's dedicated consumer (#577): it names the capability
+      # namespaces next to Microsoft.AspNetCore.DataProtection and Microsoft.EntityFrameworkCore,
+      # so a ServiceMantle type that started sharing a framework type name would fail this build
+      # as a CS0104 instead of a consumer's. It creates its model on an in-memory SQLite database
+      # and inspects the key-ring registration as descriptors; no host, no real database.
+      - name: Verify EF Core persistence package consumption
+        run: >-
+          eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/persistence-efcore
+
       # The source half of the provider-neutral assertion: the fixture itself must stay free of
       # provider-named namespaces in every form - using directives, aliases, fully qualified
       # names, and comments - and must rely on the Web SDK implicit usings rather than <Using>

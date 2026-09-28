@@ -1,4 +1,4 @@
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Mapping;
 
 /// <summary>
 /// Identifies the relational SQL dialect used to build the management audit model. The dialect is

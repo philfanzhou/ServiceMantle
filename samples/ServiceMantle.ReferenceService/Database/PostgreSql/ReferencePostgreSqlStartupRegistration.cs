@@ -4,7 +4,7 @@ using ServiceMantle.Database.PostgreSql;
 using ServiceMantle.Database.PostgreSql.Migration;
 using ServiceMantle.Installation;
 using ServiceMantle.Migration;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Stores;
 
 namespace ServiceMantle.ReferenceService.Database.PostgreSql;
 

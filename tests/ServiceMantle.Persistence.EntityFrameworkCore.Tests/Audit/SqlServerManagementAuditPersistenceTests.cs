@@ -1,7 +1,8 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using ServiceMantle.Audit;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Mapping;
+using ServiceMantle.Persistence.Relational.Stores;
 using ServiceMantle.Testing;
 using Testcontainers.MsSql;
 using Xunit;

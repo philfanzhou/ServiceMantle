@@ -1,6 +1,6 @@
 using ServiceMantle.Installation;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Mapping;
 
 /// <summary>
 /// Entity storing service installation state in a shared business database.

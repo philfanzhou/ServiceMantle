@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Mapping;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests.Audit;
 

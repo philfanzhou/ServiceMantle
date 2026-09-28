@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using ServiceMantle.AspNetCore.ManagementApi.Setup;
 using ServiceMantle.Audit;
 using ServiceMantle.Installation;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Stores;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 
 namespace ServiceMantle.ReferenceService.Installation.PostgreSql;

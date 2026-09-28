@@ -14,6 +14,9 @@ using ServiceMantle.AspNetCore.ManagementApi.Setup;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using Xunit;
+using ServiceMantle.Persistence.Relational;
+using ServiceMantle.Persistence.Relational.Mapping;
+using ServiceMantle.Persistence.Relational.Stores;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests;
 

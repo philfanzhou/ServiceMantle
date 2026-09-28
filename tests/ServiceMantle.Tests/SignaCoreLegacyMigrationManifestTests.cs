@@ -697,7 +697,7 @@ public sealed partial class SignaCoreLegacyMigrationManifestTests
         var replacementAssemblies = new[]
         {
             typeof(ServiceMantle.Bootstrap.BootstrapFileStore).Assembly,
-            typeof(ServiceMantle.Persistence.EntityFrameworkCore.EfCoreManagementAuditWriter<>).Assembly,
+            typeof(ServiceMantle.Persistence.Relational.Stores.EfCoreManagementAuditWriter<>).Assembly,
         };
 
         Assert.Contains(

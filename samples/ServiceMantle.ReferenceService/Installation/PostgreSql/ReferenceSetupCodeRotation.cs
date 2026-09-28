@@ -2,7 +2,7 @@ using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using ServiceMantle.Installation;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Stores;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 
 namespace ServiceMantle.ReferenceService.Installation.PostgreSql;

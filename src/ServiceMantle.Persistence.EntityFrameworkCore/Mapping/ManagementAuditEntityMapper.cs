@@ -3,7 +3,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using ServiceMantle.Audit;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Mapping;
 
 internal static class ManagementAuditEntityMapper
 {

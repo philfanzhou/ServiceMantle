@@ -9,7 +9,7 @@ using ServiceMantle.Bootstrap;
 using ServiceMantle.Database.PostgreSql.Migration;
 using ServiceMantle.Installation;
 using ServiceMantle.Migration;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Stores;
 using ServiceMantle.ReferenceService.Database.PostgreSql;
 using ServiceMantle.Testing;
 using Testcontainers.PostgreSql;

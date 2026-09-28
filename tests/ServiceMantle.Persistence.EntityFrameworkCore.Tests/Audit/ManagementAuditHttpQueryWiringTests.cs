@@ -16,6 +16,8 @@ using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using ServiceMantle.Management;
 using Xunit;
+using ServiceMantle.Persistence.Relational.Mapping;
+using ServiceMantle.Persistence.Relational.Stores;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests.Audit;
 

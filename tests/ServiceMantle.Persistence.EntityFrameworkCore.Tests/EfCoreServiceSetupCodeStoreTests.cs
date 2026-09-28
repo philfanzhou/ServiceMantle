@@ -4,6 +4,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using ServiceMantle.Installation;
 using Xunit;
+using ServiceMantle.Persistence.Relational;
+using ServiceMantle.Persistence.Relational.Mapping;
+using ServiceMantle.Persistence.Relational.Stores;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests;
 

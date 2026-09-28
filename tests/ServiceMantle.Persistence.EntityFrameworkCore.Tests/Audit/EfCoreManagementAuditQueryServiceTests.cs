@@ -1,7 +1,8 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using ServiceMantle.Audit;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Mapping;
+using ServiceMantle.Persistence.Relational.Stores;
 using Xunit;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests.Audit;

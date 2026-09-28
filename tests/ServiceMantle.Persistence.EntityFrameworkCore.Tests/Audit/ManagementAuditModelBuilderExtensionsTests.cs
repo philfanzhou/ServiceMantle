@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using ServiceMantle.Audit;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.Mapping;
 using Xunit;
 
 namespace ServiceMantle.Persistence.EntityFrameworkCore.Tests.Audit;

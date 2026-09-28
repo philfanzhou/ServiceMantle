@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using ServiceMantle.Audit;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Stores;
 
 internal readonly record struct ManagementAuditContinuationCursor(
     DateTimeOffset LastOccurredAtUtc,

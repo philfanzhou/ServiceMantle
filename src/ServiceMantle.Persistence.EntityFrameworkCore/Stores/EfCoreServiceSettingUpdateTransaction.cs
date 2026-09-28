@@ -1,10 +1,11 @@
+using ServiceMantle.Persistence.Relational.Mapping;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using ServiceMantle.Audit;
 using ServiceMantle.Configuration;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Stores;
 
 /// <summary>Saves settings and audit records in an existing caller-owned relational transaction.</summary>
 /// <remarks>

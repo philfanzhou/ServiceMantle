@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using ServiceMantle.Configuration;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.DataProtection;
 
 /// <summary>
 /// Stores ASP.NET Core Data Protection key XML in a service-isolated encrypted EF Core repository.

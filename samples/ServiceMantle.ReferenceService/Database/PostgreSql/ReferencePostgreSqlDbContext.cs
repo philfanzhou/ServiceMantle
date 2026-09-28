@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational;
+using ServiceMantle.Persistence.Relational.Mapping;
 using ServiceMantle.ReferenceService.Data;
+using ServiceMantle.Persistence.Relational.DataProtection;
 
 namespace ServiceMantle.ReferenceService.Database.PostgreSql;
 

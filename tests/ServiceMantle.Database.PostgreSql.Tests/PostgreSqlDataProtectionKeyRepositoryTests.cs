@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure;
 using ServiceMantle.Configuration;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.DataProtection;
 using ServiceMantle.Testing;
 using Testcontainers.PostgreSql;
 using Xunit;

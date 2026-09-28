@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 
-namespace ServiceMantle.Persistence.EntityFrameworkCore;
+namespace ServiceMantle.Persistence.Relational.Mapping;
 
 /// <summary>Adds shared service setting persistence to consuming EF Core models.</summary>
 public static class ServiceSettingModelBuilderExtensions

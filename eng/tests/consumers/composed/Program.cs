@@ -30,7 +30,10 @@ using ServiceMantle.Logging;
 using ServiceMantle.OpenTelemetry;
 using ServiceMantle.OpenTelemetry.Otlp;
 using ServiceMantle.OpenTelemetry.Prometheus;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational;
+using ServiceMantle.Persistence.Relational.Mapping;
+using ServiceMantle.Persistence.Relational.DataProtection;
+using ServiceMantle.Persistence.Relational.Stores;
 using ServiceMantle.Logging.Pipeline;
 using ServiceMantle.Logging.Remote;
 

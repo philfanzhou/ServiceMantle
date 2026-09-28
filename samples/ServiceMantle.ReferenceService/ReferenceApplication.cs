@@ -18,7 +18,8 @@ using ServiceMantle.ReferenceService.Installation;
 using ServiceMantle.ReferenceService.Logging;
 using ServiceMantle.ReferenceService.Management;
 using ServiceMantle.ReferenceService.Telemetry;
-using ServiceMantle.Persistence.EntityFrameworkCore;
+using ServiceMantle.Persistence.Relational.DataProtection;
+using ServiceMantle.Persistence.Relational.Stores;
 
 namespace ServiceMantle.ReferenceService;
 
