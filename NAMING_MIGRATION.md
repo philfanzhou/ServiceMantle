@@ -359,6 +359,24 @@ ADR 0007 判定为 A 类的 `ConsulLifecycleOptions` 迁入核心包，成为 pr
 | `ServiceMantle.Serilog.Tests.ServiceMantleSerilogConsoleCollection` | `ServiceMantle.Serilog.Tests.SerilogConsoleCollection` |
 | `ServiceMantle.Serilog.Tests.ServiceMantleSerilogHostTests` | `ServiceMantle.Serilog.Tests.SerilogHostTests` |
 
+## 核心契约上移（#572）
+
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：与
+ASP.NET Core 无关、签名只依赖核心包既有类型的两个公开接口，从 `ServiceMantle.AspNetCore` 包
+上移进核心包。这是源码与二进制破坏性变更，只在后续新版本交付，不覆盖历史版本；旧公开类型与
+旧文件位置不留兼容壳。
+
+| 原完整类型名 | 新完整类型名 |
+| --- | --- |
+| `ServiceMantle.AspNetCore.IServiceStartupPhaseResolver` | `ServiceMantle.Installation.IServiceStartupPhaseResolver` |
+| `ServiceMantle.AspNetCore.Health.IServiceHealthSnapshotSource` | `ServiceMantle.Health.IServiceHealthSnapshotSource` |
+
+- 接口成员与 XML 文档语义不变。内部默认实现的完整类型名不变（仍为
+  `ServiceMantle.AspNetCore.DefaultServiceStartupPhaseResolver`，改放同名独立文件），注册行为仍由
+  AspNetCore 包的 `AddServiceMantle` 完成；消费方观察到的 DI 结果不变。
+- 核心包 csproj 的依赖与框架引用零变化；诊断码、配置键、日志分类、`InternalsVisibleTo` 等字符串
+  契约零变化。
+
 ## Consul 能力命名空间迁移（#574）
 
 [#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：

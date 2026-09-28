@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using ServiceMantle.AspNetCore.Health;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using ServiceMantle.Persistence.EntityFrameworkCore;
