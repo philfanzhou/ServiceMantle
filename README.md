@@ -2322,6 +2322,28 @@ configured `Authorization` header travel in cleartext to that endpoint. ServiceM
 verify that the endpoint is reachable only over a trusted network and does not treat any hostname
 or address shape as implicitly trusted; use HTTPS whenever the path crosses an untrusted network.
 
+An explicit `Labels` map attaches fixed stream labels to every emitted Loki stream, for consumers
+migrating existing Grafana queries and alerts that select on labels such as `service`:
+
+```csharp
+builder.AddServiceMantleGrafanaLoki(options =>
+{
+    options.Enabled = true;
+    options.Endpoint = new Uri("https://logs.example.com/grafana");
+    options.Labels = new Dictionary<string, string> { ["service"] = "Ruoyu.Admin" };
+});
+```
+
+Leaving `Labels` unset adds no consumer labels: the stream labels keep their existing shape, the
+sink-owned `level` label only. Label values come exclusively from this configuration; log event
+properties are never promoted to labels. Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`, be 1-128
+characters long, and avoid the sink-reserved key `level`; values must be 1-1024 characters long
+without control characters; at most 8 labels are accepted. Invalid label configuration fails when
+the host starts without echoing any submitted key or value. Label cardinality and secrecy are the
+caller's responsibility: ServiceMantle does not verify that values contain no secrets, and Loki
+indexes every distinct label value set as a separate stream, so high-cardinality values multiply
+streams and degrade querying.
+
 The fixed upstream driver owns the bounded in-memory queue and retry schedule. Capacity drops,
 permanent delivery failures, drain timeouts, and caller-cancelled drains are exposed only through
 content-free counters and stable error codes on `RemoteLogDeliveryDiagnostics` (core
@@ -2366,7 +2388,8 @@ another service fails with a value-free `ConsulConfigurationException`.
 | Setting | Enabled configuration contract |
 | --- | --- |
 | `discovery.enabled` | Boolean, default `false` |
-| `discovery.endpoint` | Root HTTPS agent URI, or loopback HTTP; no credentials, query, fragment or subpath |
+| `discovery.endpoint` | Root HTTPS agent URI, or HTTP (loopback always, any host only with `discovery.allow-insecure-http`); no credentials, query, fragment or subpath |
+| `discovery.allow-insecure-http` | Boolean, default `false`, requires restart; explicitly accepts non-loopback plain-HTTP agent endpoints |
 | `discovery.credential` | Optional sensitive string, no default; the provider-defined single credential - for this Consul adapter the ACL token, 1–4096 printable ASCII characters without whitespace |
 | `discovery.service-name` | 1–63 ASCII letters/digits/hyphens, starting and ending with a letter/digit |
 | `discovery.address` | Advertised DNS name or IP address, at most 253 characters |
@@ -2380,6 +2403,15 @@ before activation; client creation rechecks schema, token sensitivity and values
 boundary. Disabled snapshots ignore enabled-only values and return `null` without resolving the
 client factory or constructing an HTTP client. Registration and provider resolution create no client,
 network request, hosted service or background lifecycle task.
+
+`discovery.allow-insecure-http` exists for agents ServiceMantle cannot reach over HTTPS, such as a
+Consul agent on a LAN the consumer controls. Enabling it is an explicit acceptance that the complete
+registration content and the ACL token (the `X-Consul-Token` header) travel in cleartext to that
+agent. ServiceMantle does not infer network trust from any DNS name or private address shape and
+does not verify network isolation; configuring trusted networks and access control, and using HTTPS
+whenever the path crosses an untrusted network, are caller responsibilities. Snapshots persisted
+before this setting existed keep the default refusal of non-loopback HTTP, because the loader
+materializes missing keys from their catalog default.
 
 ```csharp
 // After successful snapshot activation. Creating a client does not register the service.

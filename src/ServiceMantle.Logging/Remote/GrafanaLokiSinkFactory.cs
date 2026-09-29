@@ -42,6 +42,15 @@ internal sealed class GrafanaLokiSinkFactory(
                 deliveryCounter);
             var httpClient = new HttpClient(handler, disposeHandler: true);
             var failureListener = new GrafanaLokiFailureListener(diagnostics);
+            // An empty label snapshot keeps `labels: null`, so the unconfigured push payload is
+            // byte-for-byte unchanged. The reserved-key set pinned by
+            // GrafanaLokiDefaults.ReservedLabelKeys mirrors this wiring: the level-as-label mode
+            // contributes "level", and propertiesAsLabels / traceIdMode / spanIdMode stay off.
+            var labels = configuration.Labels.Count == 0
+                ? null
+                : configuration.Labels
+                    .Select(pair => new LokiLabel(pair.Key, pair.Value))
+                    .ToArray();
             Logger remoteLogger;
             try
             {
@@ -50,7 +59,7 @@ internal sealed class GrafanaLokiSinkFactory(
                     .WriteTo.Fallible(
                         sink => sink.GrafanaLoki(
                             configuration.Endpoint!.AbsoluteUri,
-                            labels: null,
+                            labels: labels,
                             propertiesAsLabels: null,
                             propertiesAsStructuredMetadata: null,
                             handleLogLevelAsLabel: true,

@@ -142,6 +142,7 @@ public sealed class ConsulDiscoverySettingMigrationTests
     {
         { ConsulSettingDefinitions.Enabled, ServiceSettingValueType.Boolean, "false", false },
         { ConsulSettingDefinitions.Endpoint, ServiceSettingValueType.String, null, false },
+        { ConsulSettingDefinitions.AllowInsecureHttp, ServiceSettingValueType.Boolean, "false", false },
         { ConsulSettingDefinitions.Token, ServiceSettingValueType.String, null, true },
         { ConsulSettingDefinitions.ServiceName, ServiceSettingValueType.String, null, false },
         { ConsulSettingDefinitions.Address, ServiceSettingValueType.String, null, false },
@@ -168,7 +169,10 @@ public sealed class ConsulDiscoverySettingMigrationTests
     public void Catalog_registers_no_legacy_key_aliases()
     {
         using var fixture = new ConsulFixture();
-        Assert.Equal(ConsulDiscoverySettingMigration.LegacyKeyMap.Count, fixture.Registry.Definitions.Count);
+        // The catalog is the eight #436 migration keys plus exactly one newer key,
+        // discovery.allow-insecure-http (#591), which never had a consul.* alias.
+        Assert.Equal(ConsulDiscoverySettingMigration.LegacyKeyMap.Count + 1, fixture.Registry.Definitions.Count);
+        Assert.True(fixture.Registry.TryGetDefinition(ConsulSettingDefinitions.AllowInsecureHttp, out _));
         foreach (var legacyKey in ConsulDiscoverySettingMigration.LegacyKeyMap.Keys)
         {
             Assert.False(fixture.Registry.TryGetDefinition(legacyKey, out _));

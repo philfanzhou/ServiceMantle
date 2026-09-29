@@ -11,7 +11,42 @@ internal sealed record GrafanaLokiConfiguration(
     int BatchSize,
     int QueueLimit,
     TimeSpan FlushPeriod,
-    TimeSpan ShutdownDrainTimeout);
+    TimeSpan ShutdownDrainTimeout,
+    IReadOnlyDictionary<string, string> Labels)
+{
+    // Record equality compares collection members by reference, so equivalent registrations with
+    // the same label set in a different insertion order would falsely conflict. Equality here is
+    // key-order independent; equal label sets always have an equal member count, which keeps the
+    // hash code consistent.
+    public bool Equals(GrafanaLokiConfiguration? other) =>
+        other is not null &&
+        Enabled == other.Enabled &&
+        EqualityComparer<Uri?>.Default.Equals(Endpoint, other.Endpoint) &&
+        string.Equals(AuthorizationHeaderResolverName, other.AuthorizationHeaderResolverName, StringComparison.Ordinal) &&
+        BatchSize == other.BatchSize &&
+        QueueLimit == other.QueueLimit &&
+        FlushPeriod == other.FlushPeriod &&
+        ShutdownDrainTimeout == other.ShutdownDrainTimeout &&
+        Labels.Count == other.Labels.Count &&
+        Labels.All(pair =>
+            other.Labels.TryGetValue(pair.Key, out var value) &&
+            string.Equals(pair.Value, value, StringComparison.Ordinal));
+
+    public override int GetHashCode() => HashCode.Combine(
+        Enabled,
+        Endpoint,
+        AuthorizationHeaderResolverName,
+        BatchSize,
+        QueueLimit,
+        FlushPeriod,
+        ShutdownDrainTimeout,
+        Labels.Count);
+
+    // The default record ToString would render the label dictionary; diagnostics must not echo
+    // configured label values.
+    public override string ToString() =>
+        $"GrafanaLokiConfiguration {{ Enabled = {Enabled}, LabelCount = {Labels.Count} }}";
+}
 
 internal sealed class GrafanaLokiConfigurationProvider(
     IEnumerable<GrafanaLokiRegistration> registrations)
@@ -86,6 +121,12 @@ internal sealed class GrafanaLokiConfigurationProvider(
                 WellKnownGrafanaLokiErrorCodes.InvalidAuthorizationResolverName);
         }
 
+        // Labels are copied into an isolated snapshot: later mutation of the options dictionary
+        // cannot change the running sink. Duplicate keys are structurally unrepresentable in an
+        // IDictionary<string, string>; validation covers key syntax, reserved keys, value shape,
+        // and the total count, without echoing any key or value in the failure.
+        var labels = NormalizeLabels(options.Labels);
+
         if (options.BatchSize is < 1 or > 1_000)
         {
             throw Failure(nameof(options.BatchSize), WellKnownGrafanaLokiErrorCodes.InvalidBoundedSetting);
@@ -117,7 +158,49 @@ internal sealed class GrafanaLokiConfigurationProvider(
             options.BatchSize,
             options.QueueLimit,
             options.FlushPeriod,
-            options.ShutdownDrainTimeout);
+            options.ShutdownDrainTimeout,
+            labels);
+    }
+
+    private static IReadOnlyDictionary<string, string> NormalizeLabels(
+        IDictionary<string, string>? labels)
+    {
+        if (labels is null)
+        {
+            return new Dictionary<string, string>(0, StringComparer.Ordinal);
+        }
+
+        if (labels.Count is < 1 or > GrafanaLokiDefaults.MaxLabelCount)
+        {
+            throw Failure(nameof(GrafanaLokiOptions.Labels), WellKnownGrafanaLokiErrorCodes.InvalidLabels);
+        }
+
+        var snapshot = new Dictionary<string, string>(labels.Count, StringComparer.Ordinal);
+        foreach (var (key, value) in labels)
+        {
+            if (key is not { Length: >= 1 and <= GrafanaLokiDefaults.MaxLabelKeyLength } ||
+                key.Any(character =>
+                    !(char.IsAsciiLetterOrDigit(character) || character == '_')) ||
+                char.IsDigit(key[0]) ||
+                GrafanaLokiDefaults.ReservedLabelKeys.Contains(key))
+            {
+                throw Failure(
+                    nameof(GrafanaLokiOptions.Labels),
+                    WellKnownGrafanaLokiErrorCodes.InvalidLabels);
+            }
+
+            if (value is not { Length: >= 1 and <= GrafanaLokiDefaults.MaxLabelValueLength } ||
+                value.Any(char.IsControl))
+            {
+                throw Failure(
+                    nameof(GrafanaLokiOptions.Labels),
+                    WellKnownGrafanaLokiErrorCodes.InvalidLabels);
+            }
+
+            snapshot[key] = value;
+        }
+
+        return snapshot;
     }
 
     private static GrafanaLokiConfiguration DisabledConfiguration() => new(
@@ -127,7 +210,8 @@ internal sealed class GrafanaLokiConfigurationProvider(
         GrafanaLokiDefaults.BatchSize,
         GrafanaLokiDefaults.QueueLimit,
         GrafanaLokiDefaults.FlushPeriod,
-        GrafanaLokiDefaults.ShutdownDrainTimeout);
+        GrafanaLokiDefaults.ShutdownDrainTimeout,
+        new Dictionary<string, string>(0, StringComparer.Ordinal));
 
     internal static SerilogConfigurationException Failure(
         string fieldName,

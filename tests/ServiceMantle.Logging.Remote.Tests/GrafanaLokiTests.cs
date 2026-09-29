@@ -49,6 +49,7 @@ public sealed class GrafanaLokiTests
         {
             Endpoint = new Uri("https://logs.example.test/prefix"),
             AuthorizationHeaderResolverName = ResolverName,
+            Labels = new Dictionary<string, string> { ["service"] = "Ruoyu.Admin" },
         };
         var properties = typeof(GrafanaLokiOptions).GetProperties();
 
@@ -56,6 +57,7 @@ public sealed class GrafanaLokiTests
             property.Name is "Token" or "AuthorizationHeader" or "Password" or "Secret");
         Assert.DoesNotContain("logs.example.test", options.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(ResolverName, options.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Ruoyu.Admin", options.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -86,6 +88,17 @@ public sealed class GrafanaLokiTests
         { options => { options.AllowInsecureHttp = true; options.Endpoint = new Uri("http://ruoyu-loki:3100#secret"); }, WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
         { options => options.AuthorizationHeaderResolverName = " ", WellKnownGrafanaLokiErrorCodes.InvalidAuthorizationResolverName },
         { options => options.AuthorizationHeaderResolverName = "invalid/name", WellKnownGrafanaLokiErrorCodes.InvalidAuthorizationResolverName },
+        { options => options.Labels = new Dictionary<string, string> { ["level"] = "fixed-label-secret" }, WellKnownGrafanaLokiErrorCodes.InvalidLabels },
+        { options => options.Labels = new Dictionary<string, string> { ["service-name"] = "fixed-label-secret" }, WellKnownGrafanaLokiErrorCodes.InvalidLabels },
+        { options => options.Labels = new Dictionary<string, string> { [""] = "fixed-label-secret" }, WellKnownGrafanaLokiErrorCodes.InvalidLabels },
+        { options => options.Labels = new Dictionary<string, string> { ["1service"] = "fixed-label-secret" }, WellKnownGrafanaLokiErrorCodes.InvalidLabels },
+        { options => options.Labels = new Dictionary<string, string> { [new string('k', GrafanaLokiDefaults.MaxLabelKeyLength + 1)] = "fixed-label-secret" }, WellKnownGrafanaLokiErrorCodes.InvalidLabels },
+        { options => options.Labels = new Dictionary<string, string> { ["service"] = "" }, WellKnownGrafanaLokiErrorCodes.InvalidLabels },
+        { options => options.Labels = new Dictionary<string, string> { ["service"] = new string('v', GrafanaLokiDefaults.MaxLabelValueLength + 1) }, WellKnownGrafanaLokiErrorCodes.InvalidLabels },
+        { options => options.Labels = new Dictionary<string, string> { ["service"] = "fixed\tlabel-secret" }, WellKnownGrafanaLokiErrorCodes.InvalidLabels },
+        { options => options.Labels = new Dictionary<string, string>(), WellKnownGrafanaLokiErrorCodes.InvalidLabels },
+        { options => options.Labels = Enumerable.Range(0, GrafanaLokiDefaults.MaxLabelCount + 1)
+            .ToDictionary(index => $"label{index}", index => "fixed-label-secret"), WellKnownGrafanaLokiErrorCodes.InvalidLabels },
         { options => options.BatchSize = 0, WellKnownGrafanaLokiErrorCodes.InvalidBoundedSetting },
         { options => options.BatchSize = 1_001, WellKnownGrafanaLokiErrorCodes.InvalidBoundedSetting },
         { options => options.QueueLimit = 99, WellKnownGrafanaLokiErrorCodes.InvalidBoundedSetting },
@@ -118,6 +131,7 @@ public sealed class GrafanaLokiTests
         Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("user:pass", exception.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("token=value", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("fixed-label-secret", exception.ToString(), StringComparison.Ordinal);
     }
 
     [Theory]
@@ -264,6 +278,171 @@ public sealed class GrafanaLokiTests
         Assert.Equal(1, resolver.InvocationCount);
 
         await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Configured_fixed_labels_reach_the_stream_labels_alongside_the_sink_owned_level_label()
+    {
+        await using var server = await LocalLokiServer.StartAsync(TestContext.Current.CancellationToken);
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.FlushTimeout = TimeSpan.FromSeconds(5));
+        builder.Services.AddSingleton<IRemoteLogAuthorizationResolver>(
+            new RecordingResolver(AuthorizationHeader));
+        builder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Endpoint = new Uri(server.BaseAddress, "gateway");
+            options.AllowInsecureLoopbackForTesting = true;
+            options.BatchSize = 1;
+            options.FlushPeriod = TimeSpan.FromSeconds(1);
+            options.Labels = new Dictionary<string, string> { ["service"] = "Ruoyu.Admin" };
+        });
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ILogger<GrafanaLokiTests>>()
+            .LogInformation("labeled delivery event");
+
+        await WaitUntilAsync(
+            () => server.Requests.Any(request =>
+                request.Body.Contains("labeled delivery event", StringComparison.Ordinal)),
+            TestContext.Current.CancellationToken);
+        var bodies = server.Requests
+            .Where(request => request.Body.Contains("labeled delivery event", StringComparison.Ordinal))
+            .Select(request => request.Body)
+            .ToArray();
+
+        Assert.NotEmpty(bodies);
+        Assert.All(bodies, body =>
+        {
+            var streamLabels = ParseStreamLabels(body);
+            Assert.NotEmpty(streamLabels);
+            Assert.All(streamLabels, labels =>
+            {
+                Assert.Equal("Ruoyu.Admin", labels["service"]);
+                Assert.True(labels.ContainsKey("level"));
+            });
+        });
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Unconfigured_labels_keep_the_stream_labels_at_the_sink_owned_level_label()
+    {
+        await using var server = await LocalLokiServer.StartAsync(TestContext.Current.CancellationToken);
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.FlushTimeout = TimeSpan.FromSeconds(5));
+        builder.Services.AddSingleton<IRemoteLogAuthorizationResolver>(
+            new RecordingResolver(AuthorizationHeader));
+        builder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Endpoint = new Uri(server.BaseAddress, "gateway");
+            options.AllowInsecureLoopbackForTesting = true;
+            options.BatchSize = 1;
+            options.FlushPeriod = TimeSpan.FromSeconds(1);
+        });
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ILogger<GrafanaLokiTests>>()
+            .LogInformation("unlabeled delivery event");
+
+        await WaitUntilAsync(
+            () => server.Requests.Any(request =>
+                request.Body.Contains("unlabeled delivery event", StringComparison.Ordinal)),
+            TestContext.Current.CancellationToken);
+        var bodies = server.Requests
+            .Where(request => request.Body.Contains("unlabeled delivery event", StringComparison.Ordinal))
+            .Select(request => request.Body)
+            .ToArray();
+
+        Assert.NotEmpty(bodies);
+        Assert.All(bodies, body =>
+        {
+            var streamLabels = ParseStreamLabels(body);
+            Assert.NotEmpty(streamLabels);
+            Assert.All(streamLabels, labels =>
+                Assert.Equal(new[] { "level" }, labels.Keys.OrderBy(key => key, StringComparer.Ordinal).ToArray()));
+        });
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Valid_label_boundaries_start_successfully()
+    {
+        var builder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
+        builder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Labels = Enumerable.Range(0, GrafanaLokiDefaults.MaxLabelCount)
+                .ToDictionary(
+                    index => index == 0
+                        ? new string('k', GrafanaLokiDefaults.MaxLabelKeyLength)
+                        : $"label{index}",
+                    index => new string('v', GrafanaLokiDefaults.MaxLabelValueLength));
+        });
+        using var host = builder.Build();
+
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Equivalent_label_sets_are_idempotent_across_order_and_different_labels_conflict()
+    {
+        var duplicateBuilder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
+        duplicateBuilder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Labels = new Dictionary<string, string>
+            {
+                ["service"] = "Ruoyu.Admin",
+                ["environment"] = "production",
+            };
+        });
+        duplicateBuilder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Labels = new Dictionary<string, string>
+            {
+                ["environment"] = "production",
+                ["service"] = "Ruoyu.Admin",
+            };
+        });
+        using (var duplicate = duplicateBuilder.Build())
+        {
+            await duplicate.StartAsync(TestContext.Current.CancellationToken);
+            Assert.Single(duplicate.Services.GetServices<RemoteLogDeliveryDiagnostics>());
+            await duplicate.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        var conflictBuilder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
+        conflictBuilder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Labels = new Dictionary<string, string> { ["service"] = "Ruoyu.Admin" };
+        });
+        conflictBuilder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Labels = new Dictionary<string, string> { ["service"] = "Ruoyu.Other" };
+        });
+        using var conflict = conflictBuilder.Build();
+        var conflictException = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
+            conflict.StartAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(WellKnownGrafanaLokiErrorCodes.ConflictingRegistration, conflictException.ErrorCode);
+    }
+
+    [Fact]
+    public void Reserved_label_keys_pin_exactly_the_labels_owned_by_the_sink_wiring()
+    {
+        // GrafanaLokiSinkFactory wires handleLogLevelAsLabel: true (the "level" label) and keeps
+        // propertiesAsLabels, traceIdMode, and spanIdMode off. Widening this set requires new
+        // sink-owned labels; shrinking it would let configuration collide with the level label.
+        Assert.Equal(
+            new[] { "level" },
+            GrafanaLokiDefaults.ReservedLabelKeys.OrderBy(key => key, StringComparer.Ordinal).ToArray());
     }
 
     [Fact]
@@ -829,6 +1008,16 @@ public sealed class GrafanaLokiTests
         return document.RootElement.GetProperty("streams")
             .EnumerateArray()
             .Sum(stream => stream.GetProperty("values").GetArrayLength());
+    }
+
+    private static List<Dictionary<string, string?>> ParseStreamLabels(string body)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(body);
+        return document.RootElement.GetProperty("streams")
+            .EnumerateArray()
+            .Select(stream => stream.GetProperty("stream").EnumerateObject()
+                .ToDictionary(property => property.Name, property => property.Value.GetString()))
+            .ToList();
     }
 
     private sealed class RecordingResolver(string? value) : IRemoteLogAuthorizationResolver
