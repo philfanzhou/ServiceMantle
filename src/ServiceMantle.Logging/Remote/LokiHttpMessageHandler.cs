@@ -15,14 +15,17 @@ internal sealed class LokiHttpMessageHandlerFactory : ILokiHttpMessageHandlerFac
 
 internal sealed class LokiHttpMessageHandler(
     HttpMessageHandler innerHandler,
-    string authorizationHeaderValue,
+    string? authorizationHeaderValue,
     GrafanaLokiDeliveryCounter deliveryCounter) : DelegatingHandler(innerHandler)
 {
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
-        request.Headers.TryAddWithoutValidation("Authorization", authorizationHeaderValue);
+        if (authorizationHeaderValue is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Authorization", authorizationHeaderValue);
+        }
         var eventCount = await CountEventsAsync(request.Content, cancellationToken).ConfigureAwait(false);
         try
         {

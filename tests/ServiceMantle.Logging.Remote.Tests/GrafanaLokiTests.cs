@@ -81,6 +81,9 @@ public sealed class GrafanaLokiTests
         { options => options.Endpoint = new Uri("https://user:pass@logs.example.test"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
         { options => options.Endpoint = new Uri("https://logs.example.test?token=value"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
         { options => options.Endpoint = new Uri("https://logs.example.test#secret"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
+        { options => { options.AllowInsecureHttp = true; options.Endpoint = new Uri("http://user:pass@ruoyu-loki:3100"); }, WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
+        { options => { options.AllowInsecureHttp = true; options.Endpoint = new Uri("http://ruoyu-loki:3100?token=value"); }, WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
+        { options => { options.AllowInsecureHttp = true; options.Endpoint = new Uri("http://ruoyu-loki:3100#secret"); }, WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
         { options => options.AuthorizationHeaderResolverName = " ", WellKnownGrafanaLokiErrorCodes.InvalidAuthorizationResolverName },
         { options => options.AuthorizationHeaderResolverName = "invalid/name", WellKnownGrafanaLokiErrorCodes.InvalidAuthorizationResolverName },
         { options => options.BatchSize = 0, WellKnownGrafanaLokiErrorCodes.InvalidBoundedSetting },
@@ -167,6 +170,160 @@ public sealed class GrafanaLokiTests
         using var accepted = acceptedBuilder.Build();
         await accepted.StartAsync(TestContext.Current.CancellationToken);
         await accepted.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Insecure_http_on_non_loopback_hosts_requires_the_explicit_AllowInsecureHttp_switch()
+    {
+        var rejectedBuilder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
+        rejectedBuilder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Endpoint = new Uri("http://ruoyu-loki:3100");
+        });
+        using (var rejected = rejectedBuilder.Build())
+        {
+            var exception = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
+                rejected.StartAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(WellKnownGrafanaLokiErrorCodes.InvalidEndpoint, exception.ErrorCode);
+        }
+
+        var loopbackOnlyBuilder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
+        loopbackOnlyBuilder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Endpoint = new Uri("http://ruoyu-loki:3100");
+            options.AllowInsecureLoopbackForTesting = true;
+        });
+        using (var loopbackOnly = loopbackOnlyBuilder.Build())
+        {
+            var exception = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
+                loopbackOnly.StartAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(WellKnownGrafanaLokiErrorCodes.InvalidEndpoint, exception.ErrorCode);
+        }
+
+        var handler = new RecordingHandler();
+        var acceptedBuilder = CreateBuilder(handler, new RecordingResolver(AuthorizationHeader));
+        acceptedBuilder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Endpoint = new Uri("http://ruoyu-loki:3100");
+            options.AllowInsecureHttp = true;
+            options.BatchSize = 1;
+            options.FlushPeriod = TimeSpan.FromSeconds(1);
+        });
+        using var accepted = acceptedBuilder.Build();
+        await accepted.StartAsync(TestContext.Current.CancellationToken);
+        accepted.Services.GetRequiredService<ILogger<GrafanaLokiTests>>()
+            .LogInformation("container network event");
+
+        await WaitUntilAsync(() => handler.RequestCount > 0, TestContext.Current.CancellationToken);
+        var requestUri = handler.RequestUris.First();
+        Assert.Equal("http", requestUri.Scheme);
+        Assert.Equal("ruoyu-loki", requestUri.Host);
+        Assert.Equal(3100, requestUri.Port);
+        Assert.Equal("/loki/api/v1/push", requestUri.AbsolutePath);
+        Assert.All(handler.RequestUris, uri =>
+            Assert.Equal(new Uri("http://ruoyu-loki:3100/loki/api/v1/push"), uri));
+
+        await accepted.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task AllowInsecureHttp_delivers_authorized_events_to_a_local_http_server()
+    {
+        await using var server = await LocalLokiServer.StartAsync(TestContext.Current.CancellationToken);
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.FlushTimeout = TimeSpan.FromSeconds(5));
+        var resolver = new RecordingResolver(AuthorizationHeader);
+        builder.Services.AddSingleton<IRemoteLogAuthorizationResolver>(resolver);
+        builder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Endpoint = new Uri(server.BaseAddress, "gateway");
+            options.AllowInsecureHttp = true;
+            options.BatchSize = 1;
+            options.FlushPeriod = TimeSpan.FromSeconds(1);
+        });
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ILogger<GrafanaLokiTests>>()
+            .LogInformation("insecure delivery event");
+
+        await WaitUntilAsync(
+            () => server.Requests.Any(request =>
+                request.Body.Contains("insecure delivery event", StringComparison.Ordinal)),
+            TestContext.Current.CancellationToken);
+
+        Assert.All(server.Requests, request =>
+        {
+            Assert.Equal("/gateway/loki/api/v1/push", request.Path);
+            Assert.Equal(AuthorizationHeader, request.Authorization);
+            Assert.InRange(CountLokiValues(request.Body), 1, 1);
+        });
+        Assert.Equal(1, resolver.InvocationCount);
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Unset_resolver_name_disables_authorization_without_a_registered_resolver()
+    {
+        var handler = new RecordingHandler();
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.FlushTimeout = TimeSpan.FromSeconds(5));
+        builder.Services.Replace(ServiceDescriptor.Singleton<ILokiHttpMessageHandlerFactory>(
+            new StaticHandlerFactory(handler)));
+        builder.AddServiceMantleGrafanaLoki(options =>
+        {
+            options.Enabled = true;
+            options.Endpoint = new Uri("https://logs.example.test");
+            options.BatchSize = 1;
+            options.FlushPeriod = TimeSpan.FromSeconds(1);
+        });
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ILogger<GrafanaLokiTests>>()
+            .LogInformation("unauthenticated https event");
+
+        await WaitUntilAsync(() => handler.RequestCount > 0, TestContext.Current.CancellationToken);
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Unset_resolver_name_sends_requests_without_an_authorization_header()
+    {
+        await using var server = await LocalLokiServer.StartAsync(TestContext.Current.CancellationToken);
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.FlushTimeout = TimeSpan.FromSeconds(5));
+        builder.AddServiceMantleGrafanaLoki(options =>
+        {
+            options.Enabled = true;
+            options.Endpoint = new Uri(server.BaseAddress, "gateway");
+            options.AllowInsecureHttp = true;
+            options.BatchSize = 1;
+            options.FlushPeriod = TimeSpan.FromSeconds(1);
+        });
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ILogger<GrafanaLokiTests>>()
+            .LogInformation("unauthenticated http event");
+
+        await WaitUntilAsync(
+            () => server.Requests.Any(request =>
+                request.Body.Contains("unauthenticated http event", StringComparison.Ordinal)),
+            TestContext.Current.CancellationToken);
+
+        Assert.All(server.Requests, request =>
+        {
+            Assert.Equal("/gateway/loki/api/v1/push", request.Path);
+            Assert.Equal(string.Empty, request.Authorization);
+        });
+        Assert.Contains(server.Requests, request =>
+            request.Body.Contains("unauthenticated http event", StringComparison.Ordinal));
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
     }
 
     public static TheoryData<IRemoteLogAuthorizationResolver?, string> InvalidResolvers => new()
@@ -676,11 +833,14 @@ public sealed class GrafanaLokiTests
 
         internal int RequestCount => Volatile.Read(ref requestCount);
 
+        internal ConcurrentQueue<Uri> RequestUris { get; } = new();
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref requestCount);
+            RequestUris.Enqueue(request.RequestUri!);
             _ = request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken);

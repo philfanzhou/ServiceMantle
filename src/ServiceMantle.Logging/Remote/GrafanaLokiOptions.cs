@@ -12,7 +12,23 @@ public sealed class GrafanaLokiOptions
     /// <summary>Gets or sets whether loopback HTTP is allowed exclusively for tests.</summary>
     public bool AllowInsecureLoopbackForTesting { get; set; }
 
-    /// <summary>Gets or sets the non-secret name passed to the authorization header resolver.</summary>
+    /// <summary>
+    /// Gets or sets whether plain-HTTP Loki endpoints are accepted on any host, not only loopback.
+    /// </summary>
+    /// <remarks>
+    /// The default is <c>false</c>: only HTTPS endpoints are accepted, plus loopback HTTP when
+    /// <see cref="AllowInsecureLoopbackForTesting"/> is set. Setting this switch is an explicit
+    /// acceptance that the complete log content and any configured Authorization header travel
+    /// in cleartext to that endpoint. ServiceMantle does not verify that the endpoint is
+    /// reachable only over a trusted network; use HTTPS whenever the path crosses an untrusted
+    /// network. No hostname or address shape is treated as implicitly trusted.
+    /// </remarks>
+    public bool AllowInsecureHttp { get; set; }
+
+    /// <summary>
+    /// Gets or sets the non-secret name passed to the authorization header resolver. When unset,
+    /// no Authorization header is resolved or sent.
+    /// </summary>
     public string? AuthorizationHeaderResolverName { get; set; }
 
     /// <summary>Gets or sets the maximum events per request.</summary>

@@ -27,7 +27,9 @@ internal sealed class GrafanaLokiSinkFactory(
                 return new ConsoleSinkFactory().Create(serilogConfiguration, sanitizer);
             }
 
-            var headerValue = ResolveAuthorizationHeader(configuration.AuthorizationHeaderResolverName!);
+            var headerValue = configuration.AuthorizationHeaderResolverName is null
+                ? null
+                : ResolveAuthorizationHeader(configuration.AuthorizationHeaderResolverName);
             var handlerFactory = serviceProvider.GetService(typeof(ILokiHttpMessageHandlerFactory))
                 as ILokiHttpMessageHandlerFactory ??
                 throw GrafanaLokiConfigurationProvider.Failure(
