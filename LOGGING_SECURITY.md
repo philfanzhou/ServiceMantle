@@ -40,7 +40,7 @@
 
 ## ASP.NET Core 敏感 Header 快照
 
-可选的 `ServiceMantle.AspNetCore` `AddSensitiveHeaders` 能力构建一个不可变的、不区分大小写的启动快照。它始终包含
+可选的 `ServiceMantle.Web` `AddSensitiveHeaders` 能力构建一个不可变的、不区分大小写的启动快照。它始终包含
 `StructuredLogSanitizerDefaults.BuiltInDeniedHeaderNames`；消费方可以追加合法的 HTTP token
 名称，但不能移除内置项。重复名称与大小写变体会合并为一个条目。
 配置集合在 Host 启动时枚举一次，之后的修改会被忽略。

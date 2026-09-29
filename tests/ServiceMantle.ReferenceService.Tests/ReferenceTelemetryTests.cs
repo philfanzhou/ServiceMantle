@@ -337,7 +337,7 @@ public sealed class ReferenceTelemetryTests
             name.StartsWith("OpenTelemetry.Instrumentation.AspNetCore/", StringComparison.Ordinal));
         Assert.Contains(libraries, name =>
             name.StartsWith("OpenTelemetry.Instrumentation.Runtime/", StringComparison.Ordinal));
-        // ServiceMantle.OpenTelemetry now ships the OTLP and Prometheus exporters in the same
+        // ServiceMantle.Diagnostics now ships the OTLP and Prometheus exporters in the same
         // package as the instrumentation, so both drivers are in the sample's graph whether it wants
         // them or not. Absence from the graph is therefore no longer the guarantee. The guarantee is
         // that presence is not activation: the sample calls AddOpenTelemetryInstrumentation and

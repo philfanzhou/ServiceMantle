@@ -94,5 +94,5 @@ PostgreSQL 和 SQL Server 集成测试需要 Docker 及对应环境变量；只�
 
 ```bash
 RUN_SERVICEMANTLE_POSTGRES_TESTS=true dotnet test --project tests/ServiceMantle.Database.PostgreSql.Tests -c Release
-RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests -c Release
+RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Persistence.Relational.Tests -c Release
 ```

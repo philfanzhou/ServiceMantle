@@ -287,8 +287,8 @@ public sealed class ReferenceSqliteDeploymentEndToEndTests
         foreach (var expected in new[]
         {
             "ServiceMantle.dll",
-            "ServiceMantle.AspNetCore.dll",
-            "ServiceMantle.Serilog.dll",
+            "ServiceMantle.Web.dll",
+            "ServiceMantle.Logging.dll",
             "ServiceMantle.Database.Sqlite.dll",
             "Microsoft.EntityFrameworkCore.Sqlite.dll",
             "Microsoft.Data.Sqlite.dll",

@@ -846,3 +846,86 @@ options 时的唯一区分；`Otlp*` / `Prometheus*` 前缀诚实暴露协议契
   namespace；`opentelemetry` 项目保持不 using 任何适配包自有 namespace 的既有约束，其约束注释随
   本切片改述为新 namespace 名（`ServiceMantle.Diagnostics.Instrumentation` /
   `.Export.Otlp`）；`provider-neutral` 项目仅持有包引用，包 ID 不变，无需改动。
+
+## 包 ID、程序集与目录对齐能力命名（#585）
+
+[#585](https://github.com/philfanzhou/ServiceMantle/issues/585)：五个适配包的包 ID、程序集名与
+项目目录对齐到各自拥有的能力命名空间树的最小公共祖先节点，命名原则为「包名不暴露实现细节：包
+ID = 该包所拥有命名空间树的最小公共祖先节点」。provider 与具体技术（ASP.NET Core、Consul、
+Serilog、OpenTelemetry、EF Core）按既有政策仅由类型名暴露，并在包 `<PackageDescription>` 与依赖
+元数据中说明，不进入包 ID。核心包 `ServiceMantle` 与六个 `ServiceMantle.Database.*`（政策例外）
+不变。
+
+**类型名、namespace、公开 API 与运行时行为零变化。** 消费方升级只需把 `PackageReference` 从旧
+ID 换成新 ID，`using` 不变；实现差异从类型名前缀（`Consul*`、`Serilog*`、`OpenTelemetry*`、
+`EfCore*`）与包元数据辨认。这是 NuGet 包 ID 级破坏性变更（源码与二进制），只在后续新版本交付，
+不覆盖历史版本；旧 ID 在 nuget.org 上永久存在且不可复用，新版发布后将五个旧 ID 标记 deprecated
+并指向新 ID（维护者发布后手工跟进）。
+
+### 包 ID 与目录映射
+
+| 退役包 ID / 程序集 / 项目目录 | 新包 ID / 程序集 / 项目目录 | 所拥有命名空间 |
+| --- | --- | --- |
+| `ServiceMantle.AspNetCore`（`src/ServiceMantle.AspNetCore/`） | `ServiceMantle.Web`（`src/ServiceMantle.Web/`） | `Web.*`（独占整树） |
+| `ServiceMantle.Consul`（`src/ServiceMantle.Consul/`） | `ServiceMantle.Discovery`（`src/ServiceMantle.Discovery/`） | `Discovery.Registration` + `Discovery.Configuration` |
+| `ServiceMantle.Serilog`（`src/ServiceMantle.Serilog/`） | `ServiceMantle.Logging`（`src/ServiceMantle.Logging/`） | `Logging.Pipeline` + `Logging.Remote` |
+| `ServiceMantle.OpenTelemetry`（`src/ServiceMantle.OpenTelemetry/`） | `ServiceMantle.Diagnostics`（`src/ServiceMantle.Diagnostics/`） | `Diagnostics.Instrumentation` + `Diagnostics.Export.Otlp` + `Diagnostics.Export.Prometheus` |
+| `ServiceMantle.Persistence.EntityFrameworkCore`（`src/ServiceMantle.Persistence.EntityFrameworkCore/`） | `ServiceMantle.Persistence.Relational`（`src/ServiceMantle.Persistence.Relational/`） | `Persistence.Relational.*`（独占整树） |
+
+`<RootNamespace>` 五包在 #570–#577 已是能力命名，本次核对后不动；`<AssemblyName>` 与
+`<PackageId>` 随上表更名；`<PackageDescription>` 维持既有 provider 实现说明。
+
+### 测试程序集与消费项目目录映射
+
+| 原目录 / 程序集 | 新目录 / 程序集 |
+| --- | --- |
+| `tests/ServiceMantle.AspNetCore.Tests/` | `tests/ServiceMantle.Web.Tests/` |
+| `tests/ServiceMantle.Consul.Tests/` | `tests/ServiceMantle.Discovery.Tests/` |
+| `tests/ServiceMantle.Serilog.Tests/` | `tests/ServiceMantle.Logging.Tests/` |
+| `tests/ServiceMantle.Serilog.GrafanaLoki.Tests/` | `tests/ServiceMantle.Logging.Remote.Tests/` |
+| `tests/ServiceMantle.OpenTelemetry.Tests/` | `tests/ServiceMantle.Diagnostics.Tests/` |
+| `tests/ServiceMantle.OpenTelemetry.Otlp.Tests/` | `tests/ServiceMantle.Diagnostics.Export.Otlp.Tests/` |
+| `tests/ServiceMantle.OpenTelemetry.Prometheus.Tests/` | `tests/ServiceMantle.Diagnostics.Export.Prometheus.Tests/` |
+| `tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/` | `tests/ServiceMantle.Persistence.Relational.Tests/` |
+| `eng/tests/consumers/aspnetcore/` | `eng/tests/consumers/web/` |
+| `eng/tests/consumers/consul-registration/` | `eng/tests/consumers/discovery/` |
+| `eng/tests/consumers/serilog/` | `eng/tests/consumers/logging/` |
+| `eng/tests/consumers/opentelemetry/` | `eng/tests/consumers/diagnostics/` |
+| `eng/tests/consumers/persistence-efcore/` | `eng/tests/consumers/persistence-relational/` |
+
+八个测试项目 csproj 未显式设置程序集属性，程序集名随 csproj 文件名自动变化；其源内 namespace
+声明与 `using` 随目录同步（如 `namespace ServiceMantle.Discovery.Tests;`、
+`ServiceMantle.Logging.Remote.Tests`、`ServiceMantle.Diagnostics.Export.Otlp.Tests`）。
+`composed`、`provider-neutral` 两个消费项目目录与项目名不动，其 `Consumer.csproj` 的
+`PackageReference` 换新 ID。
+
+### InternalsVisibleTo 变化全集（11 处 / 6 文件）
+
+这是本次唯一允许变化的字符串契约，按「IVT 特性全集」为口径，含两类：适配包程序集更名引发的
+（核心包指向适配包）与测试程序集更名引发的（适配包指向测试）。
+
+| 文件 | 原值 | 新值 |
+| --- | --- | --- |
+| `src/ServiceMantle/Properties/AssemblyInfo.cs` | `ServiceMantle.AspNetCore` | `ServiceMantle.Web` |
+| `src/ServiceMantle/Properties/AssemblyInfo.cs` | `ServiceMantle.OpenTelemetry` | `ServiceMantle.Diagnostics` |
+| `src/ServiceMantle/Properties/AssemblyInfo.cs` | `ServiceMantle.Serilog` | `ServiceMantle.Logging` |
+| `src/ServiceMantle.Web/Properties/AssemblyInfo.cs` | `ServiceMantle.AspNetCore.Tests` | `ServiceMantle.Web.Tests` |
+| `src/ServiceMantle.Discovery/ServiceMantle.Discovery.csproj` | `ServiceMantle.Consul.Tests` | `ServiceMantle.Discovery.Tests` |
+| `src/ServiceMantle.Logging/Properties/AssemblyInfo.cs` | `ServiceMantle.Serilog.Tests` | `ServiceMantle.Logging.Tests` |
+| `src/ServiceMantle.Logging/Properties/AssemblyInfo.cs` | `ServiceMantle.Serilog.GrafanaLoki.Tests` | `ServiceMantle.Logging.Remote.Tests` |
+| `src/ServiceMantle.Diagnostics/Properties/AssemblyInfo.cs` | `ServiceMantle.OpenTelemetry.Tests` | `ServiceMantle.Diagnostics.Tests` |
+| `src/ServiceMantle.Diagnostics/Properties/AssemblyInfo.cs` | `ServiceMantle.OpenTelemetry.Otlp.Tests` | `ServiceMantle.Diagnostics.Export.Otlp.Tests` |
+| `src/ServiceMantle.Diagnostics/Properties/AssemblyInfo.cs` | `ServiceMantle.OpenTelemetry.Prometheus.Tests` | `ServiceMantle.Diagnostics.Export.Prometheus.Tests` |
+| `src/ServiceMantle.Persistence.Relational/Properties/AssemblyInfo.cs` | `ServiceMantle.Persistence.EntityFrameworkCore.Tests` | `ServiceMantle.Persistence.Relational.Tests` |
+
+`src/ServiceMantle/Properties/AssemblyInfo.cs` 的 `ServiceMantle.Tests` 与
+`src/ServiceMantle.Persistence.Relational/Properties/AssemblyInfo.cs` 的
+`ServiceMantle.Database.PostgreSql.Tests`、六个 `ServiceMantle.Database.*` 的 IVT 条目不变。
+
+### 字符串契约不变声明
+
+除上述 IVT 特性全集外，诊断码、日志分类、配置键、HTTP 路由与 Header、JSON 字段、Data
+Protection purpose、认证方案名、指标名零变化，随打包 DLL 字符串比对机械验证。测试夹具数据
+（`tests/ServiceMantle.Tests/Audit/ManagementAuditEventTests.cs` 的 InlineData、
+`tests/ServiceMantle.ReleaseTool.Tests/` 中的 `"ServiceMantle.AspNetCore"`）与 sample 历史
+PostgreSQL migration 中的旧实体全名字符串不依赖真实包 ID 与目录对应关系，本次不动。

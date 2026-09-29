@@ -21,8 +21,8 @@
       ]
     },
     {
-      "id": "ServiceMantle.AspNetCore",
-      "project": "src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj",
+      "id": "ServiceMantle.Web",
+      "project": "src/ServiceMantle.Web/ServiceMantle.Web.csproj",
       "optional": false,
       "dependencies": [
         "ServiceMantle"
@@ -32,7 +32,7 @@
       ],
       "tests": [
         {
-          "project": "tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj",
+          "project": "tests/ServiceMantle.Web.Tests/ServiceMantle.Web.Tests.csproj",
           "environment": {}
         },
         {
@@ -46,8 +46,8 @@
       ]
     },
     {
-      "id": "ServiceMantle.Consul",
-      "project": "src/ServiceMantle.Consul/ServiceMantle.Consul.csproj",
+      "id": "ServiceMantle.Discovery",
+      "project": "src/ServiceMantle.Discovery/ServiceMantle.Discovery.csproj",
       "optional": true,
       "dependencies": [
         "Microsoft.Extensions.Hosting.Abstractions",
@@ -56,7 +56,7 @@
       "frameworkReferences": [],
       "tests": [
         {
-          "project": "tests/ServiceMantle.Consul.Tests/ServiceMantle.Consul.Tests.csproj",
+          "project": "tests/ServiceMantle.Discovery.Tests/ServiceMantle.Discovery.Tests.csproj",
           "environment": {}
         }
       ]
@@ -181,8 +181,8 @@
       ]
     },
     {
-      "id": "ServiceMantle.OpenTelemetry",
-      "project": "src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj",
+      "id": "ServiceMantle.Diagnostics",
+      "project": "src/ServiceMantle.Diagnostics/ServiceMantle.Diagnostics.csproj",
       "optional": true,
       "dependencies": [
         "OpenTelemetry.Exporter.OpenTelemetryProtocol",
@@ -191,27 +191,27 @@
         "OpenTelemetry.Instrumentation.AspNetCore",
         "OpenTelemetry.Instrumentation.Http",
         "OpenTelemetry.Instrumentation.Runtime",
-        "ServiceMantle.AspNetCore"
+        "ServiceMantle.Web"
       ],
       "frameworkReferences": [],
       "tests": [
         {
-          "project": "tests/ServiceMantle.OpenTelemetry.Tests/ServiceMantle.OpenTelemetry.Tests.csproj",
+          "project": "tests/ServiceMantle.Diagnostics.Tests/ServiceMantle.Diagnostics.Tests.csproj",
           "environment": {}
         },
         {
-          "project": "tests/ServiceMantle.OpenTelemetry.Otlp.Tests/ServiceMantle.OpenTelemetry.Otlp.Tests.csproj",
+          "project": "tests/ServiceMantle.Diagnostics.Export.Otlp.Tests/ServiceMantle.Diagnostics.Export.Otlp.Tests.csproj",
           "environment": {}
         },
         {
-          "project": "tests/ServiceMantle.OpenTelemetry.Prometheus.Tests/ServiceMantle.OpenTelemetry.Prometheus.Tests.csproj",
+          "project": "tests/ServiceMantle.Diagnostics.Export.Prometheus.Tests/ServiceMantle.Diagnostics.Export.Prometheus.Tests.csproj",
           "environment": {}
         }
       ]
     },
     {
-      "id": "ServiceMantle.Serilog",
-      "project": "src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
+      "id": "ServiceMantle.Logging",
+      "project": "src/ServiceMantle.Logging/ServiceMantle.Logging.csproj",
       "optional": true,
       "dependencies": [
         "Serilog",
@@ -223,18 +223,18 @@
       "frameworkReferences": [],
       "tests": [
         {
-          "project": "tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj",
+          "project": "tests/ServiceMantle.Logging.Tests/ServiceMantle.Logging.Tests.csproj",
           "environment": {}
         },
         {
-          "project": "tests/ServiceMantle.Serilog.GrafanaLoki.Tests/ServiceMantle.Serilog.GrafanaLoki.Tests.csproj",
+          "project": "tests/ServiceMantle.Logging.Remote.Tests/ServiceMantle.Logging.Remote.Tests.csproj",
           "environment": {}
         }
       ]
     },
     {
-      "id": "ServiceMantle.Persistence.EntityFrameworkCore",
-      "project": "src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj",
+      "id": "ServiceMantle.Persistence.Relational",
+      "project": "src/ServiceMantle.Persistence.Relational/ServiceMantle.Persistence.Relational.csproj",
       "optional": true,
       "dependencies": [
         "Microsoft.AspNetCore.DataProtection",
@@ -244,7 +244,7 @@
       "frameworkReferences": [],
       "tests": [
         {
-          "project": "tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj",
+          "project": "tests/ServiceMantle.Persistence.Relational.Tests/ServiceMantle.Persistence.Relational.Tests.csproj",
           "realDatabase": true,
           "dockerDaemon": {
             "osType": "linux",

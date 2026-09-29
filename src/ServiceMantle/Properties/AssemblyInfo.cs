@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-[assembly: InternalsVisibleTo("ServiceMantle.AspNetCore")]
-[assembly: InternalsVisibleTo("ServiceMantle.OpenTelemetry")]
-[assembly: InternalsVisibleTo("ServiceMantle.Serilog")]
+[assembly: InternalsVisibleTo("ServiceMantle.Web")]
+[assembly: InternalsVisibleTo("ServiceMantle.Diagnostics")]
+[assembly: InternalsVisibleTo("ServiceMantle.Logging")]
 [assembly: InternalsVisibleTo("ServiceMantle.Tests")]

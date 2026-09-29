@@ -20,7 +20,7 @@ The audited SignaCore migration/deletion gate is documented in [docs/signacore-l
 
 ## Structured logging identity context
 
-`ServiceMantle.AspNetCore` registers a singleton `ServiceLogContext` with the host identity. Its standard `ILogger` scope always emits `ServiceName`, `ServiceVersion`, and `InstanceId` as structured fields. `ServiceName` is the normalized `ServiceId`; `ServiceVersion` can be supplied explicitly and otherwise falls back to the entry assembly informational version, assembly version, then `unknown`.
+`ServiceMantle.Web` registers a singleton `ServiceLogContext` with the host identity. Its standard `ILogger` scope always emits `ServiceName`, `ServiceVersion`, and `InstanceId` as structured fields. `ServiceName` is the normalized `ServiceId`; `ServiceVersion` can be supplied explicitly and otherwise falls back to the entry assembly informational version, assembly version, then `unknown`.
 
 ```csharp
 builder.AddServiceMantle(
@@ -60,7 +60,7 @@ smoke tests, and the separate integration tasks. This is not a production templa
 
 ## Core OpenTelemetry instrumentation
 
-Install the optional `ServiceMantle.OpenTelemetry` package and opt in after the host identity is
+Install the optional `ServiceMantle.Diagnostics` package and opt in after the host identity is
 registered:
 
 ```csharp
@@ -143,7 +143,7 @@ proof of persistent installation status. The consumer controls its correctness a
 
 ## Optional OTLP exporter
 
-`ServiceMantle.OpenTelemetry` ships the official
+`ServiceMantle.Diagnostics` ships the official
 `OpenTelemetry.Exporter.OpenTelemetryProtocol` 1.18.0 exporter; no extra package reference is
 needed. Traces and metrics are disabled independently by default, and referencing the package
 without calling `AddOpenTelemetryOtlpExporter` registers nothing OTLP-owned. An all-disabled
@@ -192,7 +192,7 @@ application's complete telemetry pipeline.
 
 ## Authorized Prometheus endpoint
 
-`ServiceMantle.OpenTelemetry` also exposes metrics from meters already selected by the consuming
+`ServiceMantle.Diagnostics` also exposes metrics from meters already selected by the consuming
 host. The capability is disabled by default, registers nothing until
 `AddOpenTelemetryPrometheusEndpoint` is called, and requires an existing authorization policy when
 enabled:
@@ -237,9 +237,11 @@ binary compatibility with later prerelease exporter versions.
 ## Migrating from the separate OTLP and Prometheus packages
 
 `ServiceMantle.OpenTelemetry.Otlp` and `ServiceMantle.OpenTelemetry.Prometheus` are no longer
-published. Their implementation now ships inside `ServiceMantle.OpenTelemetry`:
+published. Their implementation ships inside the diagnostics package, published as
+`ServiceMantle.Diagnostics` since the package-identifier rename (`ServiceMantle.OpenTelemetry`
+before that rename):
 
-- Replace both package references with a single `ServiceMantle.OpenTelemetry` reference. Already
+- Replace both package references with a single `ServiceMantle.Diagnostics` reference. Already
   published versions of the retired package ids are untouched; they simply receive no new versions.
 - Public type names, registration entry points, defaults, error codes, and configuration
   validation are unchanged, so no source edit is required for the exporter surface itself beyond
@@ -249,11 +251,39 @@ published. Their implementation now ships inside `ServiceMantle.OpenTelemetry`:
   core `ServiceMantle.Diagnostics` namespace; see `NAMING_MIGRATION.md` for the full rename mapping.
 - Recompile. The types moved to a different assembly, so binaries compiled against the retired
   assemblies do not bind to the merged one.
-- Installing `ServiceMantle.OpenTelemetry` now brings the OTLP and Prometheus exporter drivers in
+- Installing `ServiceMantle.Diagnostics` now brings the OTLP and Prometheus exporter drivers in
   transitively. Dependency isolation between the two exporters and the base instrumentation is
   intentionally no longer offered. What is still guaranteed is that neither exporter activates
-  until its own registration call is made, and that `ServiceMantle` and `ServiceMantle.AspNetCore`
+  until its own registration call is made, and that `ServiceMantle` and `ServiceMantle.Web`
   remain free of every exporter dependency.
+
+## Migrating to the capability-named package identifiers
+
+The adapter package identifiers, assembly names, and project directories are aligned with the
+capability namespaces they own. Five packages were renamed; the core package `ServiceMantle`, the
+six `ServiceMantle.Database.*` provider packages, and every type name, namespace, public API, and
+runtime behavior are unchanged:
+
+| Retired package id | Renamed package id | Owes |
+| --- | --- | --- |
+| `ServiceMantle.AspNetCore` | `ServiceMantle.Web` | `Web.*` |
+| `ServiceMantle.Consul` | `ServiceMantle.Discovery` | `Discovery.Registration`, `Discovery.Configuration` |
+| `ServiceMantle.Serilog` | `ServiceMantle.Logging` | `Logging.Pipeline`, `Logging.Remote` |
+| `ServiceMantle.OpenTelemetry` | `ServiceMantle.Diagnostics` | `Diagnostics.Instrumentation`, `Diagnostics.Export.Otlp`, `Diagnostics.Export.Prometheus` |
+| `ServiceMantle.Persistence.EntityFrameworkCore` | `ServiceMantle.Persistence.Relational` | `Persistence.Relational.*` |
+
+- Replace the `PackageReference` entries only: the `using` directives keep compiling because the
+  namespaces and type names are untouched. Which technology an adapter implements stays visible
+  in the type names (`ConsulClientConfiguration`, `SerilogOptions`, `OpenTelemetryOptions`,
+  `EfCoreServiceSetupCodeStore`) and in each package's description and dependency metadata.
+- Recompile. The assemblies were renamed, so binaries compiled against the retired package ids do
+  not bind to the renamed ones.
+- Already published versions of the retired package ids are untouched and remain installable;
+  they simply receive no new versions.
+- The capability namespaces listed against the core package (`ServiceMantle.Discovery`,
+  `ServiceMantle.Logging`, `ServiceMantle.Diagnostics`) continue to ship in the core assembly, as
+  they always have; the renamed packages own only their sub-namespaces. See
+  `NAMING_MIGRATION.md` for the full rename mapping.
 
 ## Explicit forwarded-header trust
 
@@ -825,7 +855,7 @@ not-ready snapshot, and the live endpoint neither resolves nor invokes them duri
 ## Management identity and authorization
 
 `ServiceMantle` defines a product-agnostic management identity contract, and
-`ServiceMantle.AspNetCore` binds it to ASP.NET Core authorization. The contract fixes the claim types,
+`ServiceMantle.Web` binds it to ASP.NET Core authorization. The contract fixes the claim types,
 the first-version permission set, the `ServiceMantle.ManagementAdmin` policy, a three-state identity
 provider, and a lossless projection onto the existing `ManagementAuditOperator` model.
 
@@ -1024,7 +1054,7 @@ Bootstrap changes affect only the current instance's local Bootstrap file and re
 
 `ServiceMantle` core stays provider-agnostic and does not reference EF Core.
 
-`ServiceMantle.Persistence.EntityFrameworkCore` is an optional package that defines:
+`ServiceMantle.Persistence.Relational` is an optional package that defines:
 
 - `ServiceInstallationEntity` mapping for `service_installations`.
 - `IServiceDbContext` contract that business DbContexts implement.
@@ -1364,7 +1394,7 @@ that completes a pending installation now goes through `StageConsumeAsync`.
 
 This sanitization is a defense-in-depth contract for the formats listed above, not a general-purpose data-loss-prevention engine: an opaque bare value has no intrinsic signal that distinguishes a secret from ordinary audit text. Callers **must not** place connection strings, external root keys, database administrator credentials, setup codes, passwords, tokens, or other sensitive configuration values in any audit field. Consumption-specific metadata should use an explicit non-secret allowlist before calling ServiceMantle. The persistence write guarantee applies to records staged through `EfCoreManagementAuditWriter<TDbContext>`: the writer reapplies the supported-format policy before the caller saves the shared unit of work. The mapped audit entity is internal and no writable audit `DbSet` is exposed by the package. Direct SQL, imports, and administrative database writes are outside that write guarantee; the query boundary still revalidates such legacy rows so recognized sensitive content is not returned unchanged.
 
-`ServiceMantle.Persistence.EntityFrameworkCore` adds:
+`ServiceMantle.Persistence.Relational` adds:
 
 - Internal entity mapping for `service_audit_logs`; consumers do not expose a writable audit `DbSet`.
 - `ModelBuilder` extension `AddServiceMantleManagementAudit(...)` for model registration. Pass the
@@ -1457,7 +1487,7 @@ Current and planned provider packages are:
   comparing the `current_database()` and `session_user` identities the server actually selected,
   observes server-database targets and explicitly creates a missing one, and provides session-level
   advisory lock capability for multi-instance migration coordination.
-- `ServiceMantle.Persistence.EntityFrameworkCore` provides shared install-state persistence and consumption patterns.
+- `ServiceMantle.Persistence.Relational` provides shared install-state persistence and consumption patterns.
 - `ServiceMantle.Database.Sqlite` validates existing local SQLite files as Bootstrap candidates,
   observes and explicitly prepares file targets, and declares single-instance-only deployment
   support. It supplies no migration lock: a `SingleInstance` migration runs through the
@@ -2105,7 +2135,7 @@ The core package provides a sink-neutral, fail-closed structured value sanitizer
 field/Header/type boundaries and deliberately limited free-text detection contract are documented in
 [`LOGGING_SECURITY.md`](LOGGING_SECURITY.md).
 
-`ServiceMantle.AspNetCore` can opt into one startup-time sensitive request Header snapshot and the
+`ServiceMantle.Web` can opt into one startup-time sensitive request Header snapshot and the
 ServiceMantle-owned diagnostic projection that consumes it:
 
 ```csharp
@@ -2135,7 +2165,7 @@ The registry has no runtime update or removal API. Product-specific names must b
 It does not mutate the original request Headers and does not govern third-party logging providers,
 message templates, Activity tags, tracing exporters, or any path that bypasses the projector.
 
-The optional `ServiceMantle.Serilog` package installs a Serilog Console pipeline whose structured
+The optional `ServiceMantle.Logging` package installs a Serilog Console pipeline whose structured
 properties always pass through that sanitizer:
 
 ```csharp
@@ -2161,7 +2191,7 @@ provider cannot receive unsanitized properties. Add any intentional non-Console 
 extension. This package does not sanitize caller-interpolated free text in message templates and
 cannot flush after forced termination such as `SIGKILL`, a host crash, or stack overflow.
 
-`ServiceMantle.Serilog` also ships an opt-in Grafana Loki sink behind the same mandatory sanitizer;
+`ServiceMantle.Logging` also ships an opt-in Grafana Loki sink behind the same mandatory sanitizer;
 no extra package reference is needed. It is disabled by default, and referencing the package without
 calling `AddServiceMantleGrafanaLoki` leaves the console sink factory in place and registers nothing
 Loki-owned. Authentication is resolved at startup from a non-secret name and is never part of the
@@ -2197,10 +2227,11 @@ does not add disk buffering, unbounded retries, dynamic reload, query APIs, or e
 
 ### Migrating from the separate Grafana Loki package
 
-`ServiceMantle.Serilog.GrafanaLoki` is no longer published. Its implementation now ships inside
-`ServiceMantle.Serilog`:
+`ServiceMantle.Serilog.GrafanaLoki` is no longer published. Its implementation ships inside the
+logging package, published as `ServiceMantle.Logging` since the package-identifier rename
+(`ServiceMantle.Serilog` before that rename):
 
-- Replace the package reference with `ServiceMantle.Serilog`. Already published versions of the
+- Replace the package reference with `ServiceMantle.Logging`. Already published versions of the
   retired package id are untouched; they simply receive no new versions.
 - Public type names, `AddServiceMantleGrafanaLoki`, defaults, error codes, and configuration
   validation are unchanged. The adapter's self-owned namespaces are the capability namespaces
@@ -2210,7 +2241,7 @@ does not add disk buffering, unbounded retries, dynamic reload, query APIs, or e
   `ServiceMantle.Logging` namespace. See `NAMING_MIGRATION.md` for the full rename mapping.
 - Recompile. The types moved to a different assembly, so binaries compiled against the retired
   assembly do not bind to the merged one.
-- Installing `ServiceMantle.Serilog` now brings `Serilog.Sinks.Grafana.Loki` in transitively.
+- Installing `ServiceMantle.Logging` now brings `Serilog.Sinks.Grafana.Loki` in transitively.
   Dependency isolation between the console pipeline and the remote driver is intentionally no longer
   offered. What is still guaranteed is that the sink stays disabled until
   `AddServiceMantleGrafanaLoki` enables it, and that the provider-agnostic `ServiceMantle` core
@@ -2218,7 +2249,7 @@ does not add disk buffering, unbounded retries, dynamic reload, query APIs, or e
 
 ## Optional Consul client boundary
 
-`ServiceMantle.Consul` contains the optional configuration catalog, immutable registration model,
+`ServiceMantle.Discovery` contains the optional configuration catalog, immutable registration model,
 replaceable `IConsulClientFactory` / `IConsulClient`, and single-call HTTP adapter. It references only
 the core package plus `Microsoft.Extensions.Hosting.Abstractions`, and uses the platform HTTP stack;
 the core acquires no Consul SDK or ASP.NET Core reference.
@@ -2398,7 +2429,7 @@ encrypted under the new purpose. Unknown commit outcomes are your responsibility
 library provides no automatic compensation.
 
 The following in-memory conversion example is the tested source of truth
-(`tests/ServiceMantle.Consul.Tests/ConsulDiscoverySettingMigrationTests.cs`); database reads and the
+(`tests/ServiceMantle.Discovery.Tests/ConsulDiscoverySettingMigrationTests.cs`); database reads and the
 final commit stay with the consumer. It returns rows only on success - failures and caller
 cancellation never produce a partial committable result. Rows are resolved with the store's key
 normalization (trimmed, lowercased invariantly), so case or whitespace variants of a retired key
@@ -2540,7 +2571,7 @@ transaction, version, audit trail, and rollback.
 ### Readiness-driven registration lifecycle
 
 `AddServiceMantleConsul()` also registers one hosted controller that drives registration from the
-shared `IServiceReadinessDecisionSource`. `ServiceMantle.Consul` never references ASP.NET Core,
+shared `IServiceReadinessDecisionSource`. `ServiceMantle.Discovery` never references ASP.NET Core,
 requests `/health/ready`, accepts a separate Boolean, or repeats the readiness algorithm: the
 consuming service registers one decision source for the health endpoints and for this lifecycle.
 
@@ -2625,26 +2656,26 @@ Frontend work is intentionally out of scope and will be implemented in a separat
 ## Repository layout
 
 - `src/ServiceMantle/ServiceMantle.csproj`
-- `src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj`
-- `src/ServiceMantle.Consul/ServiceMantle.Consul.csproj`
+- `src/ServiceMantle.Web/ServiceMantle.Web.csproj`
+- `src/ServiceMantle.Discovery/ServiceMantle.Discovery.csproj`
 - `src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj`
 - `src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj`
-- `src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj`
-- `tests/ServiceMantle.AspNetCore.Tests/ServiceMantle.AspNetCore.Tests.csproj`
-- `tests/ServiceMantle.Consul.Tests/ServiceMantle.Consul.Tests.csproj`
+- `src/ServiceMantle.Logging/ServiceMantle.Logging.csproj`
+- `tests/ServiceMantle.Web.Tests/ServiceMantle.Web.Tests.csproj`
+- `tests/ServiceMantle.Discovery.Tests/ServiceMantle.Discovery.Tests.csproj`
 - `tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj`
 - `tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj`
-- `tests/ServiceMantle.Serilog.Tests/ServiceMantle.Serilog.Tests.csproj`
-- `tests/ServiceMantle.Serilog.GrafanaLoki.Tests/ServiceMantle.Serilog.GrafanaLoki.Tests.csproj`
+- `tests/ServiceMantle.Logging.Tests/ServiceMantle.Logging.Tests.csproj`
+- `tests/ServiceMantle.Logging.Remote.Tests/ServiceMantle.Logging.Remote.Tests.csproj`
 - `tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj`
 - `src/ServiceMantle/ServiceId.cs`
 - `src/ServiceMantle/InstanceId.cs`
 - `src/ServiceMantle/Installation/`
-- `src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj`
+- `src/ServiceMantle.Persistence.Relational/ServiceMantle.Persistence.Relational.csproj`
 - `tests/ServiceMantle.Tests/ServiceIdTests.cs`
 - `tests/ServiceMantle.Tests/InstanceIdTests.cs`
 - `tests/ServiceMantle.Tests/Installation/`
-- `tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests.csproj`
+- `tests/ServiceMantle.Persistence.Relational.Tests/ServiceMantle.Persistence.Relational.Tests.csproj`
 - `ServiceMantle.slnx`
 - `global.json`
 - `Directory.Build.props`
@@ -2659,12 +2690,12 @@ dotnet restore ServiceMantle.slnx
 dotnet build ServiceMantle.slnx -c Release
 dotnet test --solution ServiceMantle.slnx -c Release
 dotnet pack src/ServiceMantle/ServiceMantle.csproj -c Release --no-build
-dotnet pack src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj -c Release --no-build
-dotnet pack src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj -c Release --no-build
+dotnet pack src/ServiceMantle.Web/ServiceMantle.Web.csproj -c Release --no-build
+dotnet pack src/ServiceMantle.Logging/ServiceMantle.Logging.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj -c Release --no-build
 dotnet pack src/ServiceMantle.Database.SqlServer/ServiceMantle.Database.SqlServer.csproj -c Release --no-build
-dotnet pack src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj -c Release --no-build
+dotnet pack src/ServiceMantle.Persistence.Relational/ServiceMantle.Persistence.Relational.csproj -c Release --no-build
 ```
 
 With PostgreSQL Testcontainers (requires Docker):
@@ -2689,7 +2720,7 @@ With SQL Server Testcontainers (requires Docker on a supported Linux/AMD64 host)
 
 ```bash
 RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Database.SqlServer.Tests -c Release
-RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Persistence.EntityFrameworkCore.Tests -c Release
+RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Persistence.Relational.Tests -c Release
 ```
 
 To override the SQL Server image:

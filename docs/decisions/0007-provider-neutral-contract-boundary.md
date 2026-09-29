@@ -217,6 +217,22 @@ namespace 不得跨越两个程序集。
 #576（OpenTelemetry→Diagnostics）、#577（EFCore→Persistence.Relational）。切片合并前主线代码
 仍使用旧 namespace；这是 #570 明确接受的过渡状态，不构成对本判据的违反。
 
+**包 ID 对齐（#585）。** 上表的「包」列记录的是各切片实施当时的包 ID。#585 随后把五个适配包的
+包 ID、程序集名与项目目录对齐到各自拥有的能力命名空间树的最小公共祖先节点，provider 与具体技术
+（ASP.NET Core、Consul、Serilog、OpenTelemetry、EF Core）只由类型名与包元数据
+（`<PackageDescription>`、依赖清单）暴露，不再进入包 ID：
+
+| 退役包 ID | 新包 ID |
+| --- | --- |
+| `ServiceMantle.AspNetCore` | `ServiceMantle.Web` |
+| `ServiceMantle.Consul` | `ServiceMantle.Discovery` |
+| `ServiceMantle.Serilog` | `ServiceMantle.Logging` |
+| `ServiceMantle.OpenTelemetry` | `ServiceMantle.Diagnostics` |
+| `ServiceMantle.Persistence.EntityFrameworkCore` | `ServiceMantle.Persistence.Relational` |
+
+核心包与六个 `ServiceMantle.Database.*` 的 ID 不变。类型名、namespace、公开 API 与运行时行为零
+变化；本 ADR 前文以旧包 ID 记录的叙述以其写作时点为准。
+
 ## 生命周期状态机不在本次范围
 
 `ConsulRegistrationLifecycle`（等 readiness → 注册 → 指数退避重试 → 关停预算内注销）

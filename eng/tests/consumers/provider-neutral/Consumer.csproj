@@ -11,9 +11,9 @@
 
   <ItemGroup>
     <PackageReference Include="ServiceMantle" Version="[__SERVICEMANTLE_VERSION__]" />
-    <PackageReference Include="ServiceMantle.Consul" Version="[__SERVICEMANTLE_VERSION__]" />
-    <PackageReference Include="ServiceMantle.OpenTelemetry" Version="[__SERVICEMANTLE_VERSION__]" />
-    <PackageReference Include="ServiceMantle.Serilog" Version="[__SERVICEMANTLE_VERSION__]" />
+    <PackageReference Include="ServiceMantle.Discovery" Version="[__SERVICEMANTLE_VERSION__]" />
+    <PackageReference Include="ServiceMantle.Diagnostics" Version="[__SERVICEMANTLE_VERSION__]" />
+    <PackageReference Include="ServiceMantle.Logging" Version="[__SERVICEMANTLE_VERSION__]" />
   </ItemGroup>
 
 </Project>

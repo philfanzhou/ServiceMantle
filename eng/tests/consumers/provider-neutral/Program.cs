@@ -42,8 +42,8 @@ try
 
     // The two contracts uplifted from the ASP.NET Core adapter into the core package (#572): the
     // consumer-owned health snapshot source is implemented and registered through
-    // ServiceMantle.Health, next to the framework usings above, without the adapter's own
-    // namespaces (ServiceMantle.Web since the #573 rename) in scope.
+    // ServiceMantle.Health, next to the framework usings above, without the hosting adapter's
+    // own namespaces (capability-prefixed since the #573 rename) in scope.
     builder.Services.AddSingleton<IServiceHealthSnapshotSource, NeutralSnapshotSource>();
 
     var serviceMantle = builder.Services.AddServiceMantle(

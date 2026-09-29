@@ -118,11 +118,16 @@ resolve 后调用、catch），以及它的契约里是否含有该产品特有�
 - **协议名不是库名。** OTLP、Prometheus exposition 是标准而非实现，对应 namespace 不属于泄漏，
   随能力命名住在 `ServiceMantle.Diagnostics.Export.*`。
 
-可断言的形式：消费方源码中不允许出现技术选型命名的 namespace（`ServiceMantle.Consul`、
-`ServiceMantle.Serilog`、`ServiceMantle.OpenTelemetry`、`ServiceMantle.AspNetCore`）的
-`using`；适配器的名字只出现在 `.csproj` 的 `PackageReference`、组合根的一行 `Add*()`，以及
-provider 特有类型与成员的名字（`ConsulClientConfiguration`、`SerilogOptions.OutputTemplate`）
-里。`eng/tests/consumers` 下的消费项目以编译失败的方式守住这条。
+可断言的形式：消费方源码中不允许出现适配包自有 namespace 的 `using`。#570 之后适配包自有
+namespace 已按能力命名，因此这条以「守卫过的名字集合」断言：已退役的技术选型命名 namespace
+（`ServiceMantle.AspNetCore`、`ServiceMantle.Consul`、`ServiceMantle.Serilog`、
+`ServiceMantle.OpenTelemetry`、`ServiceMantle.Persistence.EntityFrameworkCore`）不得复活，且归
+ASP.NET Core 适配包独有的 `ServiceMantle.Web` 前缀（核心包无此裸 namespace 或子空间类型）同样
+不得出现在中立消费方源码中——包 ID 已随 #585 对齐能力命名；适配器的名字只出现在 `.csproj` 的
+`PackageReference`、组合根的一行 `Add*()`，以及 provider 特有类型与成员的名字
+（`ConsulClientConfiguration`、`SerilogOptions.OutputTemplate`）里。`eng/tests/consumers` 下的
+消费项目以编译失败的方式守住这条，provider-neutral 消费项目的源边界断言在 CI 里以同一名字
+集合 grep 实现。
 
 替换 provider 特有传输或凭据的扩展点（[ADR 0007](docs/decisions/0007-provider-neutral-contract-boundary.md)
 的 B 类 SPI，例如 Consul 传输）属于 provider 特有代码，不在该断言范围内。

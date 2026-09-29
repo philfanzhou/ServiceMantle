@@ -1,6 +1,6 @@
 # Consul 注册生命周期决策（#290）
 
-状态：已由 #49 实现。本文档仍是规范性的状态、完成与停止矩阵；实现位于 `ServiceMantle.Consul`。
+状态：已由 #49 实现。本文档仍是规范性的状态、完成与停止矩阵；实现位于 `ServiceMantle.Discovery`。
 
 ## 决策
 
@@ -10,7 +10,7 @@ Consul 生命周期消费来自核心 `ServiceMantle.Health` 命名空间的一�
 错误码。Issue #321 拥有这个新的公开契约，并把 ASP.NET Core 健康 endpoint 改为消费其默认 adapter。
 Issue #49 被 #321 阻塞。
 
-这是生命周期唯一的 readiness 输入。`ServiceMantle.Consul` 不引用 ASP.NET Core、不向
+这是生命周期唯一的 readiness 输入。`ServiceMantle.Discovery` 不引用 ASP.NET Core、不向
 `/health/ready` 发出 HTTP 请求、不重复 readiness 算法，也不接受独立提供的布尔值。健康 endpoint
 请求绝不会启动或驱动注册。消费方为 HTTP 健康 surface 和可选的 Consul 生命周期注册同一个决策
 来源；不同的调用可能采样到不同时刻，但它们使用同一个来源和同一套评估契约。
@@ -97,7 +97,7 @@ token 使用，保留 1–4096 个非空白可打印 ASCII 字符校验，不宣
 读取新 purpose 密文。未知提交结果由消费方核查，不提供自动补偿。
 
 README（英文）中的 `ConsulDiscoverySettingMigration.TryConvert` 内存转换示例是经测试的事实源，
-对应 `tests/ServiceMantle.Consul.Tests/ConsulDiscoverySettingMigrationTests.cs`：无凭据、合法凭据、
+对应 `tests/ServiceMantle.Discovery.Tests/ConsulDiscoverySettingMigrationTests.cs`：无凭据、合法凭据、
 旧键大小写/空白变体（按 store 的 `Trim()` + 小写规范化识别，含凭据变体的重新保护与规范化后的
 目标键冲突）、非凭据行类型不匹配或未定义（按目录检查这 8 个迁移键）、错误根密钥、损坏密文与已
 取消 token（含空输入集合）各有断言，失败与取消均不产出可提交的部分结果。
@@ -320,7 +320,7 @@ token。
 
 违反该互斥的交错曾产生的缺陷（注销 PUT 重复、session 双重处置、`DisposeSession(null)` 空引用、
 释放后再停止时的 `ObjectDisposedException`）由
-`tests/ServiceMantle.Consul.Tests/ConsulStopDisposeInterlockTests.cs` 的交错矩阵钉住。
+`tests/ServiceMantle.Discovery.Tests/ConsulStopDisposeInterlockTests.cs` 的交错矩阵钉住。
 
 ## 停止矩阵
 

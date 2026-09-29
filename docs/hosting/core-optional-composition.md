@@ -17,7 +17,7 @@
 
 ## 可执行的本地接线
 
-本示例使用 `ServiceMantle.AspNetCore` 和 `ServiceMantle.Serilog`。修改三个布尔值即可运行
+本示例使用 `ServiceMantle.Web` 和 `ServiceMantle.Logging`。修改三个布尔值即可运行
 表格中的每一行。固定的 Ready 状态源和临时（ephemeral）Data Protection provider 只是本地
 演示/测试选择：对于部署的服务，应替换为消费方自有的状态观测和合适的密钥存储策略。本示例
 不实现登录或身份提供方。

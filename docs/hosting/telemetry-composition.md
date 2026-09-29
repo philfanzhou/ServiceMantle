@@ -32,7 +32,7 @@ provider 创建由信号决定：A 或 H 需要 tracing；R 需要 metrics。插
 
 ## 可执行的本地接线
 
-在 ASP.NET Core 应用中引用 `ServiceMantle.OpenTelemetry`（它会带来 AspNetCore 集成）。
+在 ASP.NET Core 应用中引用 `ServiceMantle.Diagnostics`（它会带来 `ServiceMantle.Web` 集成）。
 本本地示例使用显式固定的 Ready 快照来隔离组合。真实服务必须提供自己的、可取消感知的
 `IServiceHealthSnapshotSource`，反映其权威的安装、migration 和数据库状态；注册插桩不会
 提供或持久化该状态。
@@ -129,7 +129,7 @@ provider 的地方配置；缺席和禁用行不会通过测试设置获得 prov
 而不是基于 sleep 的周期性导出检查。
 
 新测试还会检查 Core/AspNetCore 还原后的依赖图中是否有传递性 telemetry 引用：两者都不得
-触及 Exporter 或 Prometheus 驱动。`ServiceMantle.OpenTelemetry` 本身自带 OTLP 和
+触及 Exporter 或 Prometheus 驱动。`ServiceMantle.Diagnostics` 本身自带 OTLP 和
 Prometheus exporter，因此它守住的边界是行为性的而非传递性的——安装它不会激活任何
 exporter，直到进行匹配的注册调用。本组合不添加包、框架引用或 `eng/packages.json` 条目。
 

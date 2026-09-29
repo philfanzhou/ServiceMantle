@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\ServiceMantle.AspNetCore\ServiceMantle.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\src\ServiceMantle.Web\ServiceMantle.Web.csproj" />
     <ProjectReference Include="..\..\src\ServiceMantle.Database.MySql\ServiceMantle.Database.MySql.csproj" />
     <ProjectReference Include="..\ServiceMantle.Testing\ServiceMantle.Testing.csproj" />
   </ItemGroup>
