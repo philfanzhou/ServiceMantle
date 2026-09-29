@@ -31,6 +31,31 @@ public sealed class GrafanaLokiOptions
     /// </summary>
     public string? AuthorizationHeaderResolverName { get; set; }
 
+    /// <summary>
+    /// Gets or sets the explicit fixed stream labels attached to every Loki stream this sink emits.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When unset (the default), no consumer labels are added and the stream labels keep their
+    /// existing shape: the sink-owned <c>level</c> label only. Label values come exclusively from
+    /// this explicit configuration; log event properties are never promoted to labels.
+    /// </para>
+    /// <para>
+    /// Keys must match <c>^[A-Za-z_][A-Za-z0-9_]*$</c>, be 1-128 characters long, and not collide
+    /// with the sink-reserved keys in <see cref="GrafanaLokiDefaults.ReservedLabelKeys"/>
+    /// (currently <c>level</c>). Values must be 1-1024 characters long and contain no control
+    /// characters. At most <see cref="GrafanaLokiDefaults.MaxLabelCount"/> labels are accepted.
+    /// Invalid label configuration fails when the host starts, without echoing any key or value.
+    /// </para>
+    /// <para>
+    /// Callers are responsible for choosing low-cardinality, non-sensitive label values:
+    /// ServiceMantle does not verify that values contain no secrets, and Loki indexes every
+    /// distinct label value set as a separate stream, so high-cardinality values multiply streams
+    /// and degrade querying. Evaluate label changes against existing Grafana queries and alerts.
+    /// </para>
+    /// </remarks>
+    public IDictionary<string, string>? Labels { get; set; }
+
     /// <summary>Gets or sets the maximum events per request.</summary>
     public int BatchSize { get; set; } = GrafanaLokiDefaults.BatchSize;
 
@@ -62,4 +87,21 @@ public static class GrafanaLokiDefaults
 
     /// <summary>The default shutdown drain timeout.</summary>
     public static TimeSpan ShutdownDrainTimeout { get; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>The maximum fixed label key length.</summary>
+    public const int MaxLabelKeyLength = 128;
+
+    /// <summary>The maximum fixed label value length.</summary>
+    public const int MaxLabelValueLength = 1_024;
+
+    /// <summary>The maximum number of fixed labels.</summary>
+    public const int MaxLabelCount = 8;
+
+    /// <summary>
+    /// The fixed label keys reserved by the sink itself. The reserved set is exactly the labels
+    /// the sink wiring owns: <c>level</c> via the level-as-label mode, with no property-derived,
+    /// trace, or span labels configured.
+    /// </summary>
+    public static IReadOnlySet<string> ReservedLabelKeys { get; } =
+        new HashSet<string>(StringComparer.Ordinal) { "level" };
 }
