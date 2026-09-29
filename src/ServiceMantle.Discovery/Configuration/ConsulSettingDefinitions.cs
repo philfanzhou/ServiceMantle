@@ -11,6 +11,14 @@ public sealed class ConsulSettingDefinitions : IServiceSettingDefinitionProvider
     /// <summary>The root HTTPS agent URI, or a loopback HTTP URI.</summary>
     public const string Endpoint = "discovery.endpoint";
     /// <summary>
+    /// Explicitly accepts non-loopback plain-HTTP agent endpoints; defaults to false. Enabling it
+    /// is an explicit acceptance that the ACL token (when configured) and the complete
+    /// registration content travel in cleartext to that agent. ServiceMantle does not infer
+    /// network trust from any DNS name or private address shape; use HTTPS whenever the path
+    /// crosses an untrusted network. Requires restart.
+    /// </summary>
+    public const string AllowInsecureHttp = "discovery.allow-insecure-http";
+    /// <summary>
     /// The optional encrypted provider-defined credential string; never has a plaintext default.
     /// This Consul adapter uses it as the ACL token.
     /// </summary>
@@ -31,6 +39,7 @@ public sealed class ConsulSettingDefinitions : IServiceSettingDefinitionProvider
     [
         new(Enabled, ServiceSettingValueType.Boolean, defaultValue: "false", requiresRestart: true),
         new(Endpoint, ServiceSettingValueType.String, requiresRestart: true),
+        new(AllowInsecureHttp, ServiceSettingValueType.Boolean, defaultValue: "false", requiresRestart: true),
         new(Token, ServiceSettingValueType.String, isSensitive: true, requiresRestart: true),
         new(ServiceName, ServiceSettingValueType.String, requiresRestart: true),
         new(Address, ServiceSettingValueType.String, requiresRestart: true),
