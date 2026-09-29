@@ -21,6 +21,9 @@ public static class WellKnownGrafanaLokiErrorCodes
     /// <summary>A bounded numeric setting is invalid.</summary>
     public const string InvalidBoundedSetting = "loki.invalid_bounded_setting";
 
+    /// <summary>The fixed stream label configuration is invalid.</summary>
+    public const string InvalidLabels = "loki.invalid_labels";
+
     /// <summary>Multiple registrations conflict.</summary>
     public const string ConflictingRegistration = "loki.conflicting_registration";
 

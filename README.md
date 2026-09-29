@@ -2296,6 +2296,28 @@ configured `Authorization` header travel in cleartext to that endpoint. ServiceM
 verify that the endpoint is reachable only over a trusted network and does not treat any hostname
 or address shape as implicitly trusted; use HTTPS whenever the path crosses an untrusted network.
 
+An explicit `Labels` map attaches fixed stream labels to every emitted Loki stream, for consumers
+migrating existing Grafana queries and alerts that select on labels such as `service`:
+
+```csharp
+builder.AddServiceMantleGrafanaLoki(options =>
+{
+    options.Enabled = true;
+    options.Endpoint = new Uri("https://logs.example.com/grafana");
+    options.Labels = new Dictionary<string, string> { ["service"] = "Ruoyu.Admin" };
+});
+```
+
+Leaving `Labels` unset adds no consumer labels: the stream labels keep their existing shape, the
+sink-owned `level` label only. Label values come exclusively from this configuration; log event
+properties are never promoted to labels. Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`, be 1-128
+characters long, and avoid the sink-reserved key `level`; values must be 1-1024 characters long
+without control characters; at most 8 labels are accepted. Invalid label configuration fails when
+the host starts without echoing any submitted key or value. Label cardinality and secrecy are the
+caller's responsibility: ServiceMantle does not verify that values contain no secrets, and Loki
+indexes every distinct label value set as a separate stream, so high-cardinality values multiply
+streams and degrade querying.
+
 The fixed upstream driver owns the bounded in-memory queue and retry schedule. Capacity drops,
 permanent delivery failures, drain timeouts, and caller-cancelled drains are exposed only through
 content-free counters and stable error codes on `RemoteLogDeliveryDiagnostics` (core
