@@ -356,6 +356,49 @@ public static class ServiceMantleServiceCollectionExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Adds an ordered conditional mapping for one exact exception type to the ServiceMantle
+    /// Problem Details table.
+    /// </summary>
+    /// <typeparam name="TException">The exact exception type handled by the mapping.</typeparam>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="candidates">
+    /// The ordered candidate outcomes. For each caught exception the candidates are evaluated in
+    /// the given order and the first candidate whose condition holds produces the response; a
+    /// candidate without a condition applies unconditionally. When no candidate matches, the
+    /// fail-closed generic 500 fallback is used.
+    /// </param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// <para>
+    /// Status codes, error codes, titles, and extension whitelists are fixed per candidate and
+    /// validated when the host starts. A candidate may declare a fixed
+    /// <c>Retry-After</c> value in whole delta-seconds between 1 and 86400, written as an
+    /// invariant decimal string while the response has not started; no other response header can
+    /// be declared. Nothing is projected from the exception into the response, and predicate or
+    /// serialization failures fall back to the generic 500 without applying the failing
+    /// candidate's headers or extensions.
+    /// </para>
+    /// <para>
+    /// A conditional mapping cannot be combined with <see cref="AddExceptionMapping{TException}"/>
+    /// for the same exception type. Repeating an identical registration is idempotent; any other
+    /// second registration for the same type, more than one unconditional candidate, or an empty
+    /// candidate list is a startup error.
+    /// </para>
+    /// </remarks>
+    public static ServiceMantleBuilder AddConditionalExceptionMapping<TException>(
+        this ServiceMantleBuilder builder,
+        IReadOnlyList<ExceptionMappingCandidate<TException>> candidates)
+        where TException : Exception
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        builder.Services.AddSingleton<IConditionalExceptionMappingRegistration>(
+            new ConditionalExceptionMappingRegistration<TException>(candidates));
+        return builder;
+    }
+
     /// <summary>Adds an explicit, startup-validated forwarded-header trust boundary.</summary>
     /// <param name="builder">The ServiceMantle builder.</param>
     /// <param name="configure">Configures trusted proxies, networks, hosts, and chain limit.</param>

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -70,26 +71,32 @@ internal sealed class ProblemDetailsMiddleware
         var mapping = mappingRegistry.TryGet(exception.GetType(), out var registered)
             ? registered
             : null;
-        var statusCode = mapping?.StatusCode ?? StatusCodes.Status500InternalServerError;
-        var errorCode = mapping?.ErrorCode ??
-            ProblemDetailsDefaults.InternalServerErrorCode;
-        var title = mapping?.Title ?? ProblemDetailsDefaults.InternalServerErrorTitle;
-        var typeUri = mapping?.TypeUri ?? ProblemDetailsDefaults.InternalServerErrorType;
 
         byte[] body;
+        int statusCode;
+        string errorCode;
+        ExceptionMappingVariant? selection;
         try
         {
+            selection = mapping?.Select(exception);
+            statusCode = selection?.StatusCode ?? StatusCodes.Status500InternalServerError;
+            errorCode = selection?.ErrorCode ??
+                ProblemDetailsDefaults.InternalServerErrorCode;
             body = Serialize(
-                typeUri,
-                title,
+                selection?.TypeUri ?? ProblemDetailsDefaults.InternalServerErrorType,
+                selection?.Title ?? ProblemDetailsDefaults.InternalServerErrorTitle,
                 statusCode,
                 correlationId,
                 errorCode,
                 exception,
-                mapping?.ExtensionFactories ?? []);
+                selection?.ExtensionFactories ?? []);
         }
         catch (Exception)
         {
+            // A failing condition, extension factory, or serialization fails closed: the complete
+            // response falls back to the generic 500 and headers from the failing selection are
+            // not applied.
+            selection = null;
             statusCode = StatusCodes.Status500InternalServerError;
             errorCode = ProblemDetailsDefaults.InternalServerErrorCode;
             body = Serialize(
@@ -107,6 +114,11 @@ internal sealed class ProblemDetailsMiddleware
         response.ContentType = "application/problem+json";
         response.ContentLength = body.Length;
         response.Headers[ServiceHeaderNames.CorrelationId] = correlationId;
+        if (selection?.RetryAfterSeconds is int retryAfterSeconds)
+        {
+            response.Headers.RetryAfter =
+                retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+        }
 
         TryLogError(
             "A ServiceMantle request failed with {ErrorCode}; CorrelationId {CorrelationId}.",
