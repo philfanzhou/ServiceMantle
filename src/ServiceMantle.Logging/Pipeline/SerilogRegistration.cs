@@ -133,10 +133,13 @@ internal sealed class SerilogConfiguration
     }
 
     // Overrides are copied into an isolated, order-insensitive snapshot: later mutation of the
-    // options dictionary cannot change the running pipeline, and duplicate category keys are
+    // options dictionary cannot change the running pipeline. Exact duplicate raw keys are
     // structurally unrepresentable in an IDictionary<string, LogLevel> (JSON binding merges
-    // duplicate keys before this contract sees them). Validation covers key shape and level
-    // validity without echoing any submitted key or level value.
+    // byte-identical keys before this contract sees them), but trimming can collapse keys that
+    // differ only in surrounding whitespace: such duplicates are accepted only when they agree
+    // on the level and otherwise fail deterministically, whatever order the dictionary yields
+    // its pairs in. Validation covers key shape, level validity, and duplicate consistency
+    // without echoing any submitted key or level value.
     private static IReadOnlyDictionary<string, LogEventLevel> NormalizeOverrides(
         IDictionary<string, LogLevel>? overrides)
     {
@@ -158,10 +161,18 @@ internal sealed class SerilogConfiguration
                     "serilog.minimum_level_overrides_invalid");
             }
 
-            snapshot[key] = ToSerilogLevel(
+            var normalized = ToSerilogLevel(
                 level,
                 "MinimumLevelOverrides",
                 "serilog.minimum_level_overrides_invalid");
+            if (snapshot.TryGetValue(key, out var existing) && existing != normalized)
+            {
+                throw Failure(
+                    "MinimumLevelOverrides",
+                    "serilog.minimum_level_overrides_invalid");
+            }
+
+            snapshot[key] = normalized;
         }
 
         return snapshot;

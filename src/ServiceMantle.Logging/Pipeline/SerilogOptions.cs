@@ -29,11 +29,14 @@ public sealed class SerilogOptions
     /// <para>
     /// Keys are trimmed, must be non-empty and at most
     /// <see cref="SerilogDefaults.MaximumLevelOverrideKeyLength"/> characters long, and values
-    /// must be defined log levels other than <see cref="LogLevel.None"/>. Invalid overrides fail
-    /// when the Host starts without echoing the submitted keys or level values. Overrides only
-    /// filter events; they do not change sanitization, message content, or delivery semantics,
-    /// and Console and remote sinks observe the same filtered result. Third-party logging
-    /// providers outside this pipeline are not governed by these overrides.
+    /// must be defined log levels other than <see cref="LogLevel.None"/>. Keys that differ only
+    /// in surrounding whitespace are the same key: repeating it with the same level is accepted
+    /// idempotently, while repeating it with different levels fails deterministically when the
+    /// Host starts, regardless of dictionary ordering. Invalid overrides fail when the Host
+    /// starts without echoing the submitted keys or level values. Overrides only filter events;
+    /// they do not change sanitization, message content, or delivery semantics, and Console and
+    /// remote sinks observe the same filtered result. Third-party logging providers outside
+    /// this pipeline are not governed by these overrides.
     /// </para>
     /// </remarks>
     public IDictionary<string, LogLevel>? MinimumLevelOverrides { get; set; }
