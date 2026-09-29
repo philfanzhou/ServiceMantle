@@ -2271,10 +2271,30 @@ builder.AddServiceMantleGrafanaLoki(options =>
 ```
 
 Enabled endpoints must use absolute HTTPS URIs without user information, query strings, or
-fragments. An explicit test-only option permits loopback HTTP. Batch size is limited to 1-1,000,
-queue capacity to 100-50,000 events, and flush and shutdown drain periods to 1-30 seconds. Invalid
-configuration, a missing resolver, or an unavailable authorization value fails when the Host starts
-without including submitted values in the exception.
+fragments. An explicit test-only option permits loopback HTTP. A separate explicit option,
+`AllowInsecureHttp`, accepts plain-HTTP endpoints on any host for Loki instances reached over a
+network the consumer controls and trusts, such as a container service name:
+
+```csharp
+builder.AddServiceMantleGrafanaLoki(options =>
+{
+    options.Enabled = true;
+    options.Endpoint = new Uri("http://ruoyu-loki:3100");
+    options.AllowInsecureHttp = true;
+});
+```
+
+Leaving `AuthorizationHeaderResolverName` unset configures the no-authentication mode: no resolver
+registration is required, no authorization value is resolved, and requests carry no `Authorization`
+header. Any explicitly set value - including whitespace - keeps the strict name validation. Batch
+size is limited to 1-1,000, queue capacity to 100-50,000 events, and flush and shutdown drain
+periods to 1-30 seconds. Invalid configuration, a missing resolver, or an unavailable authorization
+value fails when the Host starts without including submitted values in the exception.
+
+Enabling `AllowInsecureHttp` is an explicit acceptance that the complete log content and any
+configured `Authorization` header travel in cleartext to that endpoint. ServiceMantle does not
+verify that the endpoint is reachable only over a trusted network and does not treat any hostname
+or address shape as implicitly trusted; use HTTPS whenever the path crosses an untrusted network.
 
 The fixed upstream driver owns the bounded in-memory queue and retry schedule. Capacity drops,
 permanent delivery failures, drain timeouts, and caller-cancelled drains are exposed only through

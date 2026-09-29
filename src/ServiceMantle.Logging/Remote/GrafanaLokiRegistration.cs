@@ -65,17 +65,21 @@ internal sealed class GrafanaLokiConfigurationProvider(
             !string.IsNullOrEmpty(endpoint.Query) ||
             !string.IsNullOrEmpty(endpoint.Fragment) ||
             (endpoint.Scheme != Uri.UriSchemeHttps &&
-                !(options.AllowInsecureLoopbackForTesting &&
-                  endpoint.Scheme == Uri.UriSchemeHttp &&
-                  endpoint.IsLoopback)))
+                !(endpoint.Scheme == Uri.UriSchemeHttp &&
+                  (options.AllowInsecureHttp ||
+                    (options.AllowInsecureLoopbackForTesting && endpoint.IsLoopback)))))
         {
             throw Failure(nameof(options.Endpoint), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint);
         }
 
+        // An unset resolver name means no authentication: no name validation, no resolver
+        // registration, and no Authorization header. Any explicitly set value - including
+        // whitespace or invalid characters - keeps the strict format validation below.
         var resolverName = options.AuthorizationHeaderResolverName?.Trim();
-        if (resolverName is not { Length: >= 1 and <= 128 } ||
-            resolverName.Any(character =>
-                !(char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-')))
+        if (resolverName is not null &&
+            (resolverName is not { Length: >= 1 and <= 128 } ||
+             resolverName.Any(character =>
+                !(char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-'))))
         {
             throw Failure(
                 nameof(options.AuthorizationHeaderResolverName),
