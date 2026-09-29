@@ -27,12 +27,14 @@ internal sealed class SerilogConfiguration
         LogEventLevel minimumLevel,
         string outputTemplate,
         bool includeScopes,
-        TimeSpan flushTimeout)
+        TimeSpan flushTimeout,
+        IReadOnlyDictionary<string, LogEventLevel> minimumLevelOverrides)
     {
         MinimumLevel = minimumLevel;
         OutputTemplate = outputTemplate;
         IncludeScopes = includeScopes;
         FlushTimeout = flushTimeout;
+        MinimumLevelOverrides = minimumLevelOverrides;
     }
 
     internal LogEventLevel MinimumLevel { get; }
@@ -42,6 +44,8 @@ internal sealed class SerilogConfiguration
     internal bool IncludeScopes { get; }
 
     internal TimeSpan FlushTimeout { get; }
+
+    internal IReadOnlyDictionary<string, LogEventLevel> MinimumLevelOverrides { get; }
 
     internal static SerilogConfiguration Resolve(
         IEnumerable<SerilogRegistration> registrations)
@@ -77,7 +81,8 @@ internal sealed class SerilogConfiguration
 
             if (first.MinimumLevel != candidate.MinimumLevel ||
                 first.FlushTimeout != candidate.FlushTimeout ||
-                first.IncludeScopes != candidate.IncludeScopes)
+                first.IncludeScopes != candidate.IncludeScopes ||
+                !OverridesEquivalent(first.MinimumLevelOverrides, candidate.MinimumLevelOverrides))
             {
                 throw Failure("Registrations", "serilog.registration_conflict");
             }
@@ -117,14 +122,63 @@ internal sealed class SerilogConfiguration
             throw Failure("FlushTimeout", "serilog.flush_timeout_invalid");
         }
 
+        var minimumLevelOverrides = NormalizeOverrides(options.MinimumLevelOverrides);
+
         return new SerilogConfiguration(
-            ToSerilogLevel(options.MinimumLevel),
+            ToSerilogLevel(options.MinimumLevel, "MinimumLevel", "serilog.minimum_level_invalid"),
             options.OutputTemplate,
             options.IncludeScopes,
-            options.FlushTimeout);
+            options.FlushTimeout,
+            minimumLevelOverrides);
     }
 
-    private static LogEventLevel ToSerilogLevel(LogLevel level) => level switch
+    // Overrides are copied into an isolated, order-insensitive snapshot: later mutation of the
+    // options dictionary cannot change the running pipeline, and duplicate category keys are
+    // structurally unrepresentable in an IDictionary<string, LogLevel> (JSON binding merges
+    // duplicate keys before this contract sees them). Validation covers key shape and level
+    // validity without echoing any submitted key or level value.
+    private static IReadOnlyDictionary<string, LogEventLevel> NormalizeOverrides(
+        IDictionary<string, LogLevel>? overrides)
+    {
+        if (overrides is null || overrides.Count == 0)
+        {
+            return new Dictionary<string, LogEventLevel>(0, StringComparer.Ordinal);
+        }
+
+        var snapshot = new Dictionary<string, LogEventLevel>(overrides.Count, StringComparer.Ordinal);
+        foreach (var (category, level) in overrides)
+        {
+            var key = category?.Trim();
+            if (key is not { Length: >= 1 and <= SerilogDefaults.MaximumLevelOverrideKeyLength } ||
+                !Enum.IsDefined(level) ||
+                level == LogLevel.None)
+            {
+                throw Failure(
+                    "MinimumLevelOverrides",
+                    "serilog.minimum_level_overrides_invalid");
+            }
+
+            snapshot[key] = ToSerilogLevel(
+                level,
+                "MinimumLevelOverrides",
+                "serilog.minimum_level_overrides_invalid");
+        }
+
+        return snapshot;
+    }
+
+    private static bool OverridesEquivalent(
+        IReadOnlyDictionary<string, LogEventLevel> first,
+        IReadOnlyDictionary<string, LogEventLevel> second) =>
+        first.Count == second.Count &&
+        first.All(pair =>
+            second.TryGetValue(pair.Key, out var level) &&
+            level == pair.Value);
+
+    private static LogEventLevel ToSerilogLevel(
+        LogLevel level,
+        string fieldName,
+        string errorCode) => level switch
     {
         LogLevel.Trace => LogEventLevel.Verbose,
         LogLevel.Debug => LogEventLevel.Debug,
@@ -132,7 +186,7 @@ internal sealed class SerilogConfiguration
         LogLevel.Warning => LogEventLevel.Warning,
         LogLevel.Error => LogEventLevel.Error,
         LogLevel.Critical => LogEventLevel.Fatal,
-        _ => throw Failure("MinimumLevel", "serilog.minimum_level_invalid"),
+        _ => throw Failure(fieldName, errorCode),
     };
 
     private static void ValidateOutputTemplate(string outputTemplate)

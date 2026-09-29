@@ -2236,6 +2236,32 @@ builder.AddServiceMantleSerilog(options =>
 });
 ```
 
+Optional per-category minimum level overrides mirror the ASP.NET Core `LogLevel` per-category
+shape and share the same Microsoft.Extensions.Logging vocabulary:
+
+```csharp
+builder.AddServiceMantleSerilog(options =>
+{
+    options.MinimumLevel = LogLevel.Information;
+    options.MinimumLevelOverrides = new Dictionary<string, LogLevel>
+    {
+        ["Microsoft.AspNetCore"] = LogLevel.Warning,
+        ["Microsoft.EntityFrameworkCore.Database.Command"] = LogLevel.Warning,
+    };
+});
+```
+
+A key matches a category when it equals the category or is a prefix of it ending on a dot
+boundary, and the longest matching key wins (`Microsoft` matches
+`Microsoft.AspNetCore.Hosting`; `Microsoft.AspNetCor` matches nothing under
+`Microsoft.AspNetCore`). Keys are trimmed, case-sensitive, non-empty, and at most 256 characters
+long; values must be defined log levels other than `LogLevel.None`. Leaving
+`MinimumLevelOverrides` unset - or setting an empty map - keeps the previous filtering behavior
+exactly, so existing consumers need no code change. Console and the optional remote sinks observe
+the same filtered result; the overrides change filtering only, never sanitization, message
+content, or delivery semantics, and third-party logging providers outside this pipeline are not
+governed by them.
+
 The default output template is deterministic and includes structured properties. Equivalent
 normalized registrations are idempotent. Invalid option values, conflicting registrations, or an
 existing Serilog configuration fail when the Host starts, using only stable field names and error
