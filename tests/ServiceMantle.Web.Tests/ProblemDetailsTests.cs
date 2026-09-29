@@ -348,6 +348,509 @@ public sealed class ProblemDetailsTests
             new ApplicationBuilder(provider).UseServiceMantleProblemDetails());
     }
 
+    [Fact]
+    public async Task ConditionalMapping_SelectsByExceptionPropertyInRegistrationOrder()
+    {
+        using var fixture = new PipelineFixture(
+            terminal: context => Task.FromException(
+                new ClassifiedRequestException((int)context.Items["requestStatus"]!, SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status413PayloadTooLarge,
+                    "http.payload_too_large",
+                    "The request payload is too large.",
+                    condition: exception =>
+                        exception.RequestStatus == StatusCodes.Status413PayloadTooLarge,
+                    extensionFields: new Dictionary<string, Func<ClassifiedRequestException, object?>>
+                    {
+                        ["limit"] = _ => 1024,
+                    }),
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status400BadRequest,
+                    "http.request_invalid",
+                    "The request could not be processed."),
+            ]));
+
+        using var oversized = await fixture.SendAsync(CallerCorrelationId, requestStatus: 413);
+        using var ordinary = await fixture.SendAsync(CallerCorrelationId, requestStatus: 400);
+
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, oversized.StatusCode);
+        Assert.Equal("application/problem+json", oversized.ContentType);
+        Assert.Equal(
+            "urn:servicemantle:error:http.payload_too_large",
+            oversized.Json.RootElement.GetProperty("type").GetString());
+        Assert.Equal(1024, oversized.Json.RootElement.GetProperty("limit").GetInt32());
+        Assert.Null(oversized.RetryAfter);
+        AssertSafeBody(oversized.Body);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ordinary.StatusCode);
+        Assert.Equal(
+            "http.request_invalid",
+            ordinary.Json.RootElement.GetProperty("errorCode").GetString());
+        Assert.False(ordinary.Json.RootElement.TryGetProperty("limit", out _));
+        Assert.Null(ordinary.RetryAfter);
+        AssertSafeBody(ordinary.Body);
+    }
+
+    [Fact]
+    public async Task OverlappingConditions_ResolveToTheFirstRegisteredCandidate()
+    {
+        using var fixture = new PipelineFixture(
+            terminal: context => Task.FromException(
+                new ClassifiedRequestException((int)context.Items["requestStatus"]!, SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status418ImATeapot,
+                    "http.request_rejected",
+                    "The request was rejected.",
+                    condition: exception => exception.RequestStatus >= 400),
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status413PayloadTooLarge,
+                    "http.payload_too_large",
+                    "The request payload is too large.",
+                    condition: exception =>
+                        exception.RequestStatus == StatusCodes.Status413PayloadTooLarge),
+            ]));
+
+        using var overlapping = await fixture.SendAsync(CallerCorrelationId, requestStatus: 413);
+        using var onlyFirst = await fixture.SendAsync(CallerCorrelationId, requestStatus: 400);
+
+        Assert.Equal(StatusCodes.Status418ImATeapot, overlapping.StatusCode);
+        Assert.Equal(
+            "http.request_rejected",
+            overlapping.Json.RootElement.GetProperty("errorCode").GetString());
+        Assert.Equal(StatusCodes.Status418ImATeapot, onlyFirst.StatusCode);
+    }
+
+    [Fact]
+    public async Task MappedServiceUnavailable_SendsTheValidatedRetryAfterHeader()
+    {
+        using var fixture = new PipelineFixture(
+            terminal: context => Task.FromException(
+                new ClassifiedRequestException((int)context.Items["requestStatus"]!, SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "storage.busy",
+                    "The backing store is busy.",
+                    condition: exception =>
+                        exception.RequestStatus == StatusCodes.Status503ServiceUnavailable,
+                    retryAfterSeconds: 1),
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status400BadRequest,
+                    "http.request_invalid",
+                    "The request could not be processed."),
+            ]));
+
+        using var busy = await fixture.SendAsync(CallerCorrelationId, requestStatus: 503);
+        using var ordinary = await fixture.SendAsync(CallerCorrelationId, requestStatus: 400);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, busy.StatusCode);
+        Assert.Equal("1", busy.RetryAfter);
+        Assert.Equal(
+            "storage.busy",
+            busy.Json.RootElement.GetProperty("errorCode").GetString());
+        AssertSafeBody(busy.Body);
+
+        Assert.Null(ordinary.RetryAfter);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(86401)]
+    public async Task RetryAfterOutOfRange_FailsWhenTheHostStarts(int retryAfterSeconds)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services
+            .AddServiceMantle(
+                ServiceId.Parse("catalog"),
+                InstanceId.Parse("catalog-01"),
+                serviceVersion: "2.0.0")
+            .AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "storage.busy",
+                    "The backing store is busy.",
+                    retryAfterSeconds: retryAfterSeconds),
+            ]);
+
+        using var host = builder.Build();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(86400)]
+    public async Task RetryAfterBoundaries_AreAccepted(int retryAfterSeconds)
+    {
+        using var fixture = new PipelineFixture(
+            terminal: _ => Task.FromException(new ClassifiedRequestException(503, SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "storage.busy",
+                    "The backing store is busy.",
+                    retryAfterSeconds: retryAfterSeconds),
+            ]));
+
+        using var result = await fixture.SendAsync(CallerCorrelationId);
+
+        Assert.Equal(
+            retryAfterSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            result.RetryAfter);
+    }
+
+    [Fact]
+    public async Task FailingCondition_FailsClosedToTheGeneric500WithoutSelectedHeaders()
+    {
+        using var fixture = new PipelineFixture(
+            terminal: _ => Task.FromException(new ClassifiedRequestException(413, SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "storage.busy",
+                    "The backing store is busy.",
+                    condition: _ => throw new InvalidOperationException(SecretMessage),
+                    retryAfterSeconds: 1),
+            ]));
+
+        using var result = await fixture.SendAsync(CallerCorrelationId);
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, result.StatusCode);
+        Assert.Equal(
+            ProblemDetailsDefaults.InternalServerErrorCode,
+            result.Json.RootElement.GetProperty("errorCode").GetString());
+        Assert.Null(result.RetryAfter);
+        Assert.False(result.Json.RootElement.TryGetProperty("limit", out _));
+        AssertSafeBody(result.Body);
+    }
+
+    [Fact]
+    public async Task UnmatchedConditionalMapping_UsesTheGeneric500Fallback()
+    {
+        using var fixture = new PipelineFixture(
+            terminal: _ => Task.FromException(new ClassifiedRequestException(413, SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status413PayloadTooLarge,
+                    "http.payload_too_large",
+                    "The request payload is too large.",
+                    condition: _ => false),
+            ]));
+
+        using var result = await fixture.SendAsync(CallerCorrelationId);
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, result.StatusCode);
+        Assert.Equal(
+            ProblemDetailsDefaults.InternalServerErrorType,
+            result.Json.RootElement.GetProperty("type").GetString());
+        Assert.Equal(
+            ProblemDetailsDefaults.InternalServerErrorTitle,
+            result.Json.RootElement.GetProperty("title").GetString());
+        Assert.Null(result.RetryAfter);
+        AssertSafeBody(result.Body);
+    }
+
+    [Fact]
+    public async Task UnmatchedConditionalMapping_ProducesByteIdenticalBodiesInDevelopmentAndProduction()
+    {
+        var development = await GetUnknownBodyFromHostAsync(
+            Environments.Development,
+            builder => builder.AddConditionalExceptionMapping<InvalidOperationException>(
+            [
+                new ExceptionMappingCandidate<InvalidOperationException>(
+                    StatusCodes.Status400BadRequest,
+                    "http.request_invalid",
+                    "The request could not be processed.",
+                    condition: _ => false),
+            ]));
+        var production = await GetUnknownBodyFromHostAsync(
+            Environments.Production,
+            builder => builder.AddConditionalExceptionMapping<InvalidOperationException>(
+            [
+                new ExceptionMappingCandidate<InvalidOperationException>(
+                    StatusCodes.Status400BadRequest,
+                    "http.request_invalid",
+                    "The request could not be processed.",
+                    condition: _ => false),
+            ]));
+
+        Assert.Equal(development, production);
+    }
+
+    [Fact]
+    public async Task ConditionalRegistration_IsIdempotentAndConflictsFailWhenTheHostStarts()
+    {
+        var duplicateBuilder = Host.CreateApplicationBuilder();
+        var duplicate = duplicateBuilder.Services.AddServiceMantle(
+            ServiceId.Parse("catalog"),
+            InstanceId.Parse("catalog-01"),
+            serviceVersion: "2.0.0");
+        var candidates = new ExceptionMappingCandidate<ClassifiedRequestException>[]
+        {
+            new(
+                StatusCodes.Status413PayloadTooLarge,
+                "http.payload_too_large",
+                "The request payload is too large.",
+                condition: exception =>
+                    exception.RequestStatus == StatusCodes.Status413PayloadTooLarge),
+        };
+        duplicate.AddConditionalExceptionMapping<ClassifiedRequestException>(candidates);
+        duplicate.AddConditionalExceptionMapping<ClassifiedRequestException>(candidates);
+
+        using (var host = duplicateBuilder.Build())
+        {
+            await host.StartAsync(TestContext.Current.CancellationToken);
+            await host.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        var conflictBuilder = Host.CreateApplicationBuilder();
+        var conflicting = conflictBuilder.Services.AddServiceMantle(
+            ServiceId.Parse("catalog"),
+            InstanceId.Parse("catalog-01"),
+            serviceVersion: "2.0.0");
+        conflicting.AddConditionalExceptionMapping<ClassifiedRequestException>(candidates);
+        conflicting.AddConditionalExceptionMapping<ClassifiedRequestException>(
+        [
+            new ExceptionMappingCandidate<ClassifiedRequestException>(
+                StatusCodes.Status400BadRequest,
+                "http.request_invalid",
+                "The request could not be processed."),
+        ]);
+
+        using var conflictingHost = conflictBuilder.Build();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            conflictingHost.StartAsync(TestContext.Current.CancellationToken));
+
+        var mixedBuilder = Host.CreateApplicationBuilder();
+        var mixed = mixedBuilder.Services.AddServiceMantle(
+            ServiceId.Parse("catalog"),
+            InstanceId.Parse("catalog-01"),
+            serviceVersion: "2.0.0");
+        mixed.AddExceptionMapping<ClassifiedRequestException>(
+            StatusCodes.Status409Conflict,
+            "catalog.conflict",
+            "The catalog request conflicts.");
+        mixed.AddConditionalExceptionMapping<ClassifiedRequestException>(candidates);
+
+        using var mixedHost = mixedBuilder.Build();
+        var mixedException = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            mixedHost.StartAsync(TestContext.Current.CancellationToken));
+        Assert.DoesNotContain(nameof(ClassifiedRequestException), mixedException.Message, StringComparison.Ordinal);
+
+        var emptyBuilder = Host.CreateApplicationBuilder();
+        emptyBuilder.Services
+            .AddServiceMantle(
+                ServiceId.Parse("catalog"),
+                InstanceId.Parse("catalog-01"),
+                serviceVersion: "2.0.0")
+            .AddConditionalExceptionMapping<ClassifiedRequestException>([]);
+
+        using var emptyHost = emptyBuilder.Build();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            emptyHost.StartAsync(TestContext.Current.CancellationToken));
+
+        var multipleDefaultsBuilder = Host.CreateApplicationBuilder();
+        multipleDefaultsBuilder.Services
+            .AddServiceMantle(
+                ServiceId.Parse("catalog"),
+                InstanceId.Parse("catalog-01"),
+                serviceVersion: "2.0.0")
+            .AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status400BadRequest,
+                    "http.request_invalid",
+                    "The request could not be processed."),
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status409Conflict,
+                    "catalog.conflict",
+                    "The catalog request conflicts."),
+            ]);
+
+        using var multipleDefaultsHost = multipleDefaultsBuilder.Build();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            multipleDefaultsHost.StartAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task ConditionalCandidates_CannotRegisterProtectedFieldsAsExtensions()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services
+            .AddServiceMantle(
+                ServiceId.Parse("catalog"),
+                InstanceId.Parse("catalog-01"),
+                serviceVersion: "2.0.0")
+            .AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status400BadRequest,
+                    "http.request_invalid",
+                    "The request could not be processed.",
+                    condition: _ => true,
+                    extensionFields: new Dictionary<string, Func<ClassifiedRequestException, object?>>
+                    {
+                        ["status"] = _ => "override",
+                    }),
+            ]);
+
+        using var host = builder.Build();
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task FailingExtensionFactoryInConditionalCandidate_FallsBackWithoutRetryAfter()
+    {
+        using var fixture = new PipelineFixture(
+            terminal: _ => Task.FromException(new ClassifiedRequestException(503, SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "storage.busy",
+                    "The backing store is busy.",
+                    extensionFields: new Dictionary<string, Func<ClassifiedRequestException, object?>>
+                    {
+                        ["custom"] = _ => throw new InvalidOperationException(SecretMessage),
+                    },
+                    retryAfterSeconds: 1),
+            ]));
+
+        using var result = await fixture.SendAsync(CallerCorrelationId);
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, result.StatusCode);
+        Assert.Equal(
+            ProblemDetailsDefaults.InternalServerErrorCode,
+            result.Json.RootElement.GetProperty("errorCode").GetString());
+        Assert.Null(result.RetryAfter);
+        Assert.False(result.Json.RootElement.TryGetProperty("custom", out _));
+        AssertSafeBody(result.Body);
+    }
+
+    [Fact]
+    public async Task ConditionalMapping_PreservesCancellationAndStartedResponseBoundaries()
+    {
+        using var callerCancelled = new CancellationTokenSource();
+        callerCancelled.Cancel();
+        using var callerFixture = new PipelineFixture(
+            terminal: _ => Task.FromException(new OperationCanceledException(SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<OperationCanceledException>(
+            [
+                new ExceptionMappingCandidate<OperationCanceledException>(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "storage.busy",
+                    "The backing store is busy.",
+                    retryAfterSeconds: 1),
+            ]));
+        var callerResponse = new TestResponseFeature();
+        var callerContext = callerFixture.CreateContextWithRequestAborted(
+            callerResponse,
+            CallerCorrelationId,
+            callerCancelled.Token);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            callerFixture.SendAsync(callerContext));
+        Assert.Equal(StatusCodes.Status200OK, callerResponse.StatusCode);
+        Assert.Empty(callerResponse.Body.ToArray());
+        Assert.Equal(0, callerResponse.Headers.RetryAfter.Count);
+
+        using var startedFixture = new PipelineFixture(
+            terminal: _ => Task.FromException(new ClassifiedRequestException(413, SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status413PayloadTooLarge,
+                    "http.payload_too_large",
+                    "The request payload is too large.",
+                    retryAfterSeconds: 1),
+            ]),
+            useCorrelationMiddleware: false);
+        var startedResponse = new TestResponseFeature
+        {
+            HasStarted = true,
+            StatusCode = StatusCodes.Status202Accepted,
+        };
+        startedResponse.Headers[ServiceHeaderNames.CorrelationId] = "already-sent";
+        await startedResponse.Body.WriteAsync(
+            "sent"u8.ToArray(),
+            TestContext.Current.CancellationToken);
+        var startedContext = startedFixture.CreateContext(startedResponse);
+
+        await startedFixture.SendAsync(startedContext);
+
+        Assert.Equal(StatusCodes.Status202Accepted, startedResponse.StatusCode);
+        Assert.Equal("already-sent", startedResponse.Headers[ServiceHeaderNames.CorrelationId]);
+        Assert.Equal("sent", Encoding.UTF8.GetString(startedResponse.Body.ToArray()));
+        Assert.Equal(0, startedResponse.Headers.RetryAfter.Count);
+    }
+
+    [Fact]
+    public async Task ConcurrentRequests_SelectConditionallyPerRequestWithoutSharedState()
+    {
+        using var fixture = new PipelineFixture(
+            terminal: context => Task.FromException(
+                new ClassifiedRequestException((int)context.Items["requestStatus"]!, SecretMessage)),
+            configure: builder => builder.AddConditionalExceptionMapping<ClassifiedRequestException>(
+            [
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status413PayloadTooLarge,
+                    "http.payload_too_large",
+                    "The request payload is too large.",
+                    condition: exception =>
+                        exception.RequestStatus == StatusCodes.Status413PayloadTooLarge),
+                new ExceptionMappingCandidate<ClassifiedRequestException>(
+                    StatusCodes.Status400BadRequest,
+                    "http.request_invalid",
+                    "The request could not be processed."),
+            ]));
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 64).Select(async attempt =>
+        {
+            var requestStatus = attempt % 2 == 0 ? 413 : 400;
+            var correlationId = $"caller-{attempt:D2}";
+            var response = new TestResponseFeature();
+            var context = fixture.CreateContext(response, correlationId);
+            context.Items["requestStatus"] = requestStatus;
+            await fixture.SendAsync(context);
+            await response.StartAsync();
+            return new
+            {
+                Attempt = attempt,
+                RequestStatus = requestStatus,
+                StatusCode = response.StatusCode,
+                CorrelationId = response.Headers[ServiceHeaderNames.CorrelationId].Single(),
+                Json = JsonDocument.Parse(response.Body.ToArray()),
+            };
+        }));
+
+        Assert.Equal(
+            Enumerable.Range(0, 64).Select(index => $"caller-{index:D2}").Order(),
+            results.Select(result => result.CorrelationId).Order());
+        Assert.All(results, result => Assert.Equal(
+            result.RequestStatus == 413
+                ? StatusCodes.Status413PayloadTooLarge
+                : StatusCodes.Status400BadRequest,
+            result.StatusCode));
+        Assert.All(results, result => Assert.Equal(
+            result.RequestStatus == 413 ? "http.payload_too_large" : "http.request_invalid",
+            result.Json.RootElement.GetProperty("errorCode").GetString()));
+        foreach (var result in results)
+        {
+            result.Json.Dispose();
+        }
+    }
+
     private static Task ThrowKnownFailure()
     {
         var exception = new KnownFailure(SecretMessage, 7, new Exception("inner secret"));
@@ -375,17 +878,20 @@ public sealed class ProblemDetailsTests
         Assert.DoesNotContain(" at ServiceMantle", body, StringComparison.Ordinal);
     }
 
-    private static async Task<byte[]> GetUnknownBodyFromHostAsync(string environmentName)
+    private static async Task<byte[]> GetUnknownBodyFromHostAsync(
+        string environmentName,
+        Action<ServiceMantleBuilder>? configure = null)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
         {
             EnvironmentName = environmentName,
         });
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddServiceMantle(
+        var serviceMantle = builder.Services.AddServiceMantle(
             ServiceId.Parse("catalog"),
             InstanceId.Parse("catalog-01"),
             serviceVersion: "2.0.0");
+        configure?.Invoke(serviceMantle);
 
         await using var app = builder.Build();
         app.UseServiceMantleCorrelationId();
@@ -425,6 +931,17 @@ public sealed class ProblemDetailsTests
         }
 
         internal int Attempt { get; }
+    }
+
+    private sealed class ClassifiedRequestException : Exception
+    {
+        internal ClassifiedRequestException(int requestStatus, string message)
+            : base(message)
+        {
+            RequestStatus = requestStatus;
+        }
+
+        internal int RequestStatus { get; }
     }
 
     private sealed class PipelineFixture : IDisposable
@@ -508,6 +1025,26 @@ public sealed class ProblemDetailsTests
                 response.StatusCode,
                 response.Headers.ContentType.Single()!,
                 response.Headers[ServiceHeaderNames.CorrelationId].Single()!,
+                response.Headers.RetryAfter.Count == 0 ? null : response.Headers.RetryAfter.Single(),
+                body,
+                JsonDocument.Parse(body));
+        }
+
+        internal async Task<ProblemResult> SendAsync(
+            string? correlationId,
+            int requestStatus)
+        {
+            var response = new TestResponseFeature();
+            var context = CreateContext(response, correlationId);
+            context.Items["requestStatus"] = requestStatus;
+            await SendAsync(context);
+            await response.StartAsync();
+            var body = Encoding.UTF8.GetString(response.Body.ToArray());
+            return new ProblemResult(
+                response.StatusCode,
+                response.Headers.ContentType.Single()!,
+                response.Headers[ServiceHeaderNames.CorrelationId].Single()!,
+                response.Headers.RetryAfter.Count == 0 ? null : response.Headers.RetryAfter.Single(),
                 body,
                 JsonDocument.Parse(body));
         }
@@ -575,6 +1112,7 @@ public sealed class ProblemDetailsTests
         int StatusCode,
         string ContentType,
         string CorrelationId,
+        string? RetryAfter,
         string Body,
         JsonDocument Json) : IDisposable
     {

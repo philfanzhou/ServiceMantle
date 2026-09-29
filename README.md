@@ -758,6 +758,59 @@ when the Host starts. Repeating the same exception mapping is idempotent; confli
 exception type fail startup. If an extension factory or its value cannot be serialized, the complete
 response falls back to the generic 500 before any bytes are written.
 
+### Conditional exception mappings
+
+When one exact exception type needs different safe outcomes depending on an exception property -
+for example the same request exception producing 413 or 400 - register ordered candidates with
+`AddConditionalExceptionMapping<TException>` instead of the fixed mapping:
+
+```csharp
+builder.Services
+    .AddServiceMantle(
+        ServiceId.Parse("catalog"),
+        InstanceId.Parse("catalog-01"))
+    .AddConditionalExceptionMapping<ConsumerRequestException>(
+    [
+        new ExceptionMappingCandidate<ConsumerRequestException>(
+            StatusCodes.Status413PayloadTooLarge,
+            "http.payload_too_large",
+            "The request payload is too large.",
+            condition: exception => exception.StatusCode == StatusCodes.Status413PayloadTooLarge),
+        new ExceptionMappingCandidate<ConsumerRequestException>(
+            StatusCodes.Status503ServiceUnavailable,
+            "storage.busy",
+            "The backing store is busy.",
+            condition: exception => exception.IsStorageBusy,
+            retryAfterSeconds: 1),
+        new ExceptionMappingCandidate<ConsumerRequestException>(
+            StatusCodes.Status400BadRequest,
+            "http.request_invalid",
+            "The request could not be processed."),
+    ]);
+```
+
+For each caught exception the candidates are evaluated in the declared order and the first
+candidate whose condition holds produces the response, so overlapping conditions resolve
+deterministically to the earlier candidate. A candidate without a condition is the unconditional
+default and should be declared last; when no condition holds and no default exists, the generic 500
+fallback is used. Everything else follows the fixed mapping contract: exact-type matching, per-
+candidate extension whitelists, protected fields, the Correlation ID, and the response-not-started
+boundary.
+
+A candidate may additionally declare `retryAfterSeconds`, a fixed whole number of delta-seconds
+between 1 and 86400 written as an invariant decimal `Retry-After` response header while the
+response has not started. This is the only response header a mapping can declare; no header name
+or value is projected from the exception. When a condition or an extension factory throws, or a
+value cannot be serialized, the complete response falls back to the generic 500 and the failing
+candidate's header, extensions, and status are not applied.
+
+Configuration is validated when the Host starts: a conditional mapping cannot be combined with
+`AddExceptionMapping<TException>` for the same exception type, an empty candidate list and more
+than one unconditional candidate are rejected, and repeating an identical registration is
+idempotent while any other second registration for the same type fails startup. Conditions run
+once per request on the caught exception; their inputs and results are never written to the
+response, and conditions themselves must not log or persist the exception.
+
 ### Explicit non-guarantees
 
 - The guarantee covers exceptions that pass through this middleware while response headers have not
@@ -770,6 +823,10 @@ response falls back to the generic 500 before any bytes are written.
 - ServiceMantle validates custom extension names but does not sanitize values returned by a consuming
   service's extension factory. The consuming service is responsible for their content and serializer
   behavior.
+- Conditional mapping conditions, error codes, titles, and `Retry-After` values are declared by the
+  consuming service. ServiceMantle validates their shape, not whether the values or conditions are
+  free of secrets, and a declared `Retry-After` value does not make the service actually recoverable
+  within that time.
 - When the response has already started, the middleware swallows the downstream exception and leaves
   the already-sent status, headers, and body unchanged.
 - The middleware does not implement endpoints, authentication, authorization results, rate limiting,
