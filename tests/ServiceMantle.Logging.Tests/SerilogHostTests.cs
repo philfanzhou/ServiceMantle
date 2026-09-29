@@ -294,6 +294,8 @@ public sealed class SerilogHostTests
         { new Dictionary<string, LogLevel> { [" "] = LogLevel.Warning } },
         { new Dictionary<string, LogLevel> { [""] = LogLevel.Warning } },
         { new Dictionary<string, LogLevel> { [new string('c', SerilogDefaults.MaximumLevelOverrideKeyLength + 1)] = LogLevel.Warning } },
+        { new Dictionary<string, LogLevel> { ["Microsoft.AspNetCore"] = LogLevel.Warning, [" Microsoft.AspNetCore "] = LogLevel.Error } },
+        { new Dictionary<string, LogLevel> { [" Microsoft.AspNetCore "] = LogLevel.Error, ["Microsoft.AspNetCore"] = LogLevel.Warning } },
     };
 
     [Theory]
@@ -310,13 +312,49 @@ public sealed class SerilogHostTests
 
         Assert.Equal("MinimumLevelOverrides", exception.FieldName);
         Assert.Equal("serilog.minimum_level_overrides_invalid", exception.ErrorCode);
+        // The message is the fixed field/error-code template: asserting it verbatim proves that
+        // no submitted key or level value can be echoed back for any theory row.
+        Assert.Equal(
+            "ServiceMantle Serilog configuration failed (Field=MinimumLevelOverrides, ErrorCode=serilog.minimum_level_overrides_invalid).",
+            exception.Message);
         Assert.DoesNotContain("category-secret-name", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Microsoft.AspNetCore", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("Warning", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task Equivalent_override_duplicates_are_idempotent_and_different_overrides_conflict()
     {
+        // Whitespace variants of one key inside a single registration collapse onto the trimmed
+        // key: with equal levels both insertion orders start and filter exactly like the
+        // single-key form, so the outcome cannot depend on dictionary enumeration order.
+        foreach (var trimmedKeyFirst in new[] { true, false })
+        {
+            var events = new CollectingSink();
+            var duplicates = trimmedKeyFirst
+                ? new Dictionary<string, LogLevel>
+                {
+                    ["Microsoft.AspNetCore"] = LogLevel.Warning,
+                    [" Microsoft.AspNetCore "] = LogLevel.Warning,
+                }
+                : new Dictionary<string, LogLevel>
+                {
+                    [" Microsoft.AspNetCore "] = LogLevel.Warning,
+                    ["Microsoft.AspNetCore"] = LogLevel.Warning,
+                };
+            using var collapsed = BuildHostWithOverrides(events, duplicates);
+            await collapsed.StartAsync(TestContext.Current.CancellationToken);
+            events.Events.Clear();
+            var duplicateLogger = collapsed.Services.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("Microsoft.AspNetCore.Hosting");
+            duplicateLogger.LogInformation("trim duplicate information event");
+            duplicateLogger.LogWarning("trim duplicate warning event");
+            await collapsed.StopAsync(TestContext.Current.CancellationToken);
+            var duplicateMessages = events.Events.Select(logEvent => logEvent.RenderMessage()).ToArray();
+            Assert.Contains("trim duplicate warning event", duplicateMessages);
+            Assert.DoesNotContain("trim duplicate information event", duplicateMessages);
+        }
+
         var duplicateBuilder = Host.CreateApplicationBuilder();
         duplicateBuilder.AddServiceMantleSerilog(options =>
             options.MinimumLevelOverrides = new Dictionary<string, LogLevel>
