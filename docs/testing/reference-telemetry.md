@@ -7,7 +7,7 @@
 ## 接入了什么
 
 `ReferenceService:Telemetry:Enabled` 默认为 `false`。只有能解析为 `true` 的值才会注册任何
-东西。当它注册时，示例在既有的 `ServiceMantle.OpenTelemetry` 包上以其默认配置调用
+东西。当它注册时，示例在既有的 `ServiceMantle.Diagnostics` 包上以其默认配置调用
 `AddOpenTelemetryInstrumentation`——ASP.NET Core tracing、`HttpClient` tracing 和 .NET
 运行时指标——并且不添加自己的 options 系统。
 
@@ -146,7 +146,7 @@ OTLP 合法，只是没有数据可导出。
 | 受控的 dispose 失败 | `true`，一个在 dispose 时抛出一次异常的 instrumentation | 失败到达调用方而不是被吞掉；随后 fixture 释放它拥有的句柄，进程级监听器被解除挂接 |
 | 等价的重复注册 | `true`，注册两次 | 仍然只有一个 `TracerProvider`、一个 `MeterProvider`、一个 instrumentation 实例，以及每个请求一个服务端 span |
 | 冲突的额外注册 | `true` 加上一个禁用运行时指标的注册 | 公开包自己的启动校验拒绝它；`ApplicationStarted` 从不被触发，也没有监听器被挂接。示例不绕过也不弱化该校验 |
-| 还原后的依赖图 | - | 示例的 `project.assets.json` 包含基础 instrumentation 包，也包含 `ServiceMantle.OpenTelemetry` 现在随一个包一起提供的 OTLP 和 Prometheus exporter 驱动 |
+| 还原后的依赖图 | - | 示例的 `project.assets.json` 包含基础 instrumentation 包，也包含 `ServiceMantle.Diagnostics` 现在随一个包一起提供的 OTLP 和 Prometheus exporter 驱动 |
 | 启用时的组合 | `true` | 示例的容器中没有任何属于 `ServiceMantle.Diagnostics.Export.Otlp`、`ServiceMantle.Diagnostics.Export.Prometheus` 或 `OpenTelemetry.Exporter` 的服务，因此依赖图中存在驱动仍不等于激活了 exporter |
 
 ## 隔离

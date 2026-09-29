@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <RootNamespace>ServiceMantle.Logging.Pipeline</RootNamespace>
+    <AssemblyName>ServiceMantle.Logging</AssemblyName>
+    <PackageId>ServiceMantle.Logging</PackageId>
+    <PackageDescription>Serilog hosting, sanitizing console output, and an opt-in Grafana Loki sink for ServiceMantle.</PackageDescription>
+    <PackageTags>service-management;serilog;hosting;logging;console;grafana;loki</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Extensions.Hosting" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.Grafana.Loki" />
+    <ProjectReference Include="..\ServiceMantle\ServiceMantle.csproj" />
+  </ItemGroup>
+
+</Project>

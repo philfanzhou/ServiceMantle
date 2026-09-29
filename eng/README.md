@@ -65,7 +65,7 @@ dotnet run --project eng/ServiceMantle.ReleaseTool -- verify --version 0.0.0-loc
 eng/tests/package-consumption.sh \
   --version 0.0.0-local.1 \
   --packages artifacts/packages \
-  --consumer eng/tests/consumers/opentelemetry
+  --consumer eng/tests/consumers/diagnostics
 ```
 
 `eng/tests/consumers/` 下的每个目录是一个消费项目：一个包引用使用 `__SERVICEMANTLE_VERSION__`

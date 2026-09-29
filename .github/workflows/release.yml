@@ -276,6 +276,6 @@ jobs:
           eng/tests/published-package-consumption.sh
           --version "$PACKAGE_VERSION"
           --source "${{ env.RELEASE_SOURCE }}"
-          --consumer eng/tests/consumers/aspnetcore
+          --consumer eng/tests/consumers/web
           --attempts 30
           --delay-seconds 30

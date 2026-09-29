@@ -232,14 +232,14 @@ jobs:
           eng/tests/package-consumption.sh
           --version $PACKAGE_VERSION
           --packages artifacts/packages
-          --consumer eng/tests/consumers/opentelemetry
+          --consumer eng/tests/consumers/diagnostics
 
       - name: Verify Serilog package consumption
         run: >-
           eng/tests/package-consumption.sh
           --version $PACKAGE_VERSION
           --packages artifacts/packages
-          --consumer eng/tests/consumers/serilog
+          --consumer eng/tests/consumers/logging
 
       # Four modules in one project, next to the ASP.NET Core implicit usings and the framework
       # namespaces those modules' entry points require. Ordinary types carry no product prefix now,
@@ -261,7 +261,7 @@ jobs:
           eng/tests/package-consumption.sh
           --version $PACKAGE_VERSION
           --packages artifacts/packages
-          --consumer eng/tests/consumers/consul-registration
+          --consumer eng/tests/consumers/discovery
 
       # The EF Core persistence package's dedicated consumer (#577): it names the capability
       # namespaces next to Microsoft.AspNetCore.DataProtection and Microsoft.EntityFrameworkCore,
@@ -273,18 +273,22 @@ jobs:
           eng/tests/package-consumption.sh
           --version $PACKAGE_VERSION
           --packages artifacts/packages
-          --consumer eng/tests/consumers/persistence-efcore
+          --consumer eng/tests/consumers/persistence-relational
 
       # The source half of the provider-neutral assertion: the fixture itself must stay free of
-      # provider-named namespaces in every form - using directives, aliases, fully qualified
+      # adapter-named namespaces in every form - using directives, aliases, fully qualified
       # names, and comments - and must rely on the Web SDK implicit usings rather than <Using>
-      # items, so the compile-time assertion cannot be quietly widened afterwards.
+      # items, so the compile-time assertion cannot be quietly widened afterwards. The pattern
+      # keeps guarding the retired provider-named namespaces (AspNetCore, Consul, Serilog,
+      # OpenTelemetry, Persistence.EntityFrameworkCore) against reintroduction and also guards
+      # the Web capability prefix, which belongs to the ASP.NET Core adapter package alone
+      # (#585); the neutral consumer references no adapter package that owns it.
       - name: Enforce provider-neutral consumer source boundary
         run: |
           set -euo pipefail
-          if grep -rnE 'ServiceMantle\.(Consul|Serilog|OpenTelemetry)' \
+          if grep -rnE 'ServiceMantle\.(AspNetCore|Consul|Serilog|OpenTelemetry|Persistence\.EntityFrameworkCore|Web)' \
             eng/tests/consumers/provider-neutral --include='*.cs'; then
-            echo "Provider-named namespaces must not appear in the provider-neutral consumer sources." >&2
+            echo "Adapter-owned namespaces must not appear in the provider-neutral consumer sources." >&2
             exit 1
           fi
           if grep -rn '<Using' eng/tests/consumers/provider-neutral --include='*.csproj'; then

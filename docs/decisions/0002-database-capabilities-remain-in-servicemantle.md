@@ -59,7 +59,7 @@ migration 编排契约旁边。
 
 ### 持久化
 
-`ServiceMantle.Persistence.EntityFrameworkCore` 的存在是为了让使用 EF Core 的
+`ServiceMantle.Persistence.Relational`（决策时为 `ServiceMantle.Persistence.EntityFrameworkCore`，#585 随能力命名更名）的存在是为了让使用 EF Core 的
 消费服务能把 ServiceMantle 的映射加入自己的 `DbContext`，并生成一份 migration
 历史。消费方保留对该 `DbContext`、事务和 migration 执行的所有权；适配器操作按照
 其公开契约声明的方式保存或仅暂存更改。ServiceMantle 核心暴露 provider 无关的
@@ -75,7 +75,7 @@ migration。如果有真实消费方需要，未来可以在 EF Core 适配器�
 本决策保持以下依赖方向：
 
 - `ServiceMantle` 包含 provider 与 ORM 无关的契约；
-- `ServiceMantle.AspNetCore` 包含托管与注册集成，不依赖数据库驱动；
+- `ServiceMantle.Web`（决策时为 `ServiceMantle.AspNetCore`）包含托管与注册集成，不依赖数据库驱动；
 - 每个 `ServiceMantle.Database.*` 包引用核心包及其 ADO.NET 驱动；以及
 - 每个 `ServiceMantle.Persistence.*` 包是针对一种持久化栈的可选适配器。
 

@@ -133,13 +133,13 @@ public sealed class ReferenceServiceTests
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "ServiceMantle.slnx"))) root = root.Parent;
         Assert.NotNull(root);
         var project = XDocument.Load(Path.Combine(root.FullName, "samples/ServiceMantle.ReferenceService/ServiceMantle.ReferenceService.csproj"));
-        Assert.Equal(new[] { "../../src/ServiceMantle/ServiceMantle.csproj", "../../src/ServiceMantle.AspNetCore/ServiceMantle.AspNetCore.csproj",
-            "../../src/ServiceMantle.Serilog/ServiceMantle.Serilog.csproj",
+        Assert.Equal(new[] { "../../src/ServiceMantle/ServiceMantle.csproj", "../../src/ServiceMantle.Web/ServiceMantle.Web.csproj",
+            "../../src/ServiceMantle.Logging/ServiceMantle.Logging.csproj",
             "../../src/ServiceMantle.Database.Sqlite/ServiceMantle.Database.Sqlite.csproj",
             "../../src/ServiceMantle.Database.PostgreSql/ServiceMantle.Database.PostgreSql.csproj",
-            "../../src/ServiceMantle.Persistence.EntityFrameworkCore/ServiceMantle.Persistence.EntityFrameworkCore.csproj",
-            "../../src/ServiceMantle.OpenTelemetry/ServiceMantle.OpenTelemetry.csproj",
-            "../../src/ServiceMantle.Consul/ServiceMantle.Consul.csproj" },
+            "../../src/ServiceMantle.Persistence.Relational/ServiceMantle.Persistence.Relational.csproj",
+            "../../src/ServiceMantle.Diagnostics/ServiceMantle.Diagnostics.csproj",
+            "../../src/ServiceMantle.Discovery/ServiceMantle.Discovery.csproj" },
             project.Descendants("ProjectReference").Select(reference => (string)reference.Attribute("Include")!));
         Assert.DoesNotContain(project.Descendants("Compile"), item => item.Attribute("Include") is not null);
         var assembly = typeof(ReferenceApplication).Assembly;

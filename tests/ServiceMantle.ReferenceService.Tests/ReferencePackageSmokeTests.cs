@@ -337,18 +337,18 @@ public sealed class ReferencePackageSmokeFixture : IAsyncLifetime
     internal static readonly string[] CorePackageIds =
     [
         "ServiceMantle",
-        "ServiceMantle.AspNetCore",
+        "ServiceMantle.Web",
         "ServiceMantle.Database.Sqlite",
         "ServiceMantle.Database.PostgreSql",
-        "ServiceMantle.Persistence.EntityFrameworkCore",
+        "ServiceMantle.Persistence.Relational",
     ];
 
     /// <summary>The P1 packages the sample opts into as explicit compile-time references.</summary>
     internal static readonly string[] OptionalPackageIds =
     [
-        "ServiceMantle.Consul",
-        "ServiceMantle.OpenTelemetry",
-        "ServiceMantle.Serilog",
+        "ServiceMantle.Discovery",
+        "ServiceMantle.Diagnostics",
+        "ServiceMantle.Logging",
     ];
 
     private static readonly string[] AllPackageIds = [.. CorePackageIds, .. OptionalPackageIds];
