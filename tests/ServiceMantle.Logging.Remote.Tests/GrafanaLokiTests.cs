@@ -446,6 +446,48 @@ public sealed class GrafanaLokiTests
     }
 
     [Fact]
+    public async Task Category_level_overrides_filter_events_before_the_loki_pipeline()
+    {
+        await using var server = await LocalLokiServer.StartAsync(TestContext.Current.CancellationToken);
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options =>
+        {
+            options.FlushTimeout = TimeSpan.FromSeconds(5);
+            options.MinimumLevelOverrides = new Dictionary<string, LogLevel>
+            {
+                ["Microsoft.AspNetCore"] = LogLevel.Warning,
+            };
+        });
+        builder.Services.AddSingleton<IRemoteLogAuthorizationResolver>(
+            new RecordingResolver(AuthorizationHeader));
+        builder.AddServiceMantleGrafanaLoki(options =>
+        {
+            Enable(options);
+            options.Endpoint = new Uri(server.BaseAddress, "gateway");
+            options.AllowInsecureLoopbackForTesting = true;
+            options.BatchSize = 1;
+            options.FlushPeriod = TimeSpan.FromSeconds(1);
+        });
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        var categoryLogger = host.Services.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Microsoft.AspNetCore.Hosting");
+        categoryLogger.LogInformation("overridden category information event");
+        categoryLogger.LogWarning("overridden category warning event");
+
+        await WaitUntilAsync(
+            () => server.Requests.Any(request =>
+                request.Body.Contains("overridden category warning event", StringComparison.Ordinal)),
+            TestContext.Current.CancellationToken);
+        var bodies = server.Requests.Select(request => request.Body).ToArray();
+
+        Assert.DoesNotContain(bodies, body =>
+            body.Contains("overridden category information event", StringComparison.Ordinal));
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task Unset_resolver_name_disables_authorization_without_a_registered_resolver()
     {
         var handler = new RecordingHandler();

@@ -25,8 +25,20 @@ internal sealed class SerilogRuntime : IDisposable
         {
             var configuration = SerilogConfiguration.Resolve(registrations);
             var sink = sinkFactory.Create(configuration, sanitizer);
-            var loggerConfiguration = new LoggerConfiguration()
-                .MinimumLevel.Is(configuration.MinimumLevel);
+            var loggerConfiguration = new LoggerConfiguration();
+            // The per-category overrides apply to the single main logger that feeds every sink
+            // (Console and the optional remote pipeline), so both ends observe one filtered
+            // result. Serilog's LevelOverrideMap performs the dot-boundary prefix matching with
+            // the longest matching key winning; the direct Logger.Write path below carries no
+            // SourceContext, so it stays governed by the global level only. Override registers
+            // on the parent LoggerConfiguration and returns that same instance, so each call
+            // here is invoked for its registration effect.
+            loggerConfiguration.MinimumLevel.Is(configuration.MinimumLevel);
+            foreach (var overridePair in configuration.MinimumLevelOverrides)
+            {
+                loggerConfiguration.MinimumLevel.Override(overridePair.Key, overridePair.Value);
+            }
+
             if (configuration.IncludeScopes)
             {
                 loggerConfiguration.Enrich.FromLogContext();

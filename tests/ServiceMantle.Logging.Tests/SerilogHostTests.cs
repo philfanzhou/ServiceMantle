@@ -55,7 +55,7 @@ public sealed class SerilogHostTests
         var properties = typeof(SerilogOptions).GetProperties();
 
         Assert.Equal(
-            ["FlushTimeout", "IncludeScopes", "MinimumLevel", "OutputTemplate"],
+            ["FlushTimeout", "IncludeScopes", "MinimumLevel", "MinimumLevelOverrides", "OutputTemplate"],
             properties.Select(property => property.Name).Order(StringComparer.Ordinal));
         Assert.DoesNotContain(
             properties,
@@ -185,6 +185,184 @@ public sealed class SerilogHostTests
 
         Assert.Equal("MinimumLevel", exception.FieldName);
         Assert.Equal("serilog.minimum_level_invalid", exception.ErrorCode);
+    }
+
+    private static IHost BuildHostWithOverrides(
+        CollectingSink sink,
+        IDictionary<string, LogLevel>? overrides,
+        LogLevel minimumLevel = LogLevel.Information)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options =>
+        {
+            options.MinimumLevel = minimumLevel;
+            options.MinimumLevelOverrides = overrides;
+        });
+        builder.Services.Replace(ServiceDescriptor.Singleton<ISerilogSinkFactory>(
+            new SanitizingCollectingSinkFactory(sink)));
+        return builder.Build();
+    }
+
+    [Fact]
+    public async Task Category_overrides_filter_events_on_both_logger_paths_and_keep_the_global_level_elsewhere()
+    {
+        var events = new CollectingSink();
+        using var host = BuildHostWithOverrides(events, new Dictionary<string, LogLevel>
+        {
+            ["Microsoft.AspNetCore"] = LogLevel.Warning,
+        });
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        events.Events.Clear();
+
+        var categoryLogger = host.Services.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Microsoft.AspNetCore.Hosting");
+        categoryLogger.LogInformation("category information event");
+        categoryLogger.LogWarning("category warning event");
+
+        var otherLogger = host.Services.GetRequiredService<ILogger<SerilogHostTests>>();
+        otherLogger.LogInformation("other category information event");
+        otherLogger.LogDebug("other category debug event");
+
+        // The direct runtime write path carries no SourceContext, so it is governed by the
+        // global level only, even with overrides configured.
+        host.Services.GetRequiredService<SerilogRuntime>()
+            .Logger.Write(LogEventLevel.Information, "direct write information event");
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+        // Host lifetime events ("Microsoft.Hosting.Lifetime") share the pipeline; assert on the
+        // probe messages only so the exact count is not coupled to hosting noise.
+        var messages = events.Events.Select(logEvent => logEvent.RenderMessage()).ToArray();
+        Assert.Contains("category warning event", messages);
+        Assert.Contains("other category information event", messages);
+        Assert.Contains("direct write information event", messages);
+        Assert.DoesNotContain("category information event", messages);
+        Assert.DoesNotContain("other category debug event", messages);
+    }
+
+    [Fact]
+    public async Task Overlapping_category_overrides_prefer_the_longest_matching_key()
+    {
+        var events = new CollectingSink();
+        using var host = BuildHostWithOverrides(events, new Dictionary<string, LogLevel>
+        {
+            ["Microsoft"] = LogLevel.Error,
+            ["Microsoft.AspNetCore"] = LogLevel.Debug,
+        });
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        events.Events.Clear();
+
+        var factory = host.Services.GetRequiredService<ILoggerFactory>();
+        factory.CreateLogger("Microsoft.AspNetCore.Hosting").LogInformation("longest-key information event");
+        factory.CreateLogger("Microsoft.Extensions.Hosting").LogInformation("shorter-key information event");
+        factory.CreateLogger("Microsoft.Extensions.Hosting").LogError("shorter-key error event");
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+        var messages = events.Events.Select(logEvent => logEvent.RenderMessage()).ToArray();
+        Assert.Contains("longest-key information event", messages);
+        Assert.Contains("shorter-key error event", messages);
+        Assert.DoesNotContain("shorter-key information event", messages);
+    }
+
+    [Fact]
+    public async Task Category_overrides_match_only_on_dot_boundaries()
+    {
+        var events = new CollectingSink();
+        using var host = BuildHostWithOverrides(events, new Dictionary<string, LogLevel>
+        {
+            ["Microsoft.AspNetCor"] = LogLevel.Error,
+        });
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        events.Events.Clear();
+
+        var factory = host.Services.GetRequiredService<ILoggerFactory>();
+        factory.CreateLogger("Microsoft.AspNetCore").LogInformation("non-boundary information event");
+        factory.CreateLogger("Microsoft.AspNetCor.Hosting").LogInformation("boundary information event");
+        factory.CreateLogger("Microsoft.AspNetCor.Hosting").LogError("boundary error event");
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+        var messages = events.Events.Select(logEvent => logEvent.RenderMessage()).ToArray();
+        Assert.Contains("non-boundary information event", messages);
+        Assert.Contains("boundary error event", messages);
+        Assert.DoesNotContain("boundary information event", messages);
+    }
+
+    public static TheoryData<IDictionary<string, LogLevel>> InvalidOverrides => new()
+    {
+        { new Dictionary<string, LogLevel> { ["Microsoft.AspNetCore"] = (LogLevel)42 } },
+        { new Dictionary<string, LogLevel> { ["Microsoft.AspNetCore"] = LogLevel.None } },
+        { new Dictionary<string, LogLevel> { ["category-secret-name"] = LogLevel.None } },
+        { new Dictionary<string, LogLevel> { [" "] = LogLevel.Warning } },
+        { new Dictionary<string, LogLevel> { [""] = LogLevel.Warning } },
+        { new Dictionary<string, LogLevel> { [new string('c', SerilogDefaults.MaximumLevelOverrideKeyLength + 1)] = LogLevel.Warning } },
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidOverrides))]
+    public async Task Invalid_category_overrides_fail_at_startup_without_configuration_content(
+        IDictionary<string, LogLevel> overrides)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddServiceMantleSerilog(options => options.MinimumLevelOverrides = overrides);
+        using var host = builder.Build();
+
+        var exception = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("MinimumLevelOverrides", exception.FieldName);
+        Assert.Equal("serilog.minimum_level_overrides_invalid", exception.ErrorCode);
+        Assert.DoesNotContain("category-secret-name", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Warning", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Equivalent_override_duplicates_are_idempotent_and_different_overrides_conflict()
+    {
+        var duplicateBuilder = Host.CreateApplicationBuilder();
+        duplicateBuilder.AddServiceMantleSerilog(options =>
+            options.MinimumLevelOverrides = new Dictionary<string, LogLevel>
+            {
+                ["Microsoft.AspNetCore"] = LogLevel.Warning,
+                ["Microsoft.EntityFrameworkCore.Database.Command"] = LogLevel.Warning,
+            });
+        duplicateBuilder.AddServiceMantleSerilog(options =>
+            options.MinimumLevelOverrides = new Dictionary<string, LogLevel>
+            {
+                [" Microsoft.EntityFrameworkCore.Database.Command "] = LogLevel.Warning,
+                ["Microsoft.AspNetCore"] = LogLevel.Warning,
+            });
+        using (var duplicate = duplicateBuilder.Build())
+        {
+            await duplicate.StartAsync(TestContext.Current.CancellationToken);
+            Assert.Single(duplicate.Services.GetServices<SerilogRuntime>());
+            await duplicate.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        // An unset map and an empty map are the same configuration: no overrides.
+        var emptyBuilder = Host.CreateApplicationBuilder();
+        emptyBuilder.AddServiceMantleSerilog();
+        emptyBuilder.AddServiceMantleSerilog(options =>
+            options.MinimumLevelOverrides = new Dictionary<string, LogLevel>());
+        using (var empty = emptyBuilder.Build())
+        {
+            await empty.StartAsync(TestContext.Current.CancellationToken);
+            await empty.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        var conflictBuilder = Host.CreateApplicationBuilder();
+        conflictBuilder.AddServiceMantleSerilog(options =>
+            options.MinimumLevelOverrides = new Dictionary<string, LogLevel>
+            {
+                ["Microsoft.AspNetCore"] = LogLevel.Warning,
+            });
+        conflictBuilder.AddServiceMantleSerilog(options =>
+            options.MinimumLevelOverrides = new Dictionary<string, LogLevel>
+            {
+                ["Microsoft.AspNetCore"] = LogLevel.Error,
+            });
+        using var conflict = conflictBuilder.Build();
+        var conflictException = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
+            conflict.StartAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("serilog.registration_conflict", conflictException.ErrorCode);
     }
 
     [Fact]
