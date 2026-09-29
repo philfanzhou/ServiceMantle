@@ -59,6 +59,11 @@ session 捕获一个活动设置快照及其版本。所有 `discovery.*` 定义
 Consul adapter 注册的 8 个持久化设置键从 `consul.*` 改为 `discovery.*`。常量成员名、类型名与
 namespace 保持不变，只有键值移动。诊断码（含 `consul.invalid_configuration`）、`X-Consul-Token`
 认证 Header 与 HTTP wire model 本次不变。这是随新版本交付的外部契约变更，不覆盖历史包。
+目录当前注册 9 个键：除下表的 8 个迁移键外，另有 #591 新增的 `discovery.allow-insecure-http`
+（Boolean，默认 `false`，重启生效）。该键从未有过 `consul.*` 别名；旧快照缺失该键时由目录默认值
+物化为 `false`，保持对非回环 HTTP endpoint 的默认拒绝。开启该开关即显式接受 ACL token
+（`X-Consul-Token` 头）与全部注册内容在该链路明文传输；库不依据 DNS 名或私网 IP 形状推断网络可信，
+也不验证网络隔离——配置可信网络与访问控制、在不受信任网络路径上使用 HTTPS 由调用方负责。
 
 | 旧键 | 新键 |
 | --- | --- |

@@ -112,6 +112,100 @@ public sealed class ConsulConfigurationTests
     }
 
     [Fact]
+    public async Task Non_loopback_http_endpoint_still_rejected_without_or_with_an_explicit_false_switch()
+    {
+        // Default refusal: the raw snapshot predates the switch, which materializes as false.
+        var defaultRaw = ConsulFixture.Enabled();
+        defaultRaw[Endpoint] = "http://consul.internal:8500/";
+        using (var defaultValidated = new ConsulFixture())
+        {
+            Assert.False(defaultValidated.Registry.Validate(defaultRaw).IsValid);
+        }
+        using (var defaultBypassed = new ConsulFixture(composite: false))
+        {
+            await defaultBypassed.ActivateAsync(defaultRaw);
+            Assert.Equal(ConsulConfigurationError.InvalidConfiguration,
+                Assert.Throws<ConsulConfigurationException>(() => defaultBypassed.Provider.CreateClient()).Error);
+            Assert.Equal(0, defaultBypassed.ClientFactory.Resolutions);
+        }
+
+        // An explicit false keeps the same refusal.
+        var explicitFalse = ConsulFixture.Enabled();
+        explicitFalse[Endpoint] = "http://consul.internal:8500/";
+        explicitFalse[AllowInsecureHttp] = "false";
+        using (var falseValidated = new ConsulFixture())
+        {
+            Assert.False(falseValidated.Registry.Validate(explicitFalse).IsValid);
+        }
+        using (var falseBypassed = new ConsulFixture(composite: false))
+        {
+            await falseBypassed.ActivateAsync(explicitFalse);
+            Assert.Equal(ConsulConfigurationError.InvalidConfiguration,
+                Assert.Throws<ConsulConfigurationException>(() => falseBypassed.Provider.CreateClient()).Error);
+            Assert.Equal(0, falseBypassed.ClientFactory.Resolutions);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Explicit_insecure_http_switch_accepts_a_lan_http_agent_with_and_without_a_token(bool withToken)
+    {
+        using var fixture = new ConsulFixture();
+        var raw = ConsulFixture.Enabled();
+        raw[Endpoint] = "http://consul.internal:8500/";
+        raw[AllowInsecureHttp] = "true";
+        if (!withToken) { raw.Remove(Token); }
+        await fixture.ActivateAsync(raw);
+        using var session = fixture.Provider.CreateClient();
+        Assert.NotNull(session);
+        Assert.Equal("http", fixture.ClientFactory.Configuration!.Endpoint.Scheme);
+        Assert.Equal(new Uri("http://consul.internal:8500/"), fixture.ClientFactory.Configuration.Endpoint);
+        Assert.Equal(withToken, fixture.ClientFactory.Configuration.HasToken);
+    }
+
+    [Fact]
+    public async Task Snapshots_without_the_switch_key_keep_default_refusal_for_non_loopback_http()
+    {
+        // A snapshot persisted before the switch existed: the persisted rows omit the new key,
+        // and materialization injects its catalog default `false`.
+        List<PersistedServiceSettingValue> Rows() =>
+        [
+            new(Enabled, 1, ServiceSettingValueType.Boolean, "true"),
+            new(Endpoint, 1, ServiceSettingValueType.String, "http://consul.internal:8500/"),
+            new(Token, 1, ServiceSettingValueType.String,
+                new SensitiveValueProtector(ConsulFixture.Service, Token).Protect(ConsulFixture.Secret, ConsulFixture.RootKey)),
+            new(ServiceName, 1, ServiceSettingValueType.String, "orders-api"),
+            new(Address, 1, ServiceSettingValueType.String, "orders.example"),
+            new(Port, 1, ServiceSettingValueType.Number, "8080")
+        ];
+
+        // With the composite catalog the combination never activates: refresh itself refuses.
+        using (var fixture = new ConsulFixture())
+        {
+            fixture.SnapshotSource.Read = new(ConsulFixture.Service, 1, Rows());
+            var result = await fixture.Loader.RefreshAsync(TestContext.Current.CancellationToken);
+            Assert.False(result.Succeeded);
+            Assert.Equal("configuration.snapshot_validation_failed",
+                Assert.Single(result.Errors).ErrorCode);
+            Assert.False(fixture.Accessor.TryGetCurrent(out _));
+            Assert.Equal(0, fixture.ClientFactory.Resolutions);
+        }
+
+        // Without the composite validator the snapshot activates, and the consumer-boundary
+        // recheck still refuses the endpoint.
+        using (var bypassed = new ConsulFixture(composite: false))
+        {
+            bypassed.SnapshotSource.Read = new(ConsulFixture.Service, 1, Rows());
+            var result = await bypassed.Loader.RefreshAsync(TestContext.Current.CancellationToken);
+            Assert.True(result.Succeeded, result.ToString());
+            Assert.Equal(ConsulConfigurationError.InvalidConfiguration,
+                Assert.Throws<ConsulConfigurationException>(() => bypassed.Provider.CreateClient()).Error);
+            Assert.Equal(0, bypassed.ClientFactory.Resolutions);
+        }
+    }
+
+    [Fact]
     public async Task A_token_definition_that_loses_sensitivity_is_rejected()
     {
         using var fixture = new ConsulFixture(composite: false, tokenSensitive: false);

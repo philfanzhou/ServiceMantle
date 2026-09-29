@@ -2362,7 +2362,8 @@ another service fails with a value-free `ConsulConfigurationException`.
 | Setting | Enabled configuration contract |
 | --- | --- |
 | `discovery.enabled` | Boolean, default `false` |
-| `discovery.endpoint` | Root HTTPS agent URI, or loopback HTTP; no credentials, query, fragment or subpath |
+| `discovery.endpoint` | Root HTTPS agent URI, or HTTP (loopback always, any host only with `discovery.allow-insecure-http`); no credentials, query, fragment or subpath |
+| `discovery.allow-insecure-http` | Boolean, default `false`, requires restart; explicitly accepts non-loopback plain-HTTP agent endpoints |
 | `discovery.credential` | Optional sensitive string, no default; the provider-defined single credential - for this Consul adapter the ACL token, 1–4096 printable ASCII characters without whitespace |
 | `discovery.service-name` | 1–63 ASCII letters/digits/hyphens, starting and ending with a letter/digit |
 | `discovery.address` | Advertised DNS name or IP address, at most 253 characters |
@@ -2376,6 +2377,15 @@ before activation; client creation rechecks schema, token sensitivity and values
 boundary. Disabled snapshots ignore enabled-only values and return `null` without resolving the
 client factory or constructing an HTTP client. Registration and provider resolution create no client,
 network request, hosted service or background lifecycle task.
+
+`discovery.allow-insecure-http` exists for agents ServiceMantle cannot reach over HTTPS, such as a
+Consul agent on a LAN the consumer controls. Enabling it is an explicit acceptance that the complete
+registration content and the ACL token (the `X-Consul-Token` header) travel in cleartext to that
+agent. ServiceMantle does not infer network trust from any DNS name or private address shape and
+does not verify network isolation; configuring trusted networks and access control, and using HTTPS
+whenever the path crosses an untrusted network, are caller responsibilities. Snapshots persisted
+before this setting existed keep the default refusal of non-loopback HTTP, because the loader
+materializes missing keys from their catalog default.
 
 ```csharp
 // After successful snapshot activation. Creating a client does not register the service.

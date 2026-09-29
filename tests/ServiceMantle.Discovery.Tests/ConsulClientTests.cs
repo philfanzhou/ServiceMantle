@@ -51,6 +51,46 @@ public sealed class ConsulClientTests
     }
 
     [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Insecure_http_switch_sends_register_and_deregister_over_plain_http(bool register, bool withToken)
+    {
+        using var fixture = new ConsulFixture();
+        var raw = ConsulFixture.Enabled();
+        raw[ConsulSettingDefinitions.Endpoint] = "http://consul.internal:8500/";
+        raw[ConsulSettingDefinitions.AllowInsecureHttp] = "true";
+        if (!withToken) { raw.Remove(ConsulSettingDefinitions.Token); }
+        await fixture.ActivateAsync(raw);
+        var handler = new Handler();
+        fixture.ClientFactory.CreateClient = config => ConsulHttpClientFactory.Create(config, handler);
+        using var session = fixture.Provider.CreateClient();
+        Assert.Equal("http", fixture.ClientFactory.Configuration!.Endpoint.Scheme);
+
+        var result = register ? await session!.RegisterAsync(TestContext.Current.CancellationToken)
+            : await session!.DeregisterAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(ConsulClientResult.Success, result);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("PUT", request.Method);
+        if (register)
+        {
+            Assert.Equal("http://consul.internal:8500/v1/agent/service/register?replace-existing-checks=true", request.Uri);
+        }
+        else
+        {
+            Assert.Equal("http://consul.internal:8500/v1/agent/service/deregister/orders%3Ahost%2Finstance%3Fone", request.Uri);
+        }
+
+        // On the plaintext path the ACL token is equally visible on the wire by definition; it
+        // still never leaves the single X-Consul-Token header and never reaches a diagnostic.
+        Assert.Equal(withToken ? ConsulFixture.Secret : null, request.Token);
+        Assert.DoesNotContain(ConsulFixture.Secret, request.Uri + request.Body);
+        Assert.DoesNotContain(ConsulFixture.Secret, result.ToString());
+        Assert.DoesNotContain(ConsulFixture.Secret, fixture.ClientFactory.Configuration.ToString());
+    }
+
+    [Theory]
     [InlineData(403)]
     [InlineData(429)]
     [InlineData(500)]
