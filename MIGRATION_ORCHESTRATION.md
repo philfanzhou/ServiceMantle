@@ -373,6 +373,31 @@ logger.LogInformation(
 [Explicit database deployment mode](README.md#explicit-database-deployment-mode) 中描述的
 部署感知构造函数与重载。
 
+## 启动期数据库门
+
+消费服务启动期普遍需要把「数据库目标准备 → 迁移编排 → 记录启动结果 → 失败即停止启动」
+串联起来。`AddStartupDatabaseGate` 把这条流程收敛为一个显式注册：门按固定顺序执行部署
+校验（仅凭已捕获的声明，先于任何 I/O）、可选的目标准备、
+`DatabaseMigrationOrchestrator.OrchestrateMigrationAsync`，然后记录进程内的
+`StartupDatabaseReceipt`。任一阶段失败都使宿主启动失败，失败前回执先记录 `Failed` 与
+白名单错误码；宿主在门成功之前不开始监听请求。取消以 `OperationCanceledException`
+结束且不记录成功。
+
+约束与语义（详见 `README.md` 的 Startup database gate 一节）：
+
+- 目标准备是显式开关：未声明时完全不调用 `IDatabaseTargetPreparationProvider`；已存在的
+  目标只观察、不修改；「目标缺失时允许创建」缺省为不允许，且必须显式声明。准备成功后
+  必须重新观察到目标可连接，才进入迁移编排（新增错误码
+  `database_target_preparation.creation_not_allowed` 与
+  `database_target_preparation.not_connectable_after_preparation`）。
+- PostgreSQL 维护连接由 `PostgreSqlMaintenanceConnection.DeriveConnectionString` 派生：同一
+  凭据、只把数据库名换成 `postgres`，消费方不再自行拼接。文件型目标无需维护连接。
+- 门同时以可直接调用的形式提供（同一实现，不经宿主生命周期触发），供在宿主构建之前、
+  或在消费方自有外层初始化锁内串联其他步骤的消费方使用；两种入口的顺序、失败与错误码
+  语义完全相同。
+- 门不读取 `IConfiguration`；目标配置、部署模式与创建许可由消费方读取后显式传入。
+- 门不执行 EF Core 迁移、不判断遗留库能否接管——这两者仍归消费方 executor。
+
 ## 变更文件
 
 ### 核心包

@@ -49,7 +49,9 @@ internal static class DatabaseTargetPreparationErrorCode
             WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict or
             WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed or
             WellKnownDatabaseTargetPreparationErrorCodes.Timeout or
-            WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed;
+            WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed or
+            WellKnownDatabaseTargetPreparationErrorCodes.CreationNotAllowed or
+            WellKnownDatabaseTargetPreparationErrorCodes.NotConnectableAfterPreparation;
 
     private static bool IsAsciiLetterOrDigit(char character) =>
         character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9';
