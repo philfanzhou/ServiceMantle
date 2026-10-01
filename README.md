@@ -22,6 +22,8 @@ The audited SignaCore migration/deletion gate is documented in [docs/signacore-l
 
 `ServiceMantle.Web` registers a singleton `ServiceLogContext` with the host identity. Its standard `ILogger` scope always emits `ServiceName`, `ServiceVersion`, and `InstanceId` as structured fields. `ServiceName` is the normalized `ServiceId`; `ServiceVersion` can be supplied explicitly and otherwise falls back to the entry assembly informational version, assembly version, then `unknown`.
 
+For the common per-start identity, `InstanceId.CreateRandom(ServiceId.Parse("catalog"))` generates the normalized service id, a hyphen, and 32 lowercase hexadecimal random characters - always valid, distinct on every call, and free of machine or process information. Deployments needing a stable identity across restarts supply their own `InstanceId`.
+
 ```csharp
 builder.AddServiceMantle(
     ServiceId.Parse("catalog"),

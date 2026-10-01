@@ -53,6 +53,33 @@ public sealed record InstanceId
     }
 
     /// <summary>
+    /// Creates a fresh random instance identifier for the given service: the normalized service
+    /// identifier, a hyphen, and 32 lowercase hexadecimal characters from a
+    /// <see cref="Guid.NewGuid()"/>-grade random source.
+    /// </summary>
+    /// <param name="serviceId">The identity shared by all instances of the service.</param>
+    /// <returns>A new instance identifier distinct on every call.</returns>
+    /// <remarks>
+    /// <para>
+    /// The generated value always satisfies <see cref="Parse"/> and round-trips through it; its
+    /// prefix is exactly <see cref="ServiceId.Value"/> after normalization. Deployments that need
+    /// a stable instance identity across restarts supply their own <see cref="InstanceId"/>
+    /// instead: a generated value is new on every process start and guarantees uniqueness beyond
+    /// collision probability only.
+    /// </para>
+    /// <para>
+    /// The random part contains no machine name, address, process id, or other environment
+    /// information.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="serviceId"/> is null.</exception>
+    public static InstanceId CreateRandom(ServiceId serviceId)
+    {
+        ArgumentNullException.ThrowIfNull(serviceId);
+        return new InstanceId($"{serviceId.Value}-{Guid.NewGuid():N}");
+    }
+
+    /// <summary>
     /// Returns the instance identifier.
     /// </summary>
     public override string ToString() => Value;
