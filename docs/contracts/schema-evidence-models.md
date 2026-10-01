@@ -52,15 +52,21 @@ InspectionFailed）。`Message` 由类型内部以「一个已校验标识符 + 
 
 ## 后续切片归属
 
-PostgreSQL 证据读取器（`ServiceMantle.Database.PostgreSql`）是剩余的独立后续任务；`MIGRATION_ORCHESTRATION.md` 的证据构件
-用法一节待端到端流程齐全后随读取器任务补充。EF 期望推导与基线写入原语已由
+PostgreSQL 证据读取器已由 `ServiceMantle.Database.PostgreSql` 的
+`ServiceMantle.Database.PostgreSql.Migration` 命名空间交付：`PostgreSqlSchemaEvidenceReader`
+在调用方连接上只读地读取已应用迁移 id 与完整 `SchemaSnapshot`（`pg_catalog`，含
+`attidentity` 与 `pg_attrdef` 存在性证据位），表名清单经数组参数传入明细查询；「目标不存在」
+仅由 SQLState `3D000` 判定，认证/网络/超时/权限失败一律返回 `ReadFailed`；历史表经 applied id
+维度报告，不进快照。EF 期望推导与基线写入原语已由
 `ServiceMantle.Persistence.Relational` 的 `ServiceMantle.Persistence.Relational.Migration` 命名空间交付：
 `EfCoreExpectedSchemaDerivation.Derive(model)` 输出与 `SchemaSnapshot` 同构的 `ExpectedSchema`
 （identity 只映射 SQL 标准策略；serial/序列/provider 专属生成推导 None；schema 标识符原样输出，
 与读取器对齐是调用方责任），`EfCoreMigrationBaselineWriter` 在调用方连接上以独立事务幂等写入
 基线迁移 id（建表经 provider 的 `IHistoryRepository`，插入为参数化
-`INSERT … SELECT … WHERE NOT EXISTS`），不验证 id 与实际结构一致。两者经验证的 provider 方言集为
-PostgreSQL、SQL Server 与 SQLite；MySQL/Oracle 系方言的语句形态不在已验证范围内。
+`INSERT … SELECT … WHERE NOT EXISTS`），不验证 id 与实际结构一致。基线写入经验证的 provider
+方言集为 PostgreSQL、SQL Server 与 SQLite；MySQL/Oracle 系方言的语句形态不在已验证范围内。
+端到端流程已随读取器交付齐全，`MIGRATION_ORCHESTRATION.md` 的
+「证据构件用法（遗留库接管）」一节给出读取、推导、比对与基线写入的完整用法与调用方责任。
 
 ## 如何被覆盖
 
@@ -74,6 +80,13 @@ PostgreSQL、SQL Server 与 SQLite；MySQL/Oracle 系方言的语句形态不在
 - `EfCoreMigrationBaselineWriterSqliteTests` / `SqlServerEfCoreMigrationBaselineWriterTests`：首次写入、
   重复写入幂等、建表后写入、失败与取消的整事务回滚（不留下半成品）、入口取消检查点、参数化语句
   断言与配置化历史表名/SQL Server schema。
+- `PostgreSqlSchemaEvidenceReaderContractTests` / `PostgreSqlSchemaEvidenceReaderTests`
+  （`ServiceMantle.Database.PostgreSql.Tests`，Testcontainers）：快照全部维度的真实 PostgreSQL
+  读取断言（含两种 identity kind、`HasStoredDefault`、复合主键序、五种外键删除规则、非约束索引
+  与表达式索引排除）、3D000 与认证/网络失败的分别两态返回及消息负向断言、入口与飞行中取消、
+  无历史表与空库读取。
 - `eng/tests/consumers/provider-neutral`：在全部框架 namespace 同处作用域的条件下点名并调用全部新公开类型。
 - `eng/tests/consumers/persistence-relational`：点名 EF 期望推导与基线写入类型（同处框架 namespace
   作用域）。
+- `eng/tests/consumers/database-postgresql`：点名 PostgreSQL provider 包全部公开类型（含 #606 的
+  probe failure classifier 与本读取器），接入 CI 的消费验证步骤。

@@ -373,6 +373,56 @@ logger.LogInformation(
 [Explicit database deployment mode](README.md#explicit-database-deployment-mode) 中描述的
 部署感知构造函数与重载。
 
+## 证据构件用法（遗留库接管）
+
+接管判断本身仍归消费方 executor（见上文「集成示例」）。库提供的是四件证据与原语构件，
+按 [ADR 0008](docs/decisions/0008-schema-evidence-components.md) 拆分交付，语义模型的权威
+位置在 [docs/contracts/schema-evidence-models.md](docs/contracts/schema-evidence-models.md)：
+
+| 构件 | 包 | 职责 |
+| --- | --- | --- |
+| `PostgreSqlSchemaEvidenceReader` | `ServiceMantle.Database.PostgreSql` | 在调用方连接上只读地读出已应用迁移 id 与 `SchemaSnapshot`，并区分「目标数据库不存在」（仅 SQLState `3D000`）与「读取失败」两个事实 |
+| `EfCoreExpectedSchemaDerivation` | `ServiceMantle.Persistence.Relational` | 把最终化的 EF 关系模型推导成同构的 `ExpectedSchema`（确定性；identity 只映射 SQL 标准策略） |
+| `SchemaEvidenceComparer` | `ServiceMantle` 核心包 | 纯函数比对，输出全部结构化 `SchemaDifference`，不做任何分类 |
+| `EfCoreMigrationBaselineWriter` | `ServiceMantle.Persistence.Relational` | 在调用方连接上以独立事务幂等写入基线迁移 id（建表经 provider 的 `IHistoryRepository`，参数化 `INSERT … WHERE NOT EXISTS`） |
+
+典型的消费方 executor 检查顺序——证据在先，stamp 在后，全程分类决策留在消费方：
+
+```csharp
+// 1. Evidence: read the actual database (read-only, on the caller's connection, under the
+//    orchestrator lease). The two failure facts stay separate; classifying "missing target is
+//    an empty database" is the consumer's rule, not the reader's.
+var read = await new PostgreSqlSchemaEvidenceReader().ReadAsync(connection, cancellationToken);
+if (read.State != SchemaEvidenceReadState.Succeeded)
+{
+    return read.State == SchemaEvidenceReadState.TargetDatabaseMissing
+        ? InspectAsync(TargetDatabaseState.Empty)   // 示例：消费方自己的分类
+        : InspectAsync(TargetDatabaseState.InspectionFailed);
+}
+
+// 2. Expected: derive from the finalized model. Schema identifiers must align with the reader's
+//    output — for PostgreSQL that means configuring the model's default schema (usually
+//    "public"), because an unconfigured model derives null.
+var expected = EfCoreExpectedSchemaDerivation.Derive(context.Model);
+
+// 3. Compare: every structured difference, nothing decided here. A missing column carries its
+//    expected nullability and stored-default flag as the consumer's backfill material.
+var differences = SchemaEvidenceComparer.Compare(read.Snapshot, expected);
+
+// 4. The consumer applies its own finite rules (known-migration prefix, allowed differences,
+//    backfill policy) and only then stamps — the writer validates nothing about the id.
+if (takeoverAllowed)
+{
+    var inserted = await new EfCoreMigrationBaselineWriter(context).WriteBaselineAsync(
+        dedicatedConnection, "20260101000000_InitialCreate", "10.0.11", cancellationToken);
+}
+```
+
+边界与调用方责任（全部经测试固定的细节见各包 XML 注释与契约文档）：读取不开启自己的
+事务、不保证事务性时间点图像；类型串按 provider 方言精确比较，不做归一化；写入不验证
+stamp 的 id 与实际结构一致，也不回滚自身事务之外的副作用；表 schema 标识符与期望侧的
+对齐、外层连接与事务时序归调用方。
+
 ## 启动期数据库门
 
 消费服务启动期普遍需要把「数据库目标准备 → 迁移编排 → 记录启动结果 → 失败即停止启动」

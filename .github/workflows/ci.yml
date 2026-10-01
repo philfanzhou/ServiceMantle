@@ -275,6 +275,19 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/persistence-relational
 
+      # The PostgreSQL provider package's dedicated consumer (#610): its first consumer names the
+      # package's whole public surface — bootstrap validation, target preparation, the maintenance
+      # connection derivation, the health probe classifier (#606), the migration lock provider,
+      # and the schema evidence reader — next to Npgsql, which the package itself brings along.
+      # No connection or database is touched; this is the compile surface against the packed
+      # artifact.
+      - name: Verify PostgreSQL provider package consumption
+        run: >-
+          eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/database-postgresql
+
       # The source half of the provider-neutral assertion: the fixture itself must stay free of
       # adapter-named namespaces in every form - using directives, aliases, fully qualified
       # names, and comments - and must rely on the Web SDK implicit usings rather than <Using>
