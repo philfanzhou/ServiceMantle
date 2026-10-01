@@ -1893,6 +1893,31 @@ returned by the filesystem; a missing leaf keeps the caller's spelling. If regul
 count cannot be established reliably, the provider fails with
 `database_target_preparation.capability_not_supported`.
 
+#### Resolving a relative data source against an explicit base directory
+
+Before handing a connection string to EF Core or to ServiceMantle, consumers that keep a relative
+`Data Source` in configuration can anchor it with
+`ServiceMantle.Database.Sqlite.SqliteDataSource.ResolveConnectionString(connectionString, baseDirectory)`
+- usually with the host's content root - so the same relative name resolves to the same file
+regardless of the process working directory:
+
+```csharp
+var anchored = SqliteDataSource.ResolveConnectionString(
+    configuration.GetConnectionString("Main")!,
+    builder.Environment.ContentRootPath);
+```
+
+The rules are fixed: `:memory:` databases and `file:` URIs are returned unchanged; an
+already-absolute data source is returned unchanged; a relative data source is combined with the
+supplied absolute base directory and normalized; every other connection-string parameter is
+preserved; an empty data source, a `|DataDirectory|` substitution, an unparsable connection string,
+or a non-absolute base directory fails with an `ArgumentException` that never echoes the connection
+string. The resolution never touches the file system and never creates a directory. A data source
+resolved here and the equivalent pre-anchored data source normalize to the same canonical target
+identity. Not guaranteed: symbolic links and mount aliases are not resolved, so two different
+paths may still denote the same file; choosing the correct base directory is the caller's
+responsibility.
+
 Observation performs no writability probe and reconstructs a minimal read-only, private-cache,
 non-pooled connection before reading `sqlite_schema`. It never inherits connection initialization
 options. A missing parent, inaccessible parent, missing file, unreadable file, and readable SQLite

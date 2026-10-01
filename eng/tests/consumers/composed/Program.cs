@@ -164,6 +164,18 @@ try
     ReportType(typeof(SqliteDatabaseTargetPreparationProvider));
     ReportType(typeof(SqliteConnectionStringBuilder));
 
+    // The relative data source resolver anchors a connection string against the content root
+    // without a provider-named using (#605); a relative and its pre-anchored form must agree.
+    var anchored = SqliteDataSource.ResolveConnectionString(
+        "Data Source=consumer.db",
+        builder.Environment.ContentRootPath);
+    ReportType(typeof(SqliteDataSource));
+    Console.WriteLine(
+        "Resolved SQLite data source is anchored under the content root: " +
+        new SqliteConnectionStringBuilder(anchored).DataSource.StartsWith(
+            builder.Environment.ContentRootPath,
+            StringComparison.OrdinalIgnoreCase));
+
     // The core snapshot registration entry kept the product prefix on its class name: it lives
     // in a framework namespace, which carries no product information. Naming it unqualified with
     // every framework namespace in scope is the collision check, and calling it statically on a
