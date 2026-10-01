@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ServiceMantle;
+using ServiceMantle.Health;
 using ServiceMantle.Persistence.Relational;
 using ServiceMantle.Persistence.Relational.DataProtection;
 using ServiceMantle.Persistence.Relational.Mapping;
@@ -44,6 +45,24 @@ if (!services.Any(descriptor =>
         "The EF Core key-ring entry did not register its repository and options wiring.");
 }
 
+// The health snapshot source entry (#606): it names the core Health seam next to this package's
+// own namespace, with the classifier supplied by the consumer (a provider package such as
+// ServiceMantle.Database.PostgreSql supplies the real one). Inspected as descriptors only; the
+// startup receipt and the scoped context resolve at request time, never here.
+services.AddServiceMantleEfCoreHealthSnapshotSource<ConsumerDbContext>(
+    ServiceId.Parse("persistence-consumer"),
+    new ConsumerProbeFailureClassifier(),
+    EfCoreHealthSnapshotProbeMode.MappedSchema,
+    errorCodePrefix: "persistence-consumer.health");
+
+if (!services.Any(descriptor =>
+        descriptor.ServiceType == typeof(IServiceHealthSnapshotSource) &&
+        descriptor.Lifetime == ServiceLifetime.Scoped))
+{
+    throw new InvalidOperationException(
+        "The EF Core health snapshot entry did not register the scoped snapshot source.");
+}
+
 Console.WriteLine(
     "Persistence EF Core consumer verified the capability namespaces: the key ring registers " +
     $"through {typeof(EfCoreDataProtectionKeyRepository<>).FullName}, the consumer context " +
@@ -53,6 +72,11 @@ Console.WriteLine(
 // The remaining public surface, named unqualified with every framework namespace above in scope:
 // a name shared with a framework type fails this compilation rather than a consumer's.
 ReportType(typeof(EfCoreDataProtectionExtensions));
+ReportType(typeof(EfCoreHealthSnapshotServiceCollectionExtensions));
+ReportType(typeof(EfCoreHealthSnapshotSource<>));
+ReportType(typeof(EfCoreHealthSnapshotProbeMode));
+ReportType(typeof(IServiceDatabaseProbeFailureClassifier));
+ReportType(typeof(ServiceDatabaseProbeFailureKind));
 ReportType(typeof(ModelBuilderExtensions));
 ReportType(typeof(DataProtectionKeyModelBuilderExtensions));
 ReportType(typeof(ManagementAuditModelBuilderExtensions));
@@ -68,6 +92,16 @@ ReportType(typeof(EfCoreManagementAuditWriter<>));
 ReportType(typeof(EfCoreManagementAuditQueryService<>));
 
 static void ReportType(Type type) => Console.WriteLine($"Resolved {type.FullName}.");
+
+/// <summary>
+/// The consumer's stand-in for a provider classifier: an ordinary consumer-supplied
+/// implementation of the core Health seam, unclassified by default.
+/// </summary>
+internal sealed class ConsumerProbeFailureClassifier : IServiceDatabaseProbeFailureClassifier
+{
+    public ServiceDatabaseProbeFailureKind Classify(Exception exception) =>
+        ServiceDatabaseProbeFailureKind.Unclassified;
+}
 
 /// <summary>
 /// The consumer's own business context: it owns saving, transactions, and migrations, and maps the

@@ -974,6 +974,45 @@ budget token is cancelled. Contributors do not add background polling, caching, 
 execution, cross-instance aggregation, or product metrics. They are never invoked for a base
 not-ready snapshot, and the live endpoint neither resolves nor invokes them during a request.
 
+### EF Core database health snapshot source
+
+The optional `ServiceMantle.Persistence.Relational` package ships a generic
+`IServiceHealthSnapshotSource` implementation that combines the startup database gate's
+process-local `StartupDatabaseReceipt` with a read-only probe of the current scope's
+`DbContext`. Register it with the health endpoints instead of writing a consumer-owned copy:
+
+```csharp
+services.AddServiceMantle(serviceId, instanceId)
+    .AddDatabaseMigration<MyServiceMigrationExecutor>()
+    .AddStartupDatabaseGate(gateOptions);
+
+services.AddServiceMantleEfCoreHealthSnapshotSource<CatalogDbContext>(
+    serviceId,
+    new PostgreSqlDatabaseProbeFailureClassifier(),   // from ServiceMantle.Database.PostgreSql
+    EfCoreHealthSnapshotProbeMode.MappedSchema);      // or ConnectionOnly
+```
+
+The source resolves the receipt registered by `AddStartupDatabaseGate` and the scoped context.
+While the receipt has not succeeded, it performs zero database access and reports
+`(PendingSetup, receipt state, Unreachable, {prefix}.startup_incomplete)` — or
+`{prefix}.startup_failed` for a failed gate. Once the receipt succeeded, it opens the context's
+connection and, in `MappedSchema` mode, runs one zero-row `SELECT` over exactly the tables and
+columns the compiled EF model maps (identifier quoting comes from the provider itself). Failure
+classification goes through the replaceable `IServiceDatabaseProbeFailureClassifier` seam
+(`ServiceMantle.Health`, core package): connection-class failures report
+`(Completed, Succeeded, Unreachable, {prefix}.database_unreachable)`, unreadable mapped schema
+reports `(Completed, Failed, Reachable, {prefix}.schema_unavailable)`, and unclassifiable
+exceptions propagate so the endpoints answer with `health.probe_failed`. Caller cancellation and
+the probe budget propagate on the received token and are never reported as `Unreachable`. The
+`ServiceMantle.Database.PostgreSql` package ships the PostgreSQL classifier (SQLSTATE classes
+08/53/57, `3D000`, `55P03` → connection; class 42 → schema; everything else, including class 28,
+propagates).
+
+The error-code prefix is the normalized `ServiceId` by default or an explicit safe prefix; every
+projected code stays within the snapshot contract's 128-character bound. See
+[docs/contracts/ef-core-health-snapshot-source.md](docs/contracts/ef-core-health-snapshot-source.md)
+for the full mapping table, guarantees, and non-guarantees.
+
 ## Management identity and authorization
 
 `ServiceMantle` defines a product-agnostic management identity contract, and
