@@ -48,7 +48,7 @@ try
 
     var serviceMantle = builder.Services.AddServiceMantle(
         ServiceId.Parse("provider-neutral-consumer"),
-        InstanceId.Parse("provider-neutral-consumer-01"),
+        InstanceId.CreateRandom(ServiceId.Parse("provider-neutral-consumer")),
         bootstrapFilePath: Path.Combine(bootstrapDirectory.FullName, "bootstrap.json"),
         serviceVersion: "1.0.0");
 

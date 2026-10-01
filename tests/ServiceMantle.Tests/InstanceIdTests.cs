@@ -5,6 +5,55 @@ namespace ServiceMantle.Tests;
 
 public sealed class InstanceIdTests
 {
+    public static IEnumerable<object[]> ServiceIdSpellings()
+    {
+        yield return new object[] { "catalog", "catalog" };
+        yield return new object[] { "  Catalog  ", "catalog" };
+        yield return new object[] { "Doctheca", "doctheca" };
+        yield return new object[] { "ruoyu.admin", "ruoyu.admin" };
+        yield return new object[]
+        {
+            new string('a', 128),
+            new string('a', 128)
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(ServiceIdSpellings))]
+    public void CreateRandom_round_trips_and_prefixes_the_normalized_service_id(
+        string spelling,
+        string normalized)
+    {
+        var generated = InstanceId.CreateRandom(ServiceId.Parse(spelling));
+
+        var roundTrip = InstanceId.Parse(generated.Value);
+        Assert.Equal(generated.Value, roundTrip.Value);
+        Assert.True(InstanceId.TryParse(generated.Value, out _));
+        Assert.StartsWith(normalized + "-", generated.Value, StringComparison.Ordinal);
+        Assert.Equal(normalized.Length + 1 + 32, generated.Value.Length);
+        var suffix = generated.Value[(normalized.Length + 1)..];
+        Assert.Matches("^[0-9a-f]{32}$", suffix);
+    }
+
+    [Fact]
+    public void CreateRandom_yields_distinct_values_on_repeated_calls()
+    {
+        var serviceId = ServiceId.Parse("catalog");
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < 1_000; index++)
+        {
+            values.Add(InstanceId.CreateRandom(serviceId).Value);
+        }
+
+        Assert.Equal(1_000, values.Count);
+    }
+
+    [Fact]
+    public void CreateRandom_rejects_a_null_service_id()
+    {
+        Assert.Throws<ArgumentNullException>(() => InstanceId.CreateRandom(null!));
+    }
+
     [Fact]
     public void Parse_trims_but_preserves_case()
     {
