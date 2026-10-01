@@ -22,6 +22,7 @@ using ServiceMantle.Health;
 using ServiceMantle.Persistence.Relational;
 using ServiceMantle.Persistence.Relational.DataProtection;
 using ServiceMantle.Persistence.Relational.Mapping;
+using ServiceMantle.Persistence.Relational.Migration;
 using ServiceMantle.Persistence.Relational.Stores;
 
 var services = new ServiceCollection();
@@ -79,6 +80,13 @@ ReportType(typeof(EfCoreHealthSnapshotSource<>));
 ReportType(typeof(EfCoreHealthSnapshotProbeMode));
 ReportType(typeof(IServiceDatabaseProbeFailureClassifier));
 ReportType(typeof(ServiceDatabaseProbeFailureKind));
+// The schema-evidence slice (#609): both types are only named here — the derivation runs on a
+// finalized model and the writer stamps on a caller-owned connection, and neither belongs in this
+// compile-only consumer; compiling their names next to Microsoft.EntityFrameworkCore is the
+// assertion (a name shared with a framework type in scope fails this build instead of a
+// consumer's).
+ReportType(typeof(EfCoreExpectedSchemaDerivation));
+ReportType(typeof(EfCoreMigrationBaselineWriter));
 ReportType(typeof(ModelBuilderExtensions));
 ReportType(typeof(DataProtectionKeyModelBuilderExtensions));
 ReportType(typeof(ManagementAuditModelBuilderExtensions));
