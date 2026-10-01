@@ -25,6 +25,7 @@ using ServiceMantle.Discovery;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using ServiceMantle.Logging;
+using ServiceMantle.Migration;
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-provider-neutral");
 try
@@ -122,6 +123,46 @@ if (registrationServices.Count(descriptor => descriptor.ServiceType == typeof(IH
 Console.WriteLine(
     $"Registration timing configured through {typeof(ServiceRegistrationLifecycleOptions).FullName}: " +
     $"{registrationServices.Count} descriptors and one hosted lifecycle.");
+
+// The core schema evidence contracts from ServiceMantle.Migration (#608): the neutral models,
+// the pure comparer, and the target read result are named unqualified next to every framework
+// namespace in scope above. Comparing a one-column expected table against a drifted snapshot is
+// the whole assertion — pure data in, differences out, no I/O anywhere.
+var expectedSchema = new ExpectedSchema(
+[
+    new SchemaTable(
+        "orders",
+        [new SchemaColumn("id", "integer", isNullable: false, SchemaIdentityKind.Always)],
+        new SchemaPrimaryKey(["id"])),
+]);
+var driftedSnapshot = new SchemaSnapshot(
+[
+    new SchemaTable(
+        "orders",
+        [new SchemaColumn("id", "int4", isNullable: false, SchemaIdentityKind.Always)],
+        new SchemaPrimaryKey(["id"])),
+]);
+
+var schemaDifferences = SchemaEvidenceComparer.Compare(driftedSnapshot, expectedSchema);
+if (schemaDifferences.Count != 1 ||
+    schemaDifferences[0].Kind != SchemaDifferenceKind.ColumnTypeMismatch)
+{
+    throw new InvalidOperationException(
+        "The schema evidence comparer did not report the drifted column type.");
+}
+
+var targetMissing = SchemaEvidenceReadResult.TargetDatabaseMissing("catalog");
+if (targetMissing.State != SchemaEvidenceReadState.TargetDatabaseMissing ||
+    targetMissing.Snapshot is not null ||
+    targetMissing.Message.Length == 0)
+{
+    throw new InvalidOperationException(
+        "The schema evidence read result did not distinguish the missing-target fact.");
+}
+
+Console.WriteLine(
+    $"Schema evidence compared through {typeof(SchemaEvidenceComparer).FullName}: " +
+    $"{schemaDifferences.Count} difference, and the read result state is {targetMissing.State}.");
 
 // The neutral log authorization contract from ServiceMantle.Logging: nothing in its declaration
 // or registration names a provider or a backend product.

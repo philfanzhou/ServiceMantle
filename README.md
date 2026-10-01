@@ -2272,6 +2272,40 @@ Safe error codes for migration failures:
 - `migration.execution_failed` - The consuming service's migration executor failed.
 - `migration.final_state_invalid` - Database state after migration is not compatible.
 
+### Core schema evidence model and comparer
+
+The core package (`ServiceMantle.Migration`, per [ADR 0008](docs/decisions/0008-schema-evidence-components.md))
+ships the provider-neutral evidence models takeover executors are built on: `SchemaSnapshot` (the
+actual structure one reader observed), the isomorphic `ExpectedSchema`, the pure-function
+`SchemaEvidenceComparer.Compare(snapshot, expected)` returning every structured
+`SchemaDifference`, and `SchemaEvidenceReadResult`, which keeps the two read facts — target
+database missing versus read failed — separate so consumers classify them on their own.
+
+```csharp
+SchemaEvidenceReadResult read = await reader.ReadAsync(connection, cancellationToken);
+if (read.State != SchemaEvidenceReadState.Succeeded)
+{
+    // The consumer decides: a missing target may mean an empty database, a failed read means
+    // inspection failed. The identifier-only message carries no SQL or connection values.
+    return Classify(read.State, read.Message);
+}
+
+var differences = SchemaEvidenceComparer.Compare(read.Snapshot, expectedSchema);
+// All differences across the declared dimensions; a missing column carries its expected
+// nullability and stored-default flag as backfill evidence. The comparer decides nothing.
+```
+
+Comparison dimensions: table existence (schema-qualified, ordinal), column existence and each
+column's type string (exact match — no dialect normalization), nullability, and identity kind;
+primary key columns; foreign key shape (columns, referenced table/columns) and delete rule; and
+non-constraint index columns and uniqueness. `SchemaColumn.HasStoredDefault` is evidence only and
+never produces a difference by itself; nothing outside the dimensions (check constraints, default
+values, triggers, views, permissions) is compared. Differences are deterministic in order and
+contain identifiers and structural facts only. Provider readers (PostgreSQL) and EF model
+expected-derivation arrive in follow-up packages; this slice adds no dependencies to the core
+package. See
+[docs/contracts/schema-evidence-models.md](docs/contracts/schema-evidence-models.md).
+
 ## Startup database gate
 
 `AddStartupDatabaseGate` composes deployment validation, optional target preparation, migration
