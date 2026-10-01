@@ -52,9 +52,15 @@ InspectionFailed）。`Message` 由类型内部以「一个已校验标识符 + 
 
 ## 后续切片归属
 
-PostgreSQL 证据读取器（`ServiceMantle.Database.PostgreSql`）与 EF 期望推导、基线写入原语
-（`ServiceMantle.Persistence.Relational`）是独立后续任务；`MIGRATION_ORCHESTRATION.md` 的证据构件
-用法一节待端到端流程齐全后随读取器任务补充。
+PostgreSQL 证据读取器（`ServiceMantle.Database.PostgreSql`）是剩余的独立后续任务；`MIGRATION_ORCHESTRATION.md` 的证据构件
+用法一节待端到端流程齐全后随读取器任务补充。EF 期望推导与基线写入原语已由
+`ServiceMantle.Persistence.Relational` 的 `ServiceMantle.Persistence.Relational.Migration` 命名空间交付：
+`EfCoreExpectedSchemaDerivation.Derive(model)` 输出与 `SchemaSnapshot` 同构的 `ExpectedSchema`
+（identity 只映射 SQL 标准策略；serial/序列/provider 专属生成推导 None；schema 标识符原样输出，
+与读取器对齐是调用方责任），`EfCoreMigrationBaselineWriter` 在调用方连接上以独立事务幂等写入
+基线迁移 id（建表经 provider 的 `IHistoryRepository`，插入为参数化
+`INSERT … SELECT … WHERE NOT EXISTS`），不验证 id 与实际结构一致。两者经验证的 provider 方言集为
+PostgreSQL、SQL Server 与 SQLite；MySQL/Oracle 系方言的语句形态不在已验证范围内。
 
 ## 如何被覆盖
 
@@ -62,4 +68,12 @@ PostgreSQL 证据读取器（`ServiceMantle.Database.PostgreSql`）与 EF 期望
   确定顺序、维度外变化零差异、渲染不含 SQL/连接值、空参数拒绝。
 - `SchemaEvidenceReadResultTests` / `SchemaEvidenceModelTests`：两个失败事实的区分、消息的精确内容与
   负向断言、模型不可变性与校验规则。
+- `EfCoreExpectedSchemaDerivationTests`（`ServiceMantle.Persistence.Relational.Tests`）：对表（含 schema）、
+  列（含 identity kind 与 `HasStoredDefault`）、主键、外键、索引各维度的推导断言，value generation
+  策略与 `DeleteBehavior`（含 Client* 分支）的逐分支映射，以及确定性与空参数拒绝。
+- `EfCoreMigrationBaselineWriterSqliteTests` / `SqlServerEfCoreMigrationBaselineWriterTests`：首次写入、
+  重复写入幂等、建表后写入、失败与取消的整事务回滚（不留下半成品）、入口取消检查点、参数化语句
+  断言与配置化历史表名/SQL Server schema。
 - `eng/tests/consumers/provider-neutral`：在全部框架 namespace 同处作用域的条件下点名并调用全部新公开类型。
+- `eng/tests/consumers/persistence-relational`：点名 EF 期望推导与基线写入类型（同处框架 namespace
+  作用域）。

@@ -2340,10 +2340,49 @@ primary key columns; foreign key shape (columns, referenced table/columns) and d
 non-constraint index columns and uniqueness. `SchemaColumn.HasStoredDefault` is evidence only and
 never produces a difference by itself; nothing outside the dimensions (check constraints, default
 values, triggers, views, permissions) is compared. Differences are deterministic in order and
-contain identifiers and structural facts only. Provider readers (PostgreSQL) and EF model
-expected-derivation arrive in follow-up packages; this slice adds no dependencies to the core
-package. See
+contain identifiers and structural facts only. The PostgreSQL reader arrives in a follow-up
+package; this slice adds no dependencies to the core package. See
 [docs/contracts/schema-evidence-models.md](docs/contracts/schema-evidence-models.md).
+
+### EF model expected derivation and baseline stamping
+
+The EF Core persistence package (`ServiceMantle.Persistence.Relational.Migration`) closes the two
+remaining library halves of the takeover evidence flow, per
+[ADR 0008](docs/decisions/0008-schema-evidence-components.md):
+
+- `EfCoreExpectedSchemaDerivation.Derive(model)` turns a finalized relational `IModel` into the
+  isomorphic `ExpectedSchema`: every table-mapped table with its columns (store type, nullability,
+  identity kind, stored-default evidence bit), primary key, foreign keys (referenced schema/table/
+  columns plus the relational delete rule), and non-constraint indexes. Derivation is deterministic;
+  view mappings are not derived. Identity derivation maps the SQL-standard strategies only —
+  generated always / by default as identity map to the matching `SchemaIdentityKind`, while serial
+  columns, sequences, and provider-specific generation such as SQL Server `IDENTITY` deliberately
+  derive `None`. Schema identifiers are exactly what the model reports, so a model without a
+  configured default schema derives null — align expected identifiers with the reader's output (for
+  PostgreSQL, configure the `public` schema) before comparing.
+- `EfCoreMigrationBaselineWriter` stamps one baseline migration id into the EF migrations history
+  table on a caller-owned connection: the history table is created when missing through the
+  provider's own `IHistoryRepository` create-if-not-exists script, and the row is written with one
+  parameterized idempotent `INSERT … SELECT … WHERE NOT EXISTS` statement, all inside a single
+  transaction the writer owns. Repeated stamps neither duplicate nor overwrite the row (the call
+  returns whether it inserted); a failure or cancellation rolls the whole transaction back, leaving
+  no half-created table or row.
+
+```csharp
+var expected = EfCoreExpectedSchemaDerivation.Derive(context.Model);
+var differences = SchemaEvidenceComparer.Compare(read.Snapshot, expected);
+
+// After its own evidence checks pass — the writer validates nothing about the id.
+var writer = new EfCoreMigrationBaselineWriter(context);
+var inserted = await writer.WriteBaselineAsync(
+    dedicatedConnection, "20260101000000_InitialCreate", "10.0.11", cancellationToken);
+```
+
+Which id is written, and when, is always the caller's decision; the writer never verifies that the
+stamped id matches the database's actual structure and never commits anything outside its own
+transaction. Verified on SQL Server (integration tests) and SQLite; the statement form targets
+providers whose dialect accepts a parameterized `SELECT` without `FROM` (PostgreSQL, SQL Server,
+SQLite — MySQL/Oracle-family dialects are not covered).
 
 ## Startup database gate
 
