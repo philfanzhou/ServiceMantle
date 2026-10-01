@@ -190,6 +190,30 @@ guarantee delivery, exactly-once export, or loss-free operation during network f
 does not export logs, configure mTLS certificate lifecycles, run a collector, or own the consuming
 application's complete telemetry pipeline.
 
+### Setting-driven OTLP endpoint
+
+`AddOpenTelemetryOtlpExporterFromSettings` drives the same exporters from an activated setting
+snapshot's `opentelemetry.otlp_endpoint` value (a fixed library key, non-sensitive). The optional
+configuration still selects which signals are enabled and every remaining option; the
+classification owns every enabled signal's endpoint:
+
+```csharp
+// snapshot: an activated ServiceSettingSnapshot, read by the consumer's own loader.
+var otlpState = serviceMantle.AddOpenTelemetryOtlpExporterFromSettings(
+    snapshot,
+    options => options.Traces.Protocol = OtlpProtocol.Grpc);
+```
+
+A usable endpoint registers the exporters through the existing explicit entry and its validation
+rules. An empty value registers no exporter, provider, resolver, or background activity at all —
+even when the optional configuration enabled signals. An unusable value (not an absolute HTTPS URI
+without user info, query, or fragment) does the same, and the returned `OtlpSettingState` carries
+a value-free category (`enabled`, `disabled`, `endpoint_invalid`) for the consumer's post-startup
+warning. The strict update validation (`otlp.invalid_endpoint`) is the management rule; the
+startup classification deliberately tolerates values an older release already stored. Not
+guaranteed: remote reachability or export success (the upstream exporter's semantics apply), and
+changes take effect only after a restart.
+
 ## Authorized Prometheus endpoint
 
 `ServiceMantle.Diagnostics` also exposes metrics from meters already selected by the consuming
@@ -2351,6 +2375,41 @@ permanent delivery failures, drain timeouts, and caller-cancelled drains are exp
 content-free counters and stable error codes on `RemoteLogDeliveryDiagnostics` (core
 `ServiceMantle.Logging`). The package
 does not add disk buffering, unbounded retries, dynamic reload, query APIs, or exactly-once delivery.
+
+#### Setting-driven Loki enablement
+
+`AddServiceMantleGrafanaLokiFromSettings` drives the same sink from an activated setting snapshot's
+`loki.uri` / `loki.authorization` pair instead of explicit options. The keys are fixed by the
+library; `loki.authorization` is a sensitive setting (stored protected, never with a plaintext
+default). The registration contributes the definitions and the strict management-update
+combination validation to the global setting catalog:
+
+| Key | Type | Sensitive | Meaning |
+| --- | --- | --- | --- |
+| `loki.uri` | String | no | The Loki base endpoint; an absolute HTTPS URI without user info, query, or fragment. |
+| `loki.authorization` | String | yes | The Authorization header value, 1–4096 characters without control characters. |
+
+```csharp
+// snapshot: an activated ServiceSettingSnapshot, read by the consumer's own loader.
+var lokiState = builder.AddServiceMantleGrafanaLokiFromSettings(
+    snapshot,
+    options => options.BatchSize = 200);
+```
+
+The classification owns enablement, the endpoint, and the authorization resolver name. A usable
+pair enables the sink under the explicit entry's validation rules and registers exactly one
+in-memory `FixedRemoteLogAuthorizationResolver` answering the fixed
+`servicemantle-loki-settings` name. An empty pair keeps the sink disabled with zero registered
+activity. An unusable pair (a non-HTTPS endpoint, a half-configured pair, or an unusable
+authorization value) also keeps the sink disabled; the returned `GrafanaLokiSettingState` carries
+a value-free category (`endpoint_invalid`, `endpoint_missing`, `authorization_missing`,
+`authorization_invalid`) for the consumer's post-startup warning. Categories, exceptions, and
+diagnostics never contain the endpoint or the Authorization value. The strict update validation
+(`loki.invalid_endpoint`, `loki.authorization_value_invalid`, `setting.required` on the missing
+half) is the management rule: a saved value must be one the next start can use; the startup
+classification deliberately tolerates values an older release already stored. Not guaranteed:
+remote reachability or delivery (the upstream sink's semantics apply), and changes take effect
+only after a restart.
 
 ### Migrating from the separate Grafana Loki package
 
