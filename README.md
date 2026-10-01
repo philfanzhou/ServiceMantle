@@ -1994,6 +1994,8 @@ Safe error codes for database target preparation failures are restricted to this
 - `database_target_preparation.connection_failed` - A connection could not be established or was lost while preparing the target.
 - `database_target_preparation.timeout` - The preparation operation exceeded its allotted timeout.
 - `database_target_preparation.preparation_failed` - Preparation failed for a provider-specific reason not covered by another code.
+- `database_target_preparation.creation_not_allowed` - The target is missing and creating it was not explicitly permitted; the gate refuses to create it silently.
+- `database_target_preparation.not_connectable_after_preparation` - The target was prepared successfully but the follow-up observation still could not connect to it; migration never starts on an unconfirmed target.
 
 Caller-requested cancellation is always propagated as a sanitized `OperationCanceledException` without the underlying database exception, distinct from a timeout failure result. PostgreSQL preparation rejects infinite, non-positive, and timer-unsupported timeouts before starting work; an already-cancelled caller token takes precedence over timeout validation.
 
@@ -2179,6 +2181,56 @@ Safe error codes for migration failures:
 - `migration.version_too_new` - Database schema is newer than the application.
 - `migration.execution_failed` - The consuming service's migration executor failed.
 - `migration.final_state_invalid` - Database state after migration is not compatible.
+
+## Startup database gate
+
+`AddStartupDatabaseGate` composes deployment validation, optional target preparation, migration
+orchestration, and a process-local startup receipt into one explicit registration. The gate runs
+during host startup, before the web host starts accepting requests, and fails the host startup when
+any stage fails.
+
+```csharp
+services.AddServiceMantle(serviceId, instanceId)
+    .AddDatabaseMigration<MyServiceMigrationExecutor>()
+    .AddStartupDatabaseGate(new StartupDatabaseGateOptions(
+        database: bootstrapDatabaseConfiguration,        // read from your own configuration
+        deploymentMode: DatabaseDeploymentMode.MultiInstance,
+        lockWaitBudget: TimeSpan.FromSeconds(30),
+        enableTargetPreparation: true,
+        allowTargetCreation: false,
+        maintenanceConnectionString: PostgreSqlMaintenanceConnection.DeriveConnectionString(
+            bootstrapDatabaseConfiguration.ConnectionString)));
+```
+
+The fixed sequence: deployment validation (captured declarations only, before any I/O), then — only
+when `enableTargetPreparation` is true — observe the target, prepare it only when a missing target
+and explicit creation permission coincide, and re-observe to confirm the target is connectable
+before migration starts; then `DatabaseMigrationOrchestrator.OrchestrateMigrationAsync`; then the
+receipt. Any failure fails the host startup, and the receipt records `Failed` with a safe error code
+first. Caller cancellation ends the gate with `OperationCanceledException` without recording success.
+
+- Target preparation is an explicit switch: disabled means no `IDatabaseTargetPreparationProvider`
+  is called at all. An existing target is only observed, never repaired or replaced; unreachable
+  servers, authentication, permission, and identity failures are refused and never interpreted as a
+  missing target.
+- `allowTargetCreation` defaults to `false`: a missing target is refused with
+  `database_target_preparation.creation_not_allowed` unless creation was explicitly permitted.
+  A server target additionally requires `maintenanceConnectionString` (for PostgreSQL, derive it
+  with `PostgreSqlMaintenanceConnection.DeriveConnectionString`, which only replaces the database
+  name with `postgres`); file targets need no maintenance connection.
+- `StartupDatabaseReceipt` is the process-local, one-way receipt (`NotStarted` → `Running` →
+  `Succeeded` or `Failed`, terminal states never change) for health reporting to read.
+- The same `StartupDatabaseGate` implementation backs the hosted entry and any direct,
+  caller-driven invocation (`gate.RunAsync(options, receipt, serviceId, token)`), for consumers
+  that run the sequence before the host is built or inside their own outer initialization lock.
+  Both entries share identical ordering, failure, and error-code semantics.
+- No `IConfiguration` is read: the caller reads its own configuration and supplies the values.
+
+Not guaranteed: nothing spans the preparation and the migration transactionally — a created target
+or a committed migration is not undone by a later failure or cancellation; multi-instance target
+creation keeps the preparation provider's existing concurrency semantics; consumers bypassing the
+gate are not covered. The gate does not run EF Core migrations itself — the consuming service's
+`IDatabaseMigrationExecutor` stays responsible for execution and takeover decisions.
 
 ## Non-goals (first version)
 

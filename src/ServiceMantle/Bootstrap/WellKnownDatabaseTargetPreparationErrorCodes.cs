@@ -56,4 +56,17 @@ public static class WellKnownDatabaseTargetPreparationErrorCodes
     /// Target preparation failed for a provider-specific reason not covered by another code.
     /// </summary>
     public const string PreparationFailed = "database_target_preparation.preparation_failed";
+
+    /// <summary>
+    /// The target is missing and creating it was not explicitly permitted. Creation is refused;
+    /// the target is never silently created.
+    /// </summary>
+    public const string CreationNotAllowed = "database_target_preparation.creation_not_allowed";
+
+    /// <summary>
+    /// The target was prepared successfully but a follow-up observation still could not connect
+    /// to it. Migration orchestration never starts on an unconfirmed target.
+    /// </summary>
+    public const string NotConnectableAfterPreparation =
+        "database_target_preparation.not_connectable_after_preparation";
 }

@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using ServiceMantle;
 using ServiceMantle.Web;
 using ServiceMantle.Web.Health;
+using ServiceMantle.Web.Hosting;
 using ServiceMantle.Web.Http;
 using ServiceMantle.Web.Logging;
 using ServiceMantle.Web.Management;
@@ -185,6 +186,49 @@ public static class ServiceMantleServiceCollectionExtensions
 
         builder.Services.TryAddScoped<IDatabaseMigrationExecutor, TExecutor>();
         builder.Services.TryAddScoped<DatabaseMigrationOrchestrator>();
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds the explicit startup database gate: deployment validation, optional target
+    /// preparation, migration orchestration, and the process-local startup receipt, all run
+    /// before the host starts accepting requests.
+    /// </summary>
+    /// <param name="builder">The ServiceMantle builder.</param>
+    /// <param name="options">The immutable gate inputs.</param>
+    /// <returns>The same builder.</returns>
+    /// <remarks>
+    /// <para>
+    /// The gate fails the host startup when any stage fails; the
+    /// <see cref="StartupDatabaseReceipt"/> singleton records the finite outcome for
+    /// later health reporting. Target preparation is called only when the options enable it, and
+    /// a missing target is created only when the options explicitly permit it. The same
+    /// <see cref="StartupDatabaseGate"/> implementation backs the hosted entry and any
+    /// direct caller-driven invocation.
+    /// </para>
+    /// <para>
+    /// The registration requires <see cref="AddDatabaseMigration{TExecutor}"/> (or an explicit
+    /// <see cref="IDatabaseMigrationExecutor"/> registration) to resolve at startup;
+    /// a missing executor fails the host startup.
+    /// </para>
+    /// </remarks>
+    public static ServiceMantleBuilder AddStartupDatabaseGate(
+        this ServiceMantleBuilder builder,
+        StartupDatabaseGateOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(options);
+
+        builder.Services.TryAddSingleton<DatabaseDeploymentCapabilityRegistry>(serviceProvider =>
+            new DatabaseDeploymentCapabilityRegistry(
+                serviceProvider.GetServices<IDatabaseDeploymentCapabilityProvider>(),
+                serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver));
+        builder.Services.TryAddSingleton(options);
+        builder.Services.TryAddSingleton<StartupDatabaseReceipt>();
+        builder.Services.TryAddSingleton<StartupDatabaseGate>();
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IHostedService,
+            StartupDatabaseGateHostedService>());
         return builder;
     }
 
