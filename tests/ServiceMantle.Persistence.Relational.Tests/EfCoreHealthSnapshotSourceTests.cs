@@ -368,6 +368,69 @@ public sealed class EfCoreHealthSnapshotSourceTests
         Assert.Equal("serviceId", exception.ParamName);
     }
 
+    [Fact]
+    public async Task Every_projected_suffix_with_the_longest_allowed_prefix_stays_within_128_characters()
+    {
+        // The prefix bound exists for one invariant: prefix + longest suffix must stay within the
+        // snapshot contract's 128-character bound. The longest suffix is ".database_unreachable"
+        // (21 characters), so the boundary prefix is 128 - 21 = 107 characters. All four
+        // projected suffixes are asserted with that prefix, not just the reported path.
+        var prefix = new string('a', 107);
+        Assert.Equal(107, EfCoreHealthSnapshotSource<SnapshotDbContext>.MaximumErrorCodePrefixLength);
+        await using var context = CreateContext(BrokenConnectionString());
+
+        var connectionFailure = await CreateSource(
+            SucceededReceipt(), context, StubClassifier.ConnectionFailure, errorCodePrefix: prefix)
+            .GetSnapshotAsync(TestContext.Current.CancellationToken);
+        var schemaUnreadable = await CreateSource(
+            SucceededReceipt(), context, StubClassifier.SchemaUnreadable, errorCodePrefix: prefix)
+            .GetSnapshotAsync(TestContext.Current.CancellationToken);
+        var notStarted = await CreateSource(
+            new StartupDatabaseReceipt(), context, StubClassifier.ConnectionFailure, errorCodePrefix: prefix)
+            .GetSnapshotAsync(TestContext.Current.CancellationToken);
+        var failedReceipt = new StartupDatabaseReceipt();
+        Assert.True(failedReceipt.TryMarkRunning());
+        Assert.True(failedReceipt.TryCompleteFailed(WellKnownMigrationErrorCodes.ExecutionFailed));
+        var startupFailed = await CreateSource(
+            failedReceipt, context, StubClassifier.ConnectionFailure, errorCodePrefix: prefix)
+            .GetSnapshotAsync(TestContext.Current.CancellationToken);
+
+        Assert.All(
+            new[] { connectionFailure, schemaUnreadable, notStarted, startupFailed },
+            snapshot => Assert.InRange(snapshot.ErrorCode!.Length, 1, 128));
+        Assert.Equal(prefix + ".database_unreachable", connectionFailure.ErrorCode);
+        Assert.Equal(128, connectionFailure.ErrorCode!.Length);
+        Assert.Equal(prefix + ".schema_unavailable", schemaUnreadable.ErrorCode);
+        Assert.Equal(prefix + ".startup_incomplete", notStarted.ErrorCode);
+        Assert.Equal(prefix + ".startup_failed", startupFailed.ErrorCode);
+    }
+
+    [Fact]
+    public void Registration_rejects_prefix_lengths_that_would_break_the_128_character_bound()
+    {
+        var services = new ServiceCollection();
+
+        // 108 characters are a valid prefix shape but project one character past the snapshot
+        // contract's 128-character bound on ".database_unreachable": rejected at registration.
+        Assert.Throws<ArgumentException>(() =>
+            services.AddServiceMantleEfCoreHealthSnapshotSource<SnapshotDbContext>(
+                ServiceId.Parse("catalog"),
+                StubClassifier.ConnectionFailure,
+                errorCodePrefix: new string('a', 108)));
+
+        // A service identifier of the same length cannot derive a default prefix either.
+        var exception = Assert.Throws<ArgumentException>(() =>
+            services.AddServiceMantleEfCoreHealthSnapshotSource<SnapshotDbContext>(
+                ServiceId.Parse(new string('a', 108)),
+                StubClassifier.ConnectionFailure));
+        Assert.Equal("serviceId", exception.ParamName);
+
+        // One character below the overshoot, both the derived and the explicit prefix register.
+        services.AddServiceMantleEfCoreHealthSnapshotSource<SnapshotDbContext>(
+            ServiceId.Parse(new string('a', 107)),
+            StubClassifier.ConnectionFailure);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]

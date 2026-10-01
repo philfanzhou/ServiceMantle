@@ -79,9 +79,9 @@ public sealed class EfCoreHealthSnapshotSource<TDbContext> : IServiceHealthSnaps
     private const string DatabaseUnreachableCodeSuffix = ".database_unreachable";
     private const string SchemaUnavailableCodeSuffix = ".schema_unavailable";
 
-    // The longest suffix, ".schema_unavailable", plus a prefix of at most 109 characters stays
-    // within the snapshot contract's 128-character error-code bound.
-    internal const int MaximumErrorCodePrefixLength = 109;
+    // The longest suffix, ".database_unreachable" (21 characters), plus a prefix of at most 107
+    // characters stays within the snapshot contract's 128-character error-code bound.
+    internal const int MaximumErrorCodePrefixLength = 107;
 
     private readonly StartupDatabaseReceipt startupReceipt;
     private readonly TDbContext dbContext;
@@ -97,7 +97,7 @@ public sealed class EfCoreHealthSnapshotSource<TDbContext> : IServiceHealthSnaps
     /// <see cref="IServiceDatabaseProbeFailureClassifier"/> for its contract.
     /// </param>
     /// <param name="errorCodePrefix">
-    /// The safe error-code prefix; must contain 1–109 ASCII letters, digits, '.', '_', or '-'
+    /// The safe error-code prefix; must contain 1–107 ASCII letters, digits, '.', '_', or '-'
     /// and start with an ASCII letter or digit, so every projected code stays within the
     /// snapshot contract's 128-character bound.
     /// </param>
@@ -311,7 +311,7 @@ public sealed class EfCoreHealthSnapshotSource<TDbContext> : IServiceHealthSnaps
     }
 
     private static ArgumentException InvalidPrefix() => new(
-        "The error code prefix must contain 1 to 109 ASCII letters, digits, '.', '_', or '-', " +
+        "The error code prefix must contain 1 to 107 ASCII letters, digits, '.', '_', or '-', " +
         "and start with an ASCII letter or digit.",
         nameof(errorCodePrefix));
 

@@ -45,10 +45,12 @@ if (!services.Any(descriptor =>
         "The EF Core key-ring entry did not register its repository and options wiring.");
 }
 
-// The health snapshot source entry (#606): it names the core Health seam next to this package's
-// own namespace, with the classifier supplied by the consumer (a provider package such as
-// ServiceMantle.Database.PostgreSql supplies the real one). Inspected as descriptors only; the
-// startup receipt and the scoped context resolve at request time, never here.
+// The health snapshot source entry (#606): like every AddServiceMantle* registration entry it
+// lives in Microsoft.Extensions.DependencyInjection (ADR 0007 C), so this composition root
+// reaches it through the using it already has; the classifier comes from the consumer (a
+// provider package such as ServiceMantle.Database.PostgreSql supplies the real one), and the
+// probe mode is this package's own capability type. Inspected as descriptors only; the startup
+// receipt and the scoped context resolve at request time, never here.
 services.AddServiceMantleEfCoreHealthSnapshotSource<ConsumerDbContext>(
     ServiceId.Parse("persistence-consumer"),
     new ConsumerProbeFailureClassifier(),
@@ -72,7 +74,7 @@ Console.WriteLine(
 // The remaining public surface, named unqualified with every framework namespace above in scope:
 // a name shared with a framework type fails this compilation rather than a consumer's.
 ReportType(typeof(EfCoreDataProtectionExtensions));
-ReportType(typeof(EfCoreHealthSnapshotServiceCollectionExtensions));
+ReportType(typeof(ServiceMantleEfCoreHealthSnapshotServiceCollectionExtensions));
 ReportType(typeof(EfCoreHealthSnapshotSource<>));
 ReportType(typeof(EfCoreHealthSnapshotProbeMode));
 ReportType(typeof(IServiceDatabaseProbeFailureClassifier));

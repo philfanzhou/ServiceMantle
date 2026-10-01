@@ -7,6 +7,10 @@
 
 ## 注册
 
+注册入口 `AddServiceMantleEfCoreHealthSnapshotSource` 与仓库其他 `AddServiceMantle*` 入口一致，
+住在 `Microsoft.Extensions.DependencyInjection`（ADR 0007 C 类）：组合根无需为注册本身引入
+能力 namespace 的 `using`；探测模式枚举等其余类型仍在 `ServiceMantle.Persistence.Relational`。
+
 ```csharp
 services.AddServiceMantleEfCoreHealthSnapshotSource<CatalogDbContext>(
     serviceId,

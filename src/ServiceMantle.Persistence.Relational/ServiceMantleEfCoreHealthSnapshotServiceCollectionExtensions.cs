@@ -1,17 +1,17 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using ServiceMantle;
 using ServiceMantle.Health;
 using ServiceMantle.Migration;
+using ServiceMantle.Persistence.Relational;
 
-namespace ServiceMantle.Persistence.Relational;
+namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>
 /// Registers the EF Core database health snapshot source for the ServiceMantle health
 /// endpoints.
 /// </summary>
-public static class EfCoreHealthSnapshotServiceCollectionExtensions
+public static class ServiceMantleEfCoreHealthSnapshotServiceCollectionExtensions
 {
     /// <summary>
     /// Registers a scoped <see cref="IServiceHealthSnapshotSource"/> that reads the startup
@@ -52,7 +52,8 @@ public static class EfCoreHealthSnapshotServiceCollectionExtensions
         this IServiceCollection services,
         ServiceId serviceId,
         IServiceDatabaseProbeFailureClassifier failureClassifier,
-        EfCoreHealthSnapshotProbeMode probeMode = EfCoreHealthSnapshotProbeMode.MappedSchema,
+        ServiceMantle.Persistence.Relational.EfCoreHealthSnapshotProbeMode probeMode =
+            ServiceMantle.Persistence.Relational.EfCoreHealthSnapshotProbeMode.MappedSchema,
         string? errorCodePrefix = null)
         where TDbContext : DbContext
     {
