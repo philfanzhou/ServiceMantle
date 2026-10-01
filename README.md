@@ -2340,10 +2340,40 @@ primary key columns; foreign key shape (columns, referenced table/columns) and d
 non-constraint index columns and uniqueness. `SchemaColumn.HasStoredDefault` is evidence only and
 never produces a difference by itself; nothing outside the dimensions (check constraints, default
 values, triggers, views, permissions) is compared. Differences are deterministic in order and
-contain identifiers and structural facts only. Provider readers (PostgreSQL) and EF model
-expected-derivation arrive in follow-up packages; this slice adds no dependencies to the core
-package. See
+contain identifiers and structural facts only. The EF model expected-derivation arrives in the
+persistence package as a follow-up slice; this slice adds no dependencies to the core package.
+See
 [docs/contracts/schema-evidence-models.md](docs/contracts/schema-evidence-models.md).
+
+### PostgreSQL schema evidence reader
+
+The PostgreSQL provider package (`ServiceMantle.Database.PostgreSql.Migration`, per
+[ADR 0008](docs/decisions/0008-schema-evidence-components.md)) reads the database's evidence
+read-only on the caller's connection and returns it as one `SchemaEvidenceReadResult`:
+
+```csharp
+var reader = new PostgreSqlSchemaEvidenceReader();
+SchemaEvidenceReadResult result = await reader.ReadAsync(connection, cancellationToken);
+// Succeeded: applied EF migration ids (read order) plus the complete SchemaSnapshot —
+// tables with their pg_namespace schema, columns (format_type string, nullability,
+// attidentity -> identity kind, pg_attrdef existence -> stored-default evidence bit),
+// ordered primary keys, foreign keys (columns, referenced schema/table/columns, delete
+// rule), and non-constraint indexes (columns, uniqueness; names are not in the model).
+// TargetDatabaseMissing: decided solely by SQLSTATE 3D000 — authentication, network,
+// timeout, and permission failures are never reported as "missing"; they are the separate
+// ReadFailed fact. Caller cancellation propagates as OperationCanceledException.
+```
+
+The read never starts its own transaction and never writes; it opens the caller's connection
+when closed (so the 3D000 fact is observable) and never closes it. The migrations history table
+is reported through the applied ids, never as a snapshot table; a database without it reads as
+"no migrations applied". Indexes with expression columns stay outside the model, and the whole
+read is one observation, not a transactional point-in-time image — sequencing against concurrent
+DDL is the caller's responsibility (usually the orchestrator lease). Expected-side identifier
+alignment is the caller's responsibility per the contract: for example an EF model without a
+configured default schema derives null while the reader reports `public`. The end-to-end
+takeover flow — reader, derivation, comparer, and baseline stamp — is shown in
+[MIGRATION_ORCHESTRATION.md](MIGRATION_ORCHESTRATION.md#证据构件用法遗留库接管).
 
 ## Startup database gate
 
