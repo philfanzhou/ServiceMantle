@@ -496,6 +496,10 @@ public static class ServiceMantleServiceCollectionExtensions
 
         var options = new RateLimitingOptions();
         configure?.Invoke(options);
+        // Reserved or malformed consumer policy names fail this call synchronously, before any
+        // policy descriptor is written; numeric bounds fail when the host starts like the
+        // library-owned policies.
+        RateLimitingSnapshotProvider.ValidateConsumerPolicyNames(options.ConsumerPolicies.Keys);
         var firstRegistration = !builder.Services.Any(descriptor =>
             descriptor.ServiceType == typeof(RateLimitingRegistration));
         builder.Services.AddSingleton(new RateLimitingRegistration(options));
@@ -520,6 +524,15 @@ public static class ServiceMantleServiceCollectionExtensions
             rateLimiterOptions.AddPolicy<string>(
                 RateLimitingDefaults.ManagementPolicyName,
                 RateLimitingPolicy.ManagementPartition);
+            foreach (var policyName in options.ConsumerPolicies.Keys)
+            {
+                // Each consumer policy resolves its own validated snapshot settings at request
+                // time and shares the client partition, the bounded sliding window, and the safe
+                // rejection response with the library-owned policies.
+                rateLimiterOptions.AddPolicy<string>(
+                    policyName,
+                    context => RateLimitingPolicy.ConsumerPartition(policyName, context));
+            }
         });
         return builder;
     }

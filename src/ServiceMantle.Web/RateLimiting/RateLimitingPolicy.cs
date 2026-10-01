@@ -20,6 +20,7 @@ internal static class RateLimitingPolicy
     private const string SetupNamespace = "setup:";
     private const string ManagementClientNamespace = "management-client:";
     private const string ManagementOperatorNamespace = "management-operator:";
+    private const string ConsumerNamespace = "consumer:";
     private const string UnknownClient = "unknown-client";
 
     internal static RateLimitPartition<string> SetupPartition(HttpContext context)
@@ -30,6 +31,24 @@ internal static class RateLimitingPolicy
             .Setup;
         return RateLimitPartition.GetSlidingWindowLimiter(
             SetupNamespace + ClientKey(context.Connection.RemoteIpAddress),
+            _ => settings.CreateLimiterOptions());
+    }
+
+    /// <summary>
+    /// The consumer-owned named policies partition exactly like the setup policy: by the trusted
+    /// client address with IPv4-mapped IPv6 restored and no-address requests in one fixed unknown
+    /// partition. The policy name namespaces the key, so different policies never share buckets.
+    /// </summary>
+    internal static RateLimitPartition<string> ConsumerPartition(string policyName, HttpContext context)
+    {
+        var settings = context.RequestServices
+            .GetRequiredService<RateLimitingSnapshotProvider>()
+            .GetRequiredSnapshot()
+            .Consumer
+            .Single(candidate => string.Equals(candidate.Name, policyName, StringComparison.Ordinal))
+            .Policy;
+        return RateLimitPartition.GetSlidingWindowLimiter(
+            ConsumerNamespace + policyName + ":" + ClientKey(context.Connection.RemoteIpAddress),
             _ => settings.CreateLimiterOptions());
     }
 

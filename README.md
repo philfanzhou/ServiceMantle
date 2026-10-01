@@ -610,6 +610,45 @@ not distributed rate limiting, edge/WAF protection, or a DDoS guarantee; aggrega
 instances is the sum of their independent limits. Endpoints must opt in by policy name, and the
 management policy must run after Authentication and before Authorization or endpoint execution.
 
+### Consumer-owned named policies
+
+`options.ConsumerPolicies` registers additional named policies that reuse the trusted-client
+partition, the bounded sliding-window validation, and the same safe rejection response as the
+library-owned policies. The partition rule is identical to `servicemantle.setup`: the normalized
+`RemoteIpAddress`, IPv4-mapped IPv6 restored to IPv4, one `unknown-client` partition when no address
+is available, and no request-header IP fallback. The policy name namespaces the partition key, so
+different policies never share buckets - including with the library-owned ones:
+
+```csharp
+.AddRateLimiting(options =>
+{
+    options.ConsumerPolicies["admin-login"] = new RateLimitPolicyOptions
+    {
+        PermitLimit = 10,
+        Window = TimeSpan.FromMinutes(1),
+        SegmentsPerWindow = 6,
+    };
+})
+
+app.MapPost("/auth/login", Login)
+    .RequireRateLimiting("admin-login");
+```
+
+| Bound | Value |
+| --- | --- |
+| Policy name | 1-128 characters over ASCII letters, digits, `.`, `-`, `_`; must not use the reserved `servicemantle.` prefix |
+| PermitLimit | 1 through 10,000; a new `RateLimitPolicyOptions` starts at zero on purpose, so the limit is always explicit |
+| Window | 10 seconds through 10 minutes |
+| SegmentsPerWindow | 1 through 60 and not more than the whole seconds in the window |
+| QueueLimit | fixed at 0 |
+
+A reserved or malformed name fails the `AddRateLimiting` call itself; out-of-range values and
+conflicting repeated registrations fail when the Host starts, while equivalent repeats are
+idempotent. Endpoints opt in by name; no global limiter is introduced. The same non-guarantees apply
+as to the library policies: not distributed limiting, aggregate throughput across instances is the
+sum of their limits, and partition correctness depends on the consumer's trusted-proxy
+configuration.
+
 ## Mandatory security response headers
 
 Setup and management API endpoints can opt into an immutable six-header baseline. Registration,

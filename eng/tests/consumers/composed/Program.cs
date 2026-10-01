@@ -74,7 +74,15 @@ try
         options.ForwardLimit = 1;
     });
     serviceMantle.AddSecurityResponseHeaders();
-    serviceMantle.AddRateLimiting(options => options.Management.PermitLimit = 100);
+    serviceMantle.AddRateLimiting(options =>
+    {
+        options.Management.PermitLimit = 100;
+        options.ConsumerPolicies["consumer-sample"] = new RateLimitPolicyOptions
+        {
+            PermitLimit = 20,
+            Window = TimeSpan.FromMinutes(1),
+        };
+    });
     serviceMantle.AddSensitiveHeaders(options => options.DeniedHeaderNames = ["x-consumer-secret"]);
     serviceMantle.AddOpenTelemetryInstrumentation();
     serviceMantle.AddOpenTelemetryOtlpExporter(options =>
