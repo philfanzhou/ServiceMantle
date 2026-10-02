@@ -13,7 +13,9 @@
    git push origin v0.1.0-rc.1
    ```
 
-3. 关注 **Package release** workflow。成功后，每个已注册的包及其符号包都以 tag 对应的版本
+3. 关注 **Package release** workflow。推送 NuGet.org 之前，发布 job 会在 `nuget.org`
+   environment 上暂停，等待必需 reviewer 的人工批准；批准前核对触发本次运行的 tag 与
+   `version` job 解析出的版本号。批准后，每个已注册的包及其符号包都以 tag 对应的版本
    出现在 NuGet.org 上，并且一个消费项目已经从 NuGet.org 还原回该版本。
 
 推送到 `main` 会运行相同的验证并产生相同的产物，但不发布任何东西。它们的版本号是
@@ -48,6 +50,7 @@ NuGet 会丢弃它，`v1.0.0+a` 和 `v1.0.0+b` 会碰撞同一个包槽位。
 | `verify`（完整 CI workflow） | 源码可构建且每个已注册的测试项目通过。 |
 | `bootstrap-credential-existence` | 仅 Windows 的 Bootstrap 存在性证据已就位。 |
 | `publish` | 每个包都已打包并通过 `verify`：精确的产物集合、ID、版本、license、repository commit、依赖集合、框架引用以及匹配的内部版本。 |
+| `nuget.org` environment 人工批准 | 版本号经必需 reviewer 确认后，发布 job 才开始向 NuGet.org 推送。 |
 
 其中任何一项失败或被取消，发布 job 都不会运行。该 job 没有任何 `always()` 或 `failure()`
 条件可以推翻这一点。
@@ -122,5 +125,6 @@ NuGet.org API key，因此本仓库不存储任何长寿命的发布秘密。
    - workflow file `release.yml`
    - environment `nuget.org`
 3. 一个仓库变量 `NUGET_USER`，存放该 NuGet.org 用户名。登录 action 会把它传给 token 交换。
-4. 一个名为 `nuget.org` 的 GitHub environment。如果发布前需要人工批准，给它添加必需的
-   reviewer。
+4. 一个名为 `nuget.org` 的 GitHub environment。它必须配置必需 reviewer：任何版本——rc
+   或正式版——推送 NuGet.org 前都会在此暂停，等待对 tag 与版本号的人工确认。这是刻意的
+   门禁，不要移除；单人维护仓库需保持「禁止自批准」关闭，否则触发发布的同一人无法放行。
