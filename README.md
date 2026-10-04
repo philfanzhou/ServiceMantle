@@ -3226,6 +3226,16 @@ query and release failures expose a fixed exception without driver inner diagnos
 cancellation preserves its token. Credential-free identities include a distinct MySql domain.
 Multi-instance still needs a separately registered real lock and does not probe identity.
 
+Register MariaDb deployment support with `services.AddServiceMantleMariaDbDeploymentCapability()`.
+The registration is idempotent and independent of bootstrap, preparation and migration locks.
+Single-instance identity accepts a single TCP server with an explicit database, then opens one
+owned unpooled, non-enlisted connection and reads `@@lower_case_table_names`, `DATABASE()` and
+`LOWER(DATABASE())`. Case rule 0 preserves the server's name; rules 1/2 use its lower-case name.
+Invalid or unsupported inputs return an empty identity without I/O. Connection, authentication,
+query and release failures expose a fixed exception without driver inner diagnostics; caller
+cancellation preserves its token. Credential-free identities include a distinct MariaDb domain.
+Multi-instance still needs a separately registered real lock and does not probe identity.
+
 Register PostgreSQL deployment support explicitly with
 `services.AddServiceMantlePostgreSqlDeploymentCapability()`. This registration is idempotent
 and does not register bootstrap, target preparation, or migration locking. Its single-instance
