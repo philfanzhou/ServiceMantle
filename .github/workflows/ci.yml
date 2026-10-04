@@ -309,6 +309,13 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/database-postgresql
 
+      - name: Verify MySql deployment package consumption
+        run: >-
+          bash eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/database-mysql
+
       # The source half of the provider-neutral assertion: the fixture itself must stay free of
       # adapter-named namespaces in every form - using directives, aliases, fully qualified
       # names, and comments - and must rely on the Web SDK implicit usings rather than <Using>

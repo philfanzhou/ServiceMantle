@@ -3246,6 +3246,16 @@ To override the SQL Server image:
 SERVICEMANTLE_SQLSERVER_IMAGE=mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04 RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Database.SqlServer.Tests -c Release
 ```
 
+Register MySql deployment support with `services.AddServiceMantleMySqlDeploymentCapability()`.
+The registration is idempotent and independent of bootstrap, preparation and migration locks.
+Single-instance identity accepts a single TCP server with an explicit database, then opens one
+owned unpooled, non-enlisted connection and reads `@@lower_case_table_names`, `DATABASE()` and
+`LOWER(DATABASE())`. Case rule 0 preserves the server's name; rules 1/2 use its lower-case name.
+Invalid or unsupported inputs return an empty identity without I/O. Connection, authentication,
+query and release failures expose a fixed exception without driver inner diagnostics; caller
+cancellation preserves its token. Credential-free identities include a distinct MySql domain.
+Multi-instance still needs a separately registered real lock and does not probe identity.
+
 Register MariaDb deployment support with `services.AddServiceMantleMariaDbDeploymentCapability()`.
 The registration is idempotent and independent of bootstrap, preparation and migration locks.
 Single-instance identity accepts a single TCP server with an explicit database, then opens one
