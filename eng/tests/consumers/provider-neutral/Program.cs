@@ -164,6 +164,16 @@ Console.WriteLine(
     $"Schema evidence compared through {typeof(SchemaEvidenceComparer).FullName}: " +
     $"{schemaDifferences.Count} difference, and the read result state is {targetMissing.State}.");
 
+var catalogIndex = new SchemaIndex([], false, "ix_expression", 1, ["id"]);
+var catalogForeignKey = new SchemaForeignKey(["id"], "parent", ["id"],
+    SchemaForeignKeyDeleteRule.Cascade, null, "fk_parent");
+var catalogTable = new SchemaTable("catalog", [new SchemaColumn("id", "integer", false)],
+    new SchemaPrimaryKey(["id"], "pk_catalog"), [catalogForeignKey], [catalogIndex]);
+var catalogDifferences = SchemaEvidenceComparer.Compare(new SchemaSnapshot([catalogTable]),
+    new ExpectedSchema([catalogTable]), new SchemaEvidenceComparisonOptions(true, true));
+if (catalogDifferences.Count != 0 || !catalogIndex.HasExpressionKeys)
+    throw new InvalidOperationException("Catalog evidence did not round-trip.");
+
 // The neutral log authorization contract from ServiceMantle.Logging: nothing in its declaration
 // or registration names a provider or a backend product.
 sealed class NeutralLogResolver : IRemoteLogAuthorizationResolver
