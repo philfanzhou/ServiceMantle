@@ -91,37 +91,63 @@ public sealed class StartupDatabaseGate
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        // 1. Deployment validation, from captured declarations only, before any I/O.
-        var validation = new DatabaseDeploymentValidator(deploymentCapabilities)
-            .Validate(options.Database.Provider, options.DeploymentMode);
-        if (!validation.IsSupported)
+        var preparation = await PrepareCoreAsync(options, cancellationToken).ConfigureAwait(false);
+        if (!preparation.Succeeded)
         {
-            return Complete(receipt, StartupDatabaseGateResult.Failure(
-                validation.MigrationErrorCode ?? WellKnownMigrationErrorCodes.LockNotSupported));
-        }
-
-        // 2. Optional target preparation.
-        if (options.EnableTargetPreparation)
-        {
-            var preparation = await PrepareTargetAsync(options, cancellationToken).ConfigureAwait(false);
-            if (preparation is not null)
-            {
-                return Complete(receipt, preparation);
-            }
+            return Complete(receipt, StartupDatabaseGateResult.Failure(preparation.ErrorCode!));
         }
 
         // 3. Migration orchestration.
         return await OrchestrateAsync(options, receipt, serviceId, cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask<StartupDatabaseGateResult?> PrepareTargetAsync(
+    /// <summary>Validates deployment and optionally prepares the target without migration or receipt changes.</summary>
+    /// <param name="options">Explicit immutable inputs. Disabled preparation still validates deployment.</param>
+    /// <param name="cancellationToken">The caller token, checked after provider completion and cleanup.</param>
+    /// <returns>A finite result; skipped success does not prove target connectivity.</returns>
+    /// <remarks>Creates no migration scope and resolves no executor. No state is cached between calls.
+    /// A later RunAsync must explicitly disable preparation to skip it; changes between calls and
+    /// already committed creation are not protected or rolled back.</remarks>
+    /// <exception cref="OperationCanceledException">The caller cancelled preparation.</exception>
+    public ValueTask<StartupDatabasePreparationResult> PrepareAsync(
+        StartupDatabaseGateOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return PrepareCoreAsync(options, cancellationToken);
+    }
+
+    private async ValueTask<StartupDatabasePreparationResult> PrepareCoreAsync(
+        StartupDatabaseGateOptions options,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var validation = new DatabaseDeploymentValidator(deploymentCapabilities)
+            .Validate(options.Database.Provider, options.DeploymentMode);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!validation.IsSupported)
+        {
+            return StartupDatabasePreparationResult.Failure(
+                validation.MigrationErrorCode ?? WellKnownMigrationErrorCodes.LockNotSupported);
+        }
+        if (!options.EnableTargetPreparation)
+        {
+            return StartupDatabasePreparationResult.Success(skipped: true);
+        }
+        var failure = await PrepareTargetAsync(options, cancellationToken).ConfigureAwait(false);
+        // One shared exit checkpoint covers every normal failure/success branch after cleanup.
+        cancellationToken.ThrowIfCancellationRequested();
+        return failure ?? StartupDatabasePreparationResult.Success(skipped: false);
+    }
+
+    private async ValueTask<StartupDatabasePreparationResult?> PrepareTargetAsync(
         StartupDatabaseGateOptions options,
         CancellationToken cancellationToken)
     {
         if (!preparationProviders.TryGetProvider(options.Database.Provider, out var provider) ||
             provider is null)
         {
-            return StartupDatabaseGateResult.Failure(
+            return StartupDatabasePreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.CapabilityNotSupported);
         }
 
@@ -129,7 +155,7 @@ public sealed class StartupDatabaseGate
             .ConfigureAwait(false);
         if (observation is null)
         {
-            return StartupDatabaseGateResult.Failure(
+            return StartupDatabasePreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed);
         }
 
@@ -144,7 +170,7 @@ public sealed class StartupDatabaseGate
             // An unreachable server, an unusable target, an authentication or permission failure
             // is refused; a target that is present but unusable is never adopted, repaired, or
             // replaced, and never interpreted as missing.
-            return StartupDatabaseGateResult.Failure(
+            return StartupDatabasePreparationResult.Failure(
                 observation.ErrorCode ??
                 WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed);
         }
@@ -162,13 +188,13 @@ public sealed class StartupDatabaseGate
             .ConfigureAwait(false);
         if (reObservation is null)
         {
-            return StartupDatabaseGateResult.Failure(
+            return StartupDatabasePreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.NotConnectableAfterPreparation);
         }
 
         return reObservation.Status == DatabaseTargetObservationStatus.TargetConnectable
             ? null
-            : StartupDatabaseGateResult.Failure(
+            : StartupDatabasePreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.NotConnectableAfterPreparation);
     }
 
@@ -179,7 +205,9 @@ public sealed class StartupDatabaseGate
     {
         try
         {
-            return await provider.ObserveAsync(target, cancellationToken).ConfigureAwait(false);
+            var observation = await provider.ObserveAsync(target, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return observation;
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -187,18 +215,19 @@ public sealed class StartupDatabaseGate
         }
         catch (Exception)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return null;
         }
     }
 
-    private static async ValueTask<StartupDatabaseGateResult?> PrepareMissingTargetAsync(
+    private static async ValueTask<StartupDatabasePreparationResult?> PrepareMissingTargetAsync(
         IDatabaseTargetPreparationProvider provider,
         StartupDatabaseGateOptions options,
         CancellationToken cancellationToken)
     {
         if (!options.AllowTargetCreation)
         {
-            return StartupDatabaseGateResult.Failure(
+            return StartupDatabasePreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.CreationNotAllowed);
         }
 
@@ -208,7 +237,7 @@ public sealed class StartupDatabaseGate
         {
             // A server target cannot be created without an administrative connection; a file
             // target needs none, so the request stays a file request there.
-            return StartupDatabaseGateResult.Failure(
+            return StartupDatabasePreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.InvalidTarget);
         }
 
@@ -230,14 +259,15 @@ public sealed class StartupDatabaseGate
         }
         catch (Exception)
         {
-            return StartupDatabaseGateResult.Failure(
+            cancellationToken.ThrowIfCancellationRequested();
+            return StartupDatabasePreparationResult.Failure(
                 WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         return preparation.Succeeded
             ? null
-            : StartupDatabaseGateResult.Failure(
+            : StartupDatabasePreparationResult.Failure(
                 preparation.ErrorCode ??
                 WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed);
     }

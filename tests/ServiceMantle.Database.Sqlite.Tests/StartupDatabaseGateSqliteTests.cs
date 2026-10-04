@@ -63,6 +63,20 @@ public sealed class StartupDatabaseGateSqliteTests : IDisposable
         Assert.True(File.Exists(databasePath));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Real_file_preparation_matches_full_and_standalone_then_skipped_run(bool standalone)
+    {
+        var harness = CreateHarness(DatabaseDeploymentMode.SingleInstance, enableTargetPreparation: true, allowTargetCreation: true);
+        var result = await harness.RunAsync(standalone);
+        Assert.True(result.Succeeded);
+        Assert.Equal(2, harness.Preparation.ObserveCount);
+        Assert.Equal(1, harness.Preparation.PrepareCount);
+        Assert.Equal(ServiceMigrationReadinessState.Succeeded, harness.Receipt.State);
+        Assert.True(File.Exists(databasePath));
+    }
+
     public void Dispose()
     {
         if (File.Exists(databasePath))
@@ -144,7 +158,7 @@ public sealed class StartupDatabaseGateSqliteTests : IDisposable
         public CountingSqlitePreparation Preparation { get; } =
             new(new SqliteDatabaseTargetPreparationProvider());
 
-        public ValueTask<StartupDatabaseGateResult> RunAsync()
+        public async ValueTask<StartupDatabaseGateResult> RunAsync(bool standalone = false)
         {
             var target = new BootstrapDatabaseConfiguration(
                 WellKnownDatabaseProviderIds.Sqlite,
@@ -167,8 +181,16 @@ public sealed class StartupDatabaseGateSqliteTests : IDisposable
                     [], DatabaseProviderIdResolver.Empty),
                 new ScopeFactoryStub(new ProviderStub(new CompatibleExecutor())));
 
-            return gate.RunAsync(
-                options, Receipt, ServiceId.Parse("gate-sqlite"), CancellationToken.None);
+            if (standalone)
+            {
+                var preparation = await gate.PrepareAsync(options, TestContext.Current.CancellationToken);
+                Assert.True(preparation.Succeeded);
+                Assert.False(preparation.Skipped);
+                Assert.Equal(ServiceMigrationReadinessState.NotStarted, Receipt.State);
+                options = new(options.Database, options.DeploymentMode, options.LockWaitBudget);
+            }
+            return await gate.RunAsync(
+                options, Receipt, ServiceId.Parse("gate-sqlite"), TestContext.Current.CancellationToken);
         }
     }
 }

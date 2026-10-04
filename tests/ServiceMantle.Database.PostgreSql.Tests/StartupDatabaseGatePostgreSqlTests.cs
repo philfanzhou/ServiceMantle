@@ -223,6 +223,22 @@ public sealed class StartupDatabaseGatePostgreSqlTests : IAsyncLifetime
         Assert.Equal(0, harness.ExecutorInspectCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Real_server_preparation_matches_full_and_standalone_then_skipped_run(bool standalone)
+    {
+        Assert.SkipUnless(CanRun, SkipReason);
+        var harness = CreateHarness($"gate_standalone_{UniqueSuffix()}", enableTargetPreparation: true,
+            allowTargetCreation: true, useDerivedMaintenanceConnection: true);
+        var result = await harness.RunAsync(standalone);
+        Assert.True(result.Succeeded);
+        Assert.Equal(2, harness.PreparationObserveCount);
+        Assert.Equal(1, harness.PreparationPrepareCount);
+        Assert.Equal(ServiceMigrationReadinessState.Succeeded, harness.Receipt.State);
+        Assert.True(await DatabaseExistsAsync(harness.DatabaseName));
+    }
+
     private sealed class NeverConnectablePreparation : IDatabaseTargetPreparationProvider
     {
         private int observeCalls;
@@ -340,9 +356,20 @@ public sealed class StartupDatabaseGatePostgreSqlTests : IAsyncLifetime
         public int PreparationPrepareCount => Preparation.PrepareCount;
         public int ExecutorInspectCount => Executor.InspectCount;
 
-        public ValueTask<StartupDatabaseGateResult> RunAsync() =>
-            Gate.RunAsync(
-                Options, Receipt, ServiceId.Parse("gate-postgres"), CancellationToken.None);
+        public async ValueTask<StartupDatabaseGateResult> RunAsync(bool standalone = false)
+        {
+            var options = Options;
+            if (standalone)
+            {
+                var prepared = await Gate.PrepareAsync(options, TestContext.Current.CancellationToken);
+                Assert.True(prepared.Succeeded);
+                Assert.False(prepared.Skipped);
+                Assert.Equal(ServiceMigrationReadinessState.NotStarted, Receipt.State);
+                Assert.Equal(0, ExecutorInspectCount);
+                options = new(options.Database, options.DeploymentMode, options.LockWaitBudget);
+            }
+            return await Gate.RunAsync(options, Receipt, ServiceId.Parse("gate-postgres"), TestContext.Current.CancellationToken);
+        }
     }
 
     private GateHarness CreateHarness(
