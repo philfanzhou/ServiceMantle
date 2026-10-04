@@ -2220,6 +2220,17 @@ limitation tracked separately by [#274](https://github.com/philfanzhou/ServiceMa
 real-cloud evidence required before support can be reconsidered. No real Autonomous support evidence
 is claimed, no wallet/cloud credential management is added, and Oracle Free CI is not Autonomous CI.
 
+### Oracle deployment capability
+
+`services.AddServiceMantleOracleDeploymentCapability()` explicitly and idempotently registers
+only the `SingleAndMultiInstance` deployment declaration. The built-in Oracle capability
+**does not provide a single-instance canonical schema identity**: it returns empty without
+parsing a connection string or performing I/O, and core orchestration deterministically returns
+`migration.lock_not_supported` without entering the executor. Use `MultiInstance` with a real
+Oracle lock provider. To support single-instance with your own canonical schema contract,
+register your custom `IDatabaseDeploymentCapabilityProvider` instead of the built-in one; do
+not register two declarations for Oracle. Bootstrap, target preparation and locks stay independent.
+
 ### Oracle DBMS_LOCK
 
 `ServiceMantle.Database.Oracle.Migration.OracleMigrationLockProvider` derives a stable name as

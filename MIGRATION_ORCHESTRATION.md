@@ -87,6 +87,18 @@ MultiInstance、enableTargetPreparation=true、显式创建许可、30秒lockWai
      - 关闭连接（会话锁由 PostgreSQL 释放）
      - 抑制任何错误，避免掩盖主异常
 
+### Oracle 显式部署声明与单实例拒绝边界
+
+`services.AddServiceMantleOracleDeploymentCapability()` 幂等注册独立声明，支持等级
+SingleAndMultiInstance仅用于部署验证，不代表内置single-instance身份已经可用。
+内置 `OracleDatabaseDeploymentCapabilityProvider.GetCanonicalTargetIdentityAsync` 校验参数与caller
+取消后确定返回空身份，不解析UserID/密码，不做I/O；核心SingleInstance编排返回
+`migration.lock_not_supported`且executor=0。不能用DataSource混合不同schema，也不会把UserID输出。
+选择MultiInstance并另外注册真实Oracle锁；确需SingleInstance时，以
+`services.AddSingleton<IDatabaseDeploymentCapabilityProvider, YourOracleCapability>()` 注册自己
+符合核心canonical schema契约的声明，替代内置类型，不要同时注册同provider两次。
+本项没有资源/写入/事务或回滚；旧Oracle bootstrap/preparation/lock行为保持。
+
 ### Oracle Provider（`ServiceMantle.Database.Oracle.Migration`）
 
 **`OracleMigrationLockProvider`** 实现 `IDatabaseMigrationLockProvider`：
