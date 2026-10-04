@@ -53,6 +53,14 @@
    - `ErrorCode` 属性用于结构化错误处理
    - 消息中不含连接字符串或秘密
 
+### PostgreSQL 启动门显式选项预设
+
+`PostgreSqlStartupDatabaseGateOptions.Create(database, allowTargetCreation)` 组合现有公开选项：
+MultiInstance、enableTargetPreparation=true、显式创建许可、30秒lockWaitBudget/preparationTimeout，
+以及既有 `PostgreSqlMaintenanceConnection.DeriveConnectionString`。目标对象原样保留，旧选项默认不变。
+非法provider/连接串用固定白名单code的ArgumentException且无parser inner；不读配置/环境、注册DI或做I/O。
+调用方仍独立注册capability/preparation/lock/executor并判断创建许可；本预设不证明可达/权限或锁可用。
+
 ### PostgreSQL Provider（`ServiceMantle.Database.PostgreSql.Migration`）
 
 **`PostgreSqlMigrationLockProvider`** 实现 `IDatabaseMigrationLockProvider`：
