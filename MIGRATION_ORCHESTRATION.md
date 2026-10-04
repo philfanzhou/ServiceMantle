@@ -504,6 +504,17 @@ stamp 的 id 与实际结构一致，也不回滚自身事务之外的副作用�
 - `README.md` - 新增迁移编排章节
 - `MIGRATION_ORCHESTRATION.md` - 本文档
 
+## PostgreSQL 显式部署声明
+
+`services.AddServiceMantlePostgreSqlDeploymentCapability()` 仅幂等注册部署 capability，
+不隐含 bootstrap、preparation 或 lock。`PostgreSqlDatabaseDeploymentCapabilityProvider`
+声明 `SingleAndMultiInstance`；单实例身份不打开连接，只从显式单 TCP Host/Port/Database
+按 UTF-8 长度分隔字段构造 SHA-256 摘要，domain 区分 provider。主机 trim/小写、端口默认5432；
+数据库名保留 Ordinal，用户名、密码、超时、池和属性拼写/顺序不参与身份。多主机、socket、
+空主机/库与非法连接串返回空身份，核心确定返回 `migration.lock_not_supported`，执行器不调用。
+入口与返回前检查 caller token，parser异常不向外暴露。DNS/代理/数据库名大小写别名不解析，
+调用方负责对齐规范名字；MultiInstance 仍单独注册真实锁，并不会调用该身份方法。
+
 ## 直接调用启动门的注册入口
 
 核心包的 `services.AddServiceMantleStartupDatabaseGateServices()` 注册门、receipt 和四个共享注册表，

@@ -3205,6 +3205,14 @@ To override the SQL Server image:
 SERVICEMANTLE_SQLSERVER_IMAGE=mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04 RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Database.SqlServer.Tests -c Release
 ```
 
+Register PostgreSQL deployment support explicitly with
+`services.AddServiceMantlePostgreSqlDeploymentCapability()`. This registration is idempotent
+and does not register bootstrap, target preparation, or migration locking. Its single-instance
+identity is a credential-free digest of a single normalized TCP host, port, and explicit database
+name. Multi-host, socket, missing host/database, and invalid inputs return an unsupported identity.
+Database names retain ordinal case; DNS/server aliases are the caller's responsibility.
+Multi-instance orchestration still requires a separately registered real lock provider.
+
 Schema evidence also supports optional catalog object names, total index key counts (including
 unparsed expression keys), and separate included columns. Existing constructors and the default
 `SchemaEvidenceComparer.Compare` preserve their original dimensions. Pass
