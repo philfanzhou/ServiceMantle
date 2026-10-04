@@ -55,6 +55,7 @@ public sealed class SqliteBootstrapDatabaseProvider : IBootstrapDatabaseProvider
         }
 
         var observation = await observer.ObserveAsync(database, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         return observation.Status switch
         {
             DatabaseTargetObservationStatus.TargetConnectable => BootstrapValidationResult.Success(),
