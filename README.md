@@ -1878,6 +1878,15 @@ not project either connection string.
 
 `DatabaseTargetPreparationResult.Outcome` reports `Created` or `AlreadyExists`. Implementations must never overwrite, drop, recreate, or otherwise destructively modify a target that already exists.
 
+### Default SQLite WAL header refusal
+
+Default observation reads at most 100 header bytes before opening SQLite. Clean WAL (2/* or */2)
+and unknown read/write format versions fail closed as the existing `TargetConflict`, including
+Prepare-existing and a competing publish winner; Bootstrap reports `database.connection_failed`.
+No journal/WAL/SHM is created. Empty databases and rollback 1/1 retain their behavior. Explicit
+checkpoint recovery keeps its dedicated immutable observation path; enabling it without sidecars
+does not make a clean WAL target connectable. External replacement remains outside the guarantee.
+
 ### SQLite Bootstrap validation
 
 `ServiceMantle.Database.Sqlite.SqliteBootstrapDatabaseProvider` declares canonical `SQLite`, a `File`

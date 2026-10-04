@@ -787,6 +787,174 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
         Assert.Empty(Directory.EnumerateFileSystemEntries(directory.Path));
     }
 
+    [Theory]
+    [InlineData("observe", false)]
+    [InlineData("prepare", false)]
+    [InlineData("bootstrap", false)]
+    [InlineData("winner", false)]
+    [InlineData("observe", true)]
+    public async Task Clean_real_WAL_is_refused_before_any_SQLite_open_without_changing_the_winner(string entry, bool enabled)
+    {
+        using var directory = new TemporaryDirectory();
+        var path = System.IO.Path.Combine(directory.Path, "clean.db");
+        byte[]? before = null;
+        if (entry != "winner") { await CreateCleanWalAsync(path); before = await File.ReadAllBytesAsync(path, Token); }
+        var opens = 0;
+        var database = new SqliteDatabaseAccess(connectionOpening: () => opens++);
+        var provider = new SqliteDatabaseTargetPreparationProvider(new SqliteTargetFileSystem(), database,
+            async (checkpoint, _) =>
+            {
+                if (entry == "winner" && checkpoint == SqlitePreparationCheckpoint.BeforePublish)
+                {
+                    await CreateCleanWalAsync(path);
+                    before = await File.ReadAllBytesAsync(path, Token);
+                }
+            }, new SqliteTargetRecoveryOptions(enabled));
+        if (entry is "prepare" or "winner")
+        {
+            var result = await provider.PrepareAsync(DatabaseTargetPreparationRequest.ForFile(TargetForPath(path)), DefaultTimeout, Token);
+            Assert.False(result.Succeeded);
+            Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, result.ErrorCode);
+        }
+        else if (entry == "bootstrap") await AssertBootstrapResultAsync(provider, TargetForPath(path), "database.connection_failed");
+        else
+        {
+            var result = await provider.ObserveAsync(TargetForPath(path), Token);
+            Assert.Equal(DatabaseTargetObservationStatus.TargetUnreachable, result.Status);
+            Assert.True(result.TargetExists);
+            Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, result.ErrorCode);
+        }
+        Assert.Equal(0, opens);
+        Assert.Equal(before, await File.ReadAllBytesAsync(path, Token));
+        Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+        Assert.Equal((byte)2, before![18]);
+        Assert.Equal((byte)2, before[19]);
+    }
+
+    [Theory]
+    [InlineData("rollback", null, 1)]
+    [InlineData("empty", null, 1)]
+    [InlineData("short", WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed, 0)]
+    [InlineData("magic", WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed, 0)]
+    [InlineData("read-version", WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, 0)]
+    [InlineData("write-version", WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, 0)]
+    public async Task Header_preflight_preserves_legacy_empty_and_rollback_and_rejects_unrecognized_files(string scenario, string? expected, int expectedOpens)
+    {
+        using var directory = new TemporaryDirectory();
+        var path = System.IO.Path.Combine(directory.Path, "header.db");
+        await CreateDatabaseAsync(path);
+        var bytes = await File.ReadAllBytesAsync(path, Token);
+        switch (scenario)
+        {
+            case "empty": bytes = []; break;
+            case "short": bytes = bytes[..30]; break;
+            case "magic": bytes[0] = 0; break;
+            case "read-version": bytes[18] = 3; break;
+            case "write-version": bytes[19] = 2; break;
+        }
+        await File.WriteAllBytesAsync(path, bytes, Token);
+        var opens = 0;
+        var provider = new SqliteDatabaseTargetPreparationProvider(new SqliteTargetFileSystem(),
+            new SqliteDatabaseAccess(connectionOpening: () => opens++));
+        var result = await provider.ObserveAsync(TargetForPath(path), Token);
+        Assert.Equal(expected, result.ErrorCode);
+        Assert.Equal(expectedOpens, opens);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(path, Token));
+        Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+    }
+
+    [Theory]
+    [InlineData("HeaderRead", false)]
+    [InlineData("HeaderRead", true)]
+    [InlineData("HeaderReleased", false)]
+    [InlineData("HeaderReleased", true)]
+    [InlineData("SchemaCompleted", false)]
+    [InlineData("SchemaCompleted", true)]
+    [InlineData("ResourcesReleased", false)]
+    [InlineData("ResourcesReleased", true)]
+    [InlineData("Completed", false)]
+    [InlineData("Completed", true)]
+    public async Task Inspection_normal_failure_and_release_completion_cancellation_is_safe(string point, bool fail)
+    {
+        using var directory = new TemporaryDirectory();
+        var path = System.IO.Path.Combine(directory.Path, "cancel.db");
+        await CreateDatabaseAsync(path);
+        using var caller = new CancellationTokenSource();
+        var database = new SqliteDatabaseAccess(inspectionCheckpoint: (checkpoint, _) =>
+        {
+            if (checkpoint.ToString() == point)
+            {
+                caller.Cancel();
+                if (fail) throw new IOException("Password=inspection-secret");
+            }
+            return ValueTask.CompletedTask;
+        });
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => database.InspectAsync(path, caller.Token).AsTask());
+        Assert.Equal(caller.Token, error.CancellationToken);
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain("inspection-secret", error.ToString());
+        Assert.DoesNotContain(path, error.ToString());
+        using var exclusive = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        Assert.Single(Directory.GetFileSystemEntries(directory.Path));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Prepare_observes_caller_cancellation_after_temp_cleanup_even_if_cleanup_throws(bool fail)
+    {
+        using var directory = new TemporaryDirectory();
+        var path = System.IO.Path.Combine(directory.Path, "winner.db");
+        using var caller = new CancellationTokenSource();
+        var fs = new CleanupFileSystem(() => { caller.Cancel(); if (fail) throw new IOException("cleanup-secret"); });
+        var provider = new SqliteDatabaseTargetPreparationProvider(fs, new SqliteDatabaseAccess(),
+            async (point, _) => { if (point == SqlitePreparationCheckpoint.BeforePublish) await CreateCleanWalAsync(path); });
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => provider.PrepareAsync(
+            DatabaseTargetPreparationRequest.ForFile(TargetForPath(path)), DefaultTimeout, caller.Token).AsTask());
+        Assert.Equal(caller.Token, error.CancellationToken);
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain("cleanup-secret", error.ToString());
+        Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+    }
+
+    [Fact]
+    public async Task Prepare_timeout_after_temp_cleanup_returns_timeout_without_removing_WAL_winner()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = System.IO.Path.Combine(directory.Path, "winner.db");
+        var fs = new CleanupFileSystem(() => Thread.Sleep(150));
+        var provider = new SqliteDatabaseTargetPreparationProvider(fs, new SqliteDatabaseAccess(),
+            async (point, _) => { if (point == SqlitePreparationCheckpoint.BeforePublish) await CreateCleanWalAsync(path); });
+        var result = await provider.PrepareAsync(DatabaseTargetPreparationRequest.ForFile(TargetForPath(path)), TimeSpan.FromMilliseconds(100), Token);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.Timeout, result.ErrorCode);
+        Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+    }
+
+    private sealed class CleanupFileSystem(Action afterCleanup) : ISqliteTargetFileSystem
+    {
+        private readonly SqliteTargetFileSystem inner = new();
+        public SqlitePathInspection Inspect(string path) => inner.Inspect(path);
+        public SqliteSidecarInspectionStatus InspectSidecars(string path) => inner.InspectSidecars(path);
+        public string CreateTemporaryFile(string path) => inner.CreateTemporaryFile(path);
+        public SqlitePublishStatus Publish(string temp, string path) => inner.Publish(temp, path);
+        public void DeleteTemporaryFile(string temp) { inner.DeleteTemporaryFile(temp); afterCleanup(); }
+    }
+
+    private static async Task CreateCleanWalAsync(string path)
+    {
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        { DataSource = path, Pooling = false }.ConnectionString))
+        {
+            await connection.OpenAsync(Token);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA user_version=42; CREATE TABLE retained (id INTEGER); INSERT INTO retained VALUES (42);";
+            await command.ExecuteNonQueryAsync(Token);
+        }
+        Assert.False(File.Exists(path + "-wal"));
+        Assert.False(File.Exists(path + "-shm"));
+        Assert.False(File.Exists(path + "-journal"));
+    }
+
     private static async Task AssertInvalidTargetAsync(
         SqliteDatabaseTargetPreparationProvider provider,
         string path)
