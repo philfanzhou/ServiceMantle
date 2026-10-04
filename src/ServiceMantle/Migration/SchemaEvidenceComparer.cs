@@ -26,6 +26,11 @@ namespace ServiceMantle.Migration;
 /// finally, extra tables in snapshot order.
 /// </para>
 /// <para>
+/// Optional catalog names and index key details are compared only through the explicit-options
+/// overload. That mode reserves same-name pairs before structural fallback. Unknown names do
+/// not equal known names, and unmatched named objects retain their absent-side payload.
+/// </para>
+/// <para>
 /// Non-guarantees: the list is complete only for the declared dimensions; it says nothing about
 /// structure the models do not carry, and nothing about which differences a consumer may
 /// safely accept or must reject.
@@ -41,8 +46,13 @@ public static class SchemaEvidenceComparer
     /// sides agree on all of them.</returns>
     public static IReadOnlyList<SchemaDifference> Compare(
         SchemaSnapshot snapshot,
-        ExpectedSchema expected)
+        ExpectedSchema expected) => Compare(snapshot, expected, new SchemaEvidenceComparisonOptions());
+
+    /// <summary>Compares all original dimensions plus explicitly enabled catalog evidence.</summary>
+    public static IReadOnlyList<SchemaDifference> Compare(
+        SchemaSnapshot snapshot, ExpectedSchema expected, SchemaEvidenceComparisonOptions options)
     {
+        ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(expected);
 
@@ -65,9 +75,9 @@ public static class SchemaEvidenceComparer
             }
 
             CompareColumns(expectedTable, actualTable, differences);
-            ComparePrimaryKeys(expectedTable, actualTable, differences);
-            CompareForeignKeys(expectedTable, actualTable, differences);
-            CompareIndexes(expectedTable, actualTable, differences);
+            ComparePrimaryKeys(expectedTable, actualTable, differences, options);
+            CompareForeignKeys(expectedTable, actualTable, differences, options);
+            CompareIndexes(expectedTable, actualTable, differences, options);
         }
 
         foreach (var actualTable in snapshot.Tables)
@@ -129,106 +139,78 @@ public static class SchemaEvidenceComparer
         }
     }
 
-    private static void ComparePrimaryKeys(
-        SchemaTable expectedTable,
-        SchemaTable actualTable,
-        List<SchemaDifference> differences)
+    private static void ComparePrimaryKeys(SchemaTable expectedTable, SchemaTable actualTable,
+        List<SchemaDifference> differences, SchemaEvidenceComparisonOptions options)
     {
-        var expectedPrimaryKey = expectedTable.PrimaryKey;
-        var actualPrimaryKey = actualTable.PrimaryKey;
-        if (expectedPrimaryKey is null && actualPrimaryKey is null)
-        {
-            return;
-        }
-
-        if (expectedPrimaryKey is not null && actualPrimaryKey is not null &&
-            expectedPrimaryKey.Columns.SequenceEqual(
-                actualPrimaryKey.Columns, StringComparer.Ordinal))
-        {
-            return;
-        }
-
-        differences.Add(SchemaDifference.PrimaryKeyMismatch(
-            expectedTable, expectedPrimaryKey, actualPrimaryKey));
+        var expected = expectedTable.PrimaryKey;
+        var actual = actualTable.PrimaryKey;
+        if (expected is null && actual is null) return;
+        if (expected is null || actual is null ||
+            !expected.Columns.SequenceEqual(actual.Columns, StringComparer.Ordinal))
+            differences.Add(SchemaDifference.PrimaryKeyMismatch(expectedTable, expected, actual));
+        if (options.CompareObjectNames && !string.Equals(expected?.Name, actual?.Name, StringComparison.Ordinal))
+            differences.Add(SchemaDifference.ObjectMismatch(SchemaDifferenceKind.NameMismatch,
+                expectedTable, expectedPrimaryKey: expected, actualPrimaryKey: actual));
     }
 
-    private static void CompareForeignKeys(
-        SchemaTable expectedTable,
-        SchemaTable actualTable,
-        List<SchemaDifference> differences)
+    private static void CompareForeignKeys(SchemaTable expectedTable, SchemaTable actualTable,
+        List<SchemaDifference> differences, SchemaEvidenceComparisonOptions options)
     {
-        var unmatchedActualForeignKeys = new List<SchemaForeignKey>(actualTable.ForeignKeys);
-        foreach (var expectedForeignKey in expectedTable.ForeignKeys)
+        foreach (var (expected, actual) in MatchObjects(expectedTable.ForeignKeys, actualTable.ForeignKeys,
+                     value => value.Name, KeysEqual, ShapesEqual, options.CompareObjectNames))
         {
-            // Exact identity first (shape plus delete rule), then shape only, so two same-shaped
-            // constraints on both sides pair up cleanly instead of cross-matching.
-            var matchedIndex = FindFirstIndex(
-                unmatchedActualForeignKeys,
-                actualForeignKey => KeysEqual(expectedForeignKey, actualForeignKey));
-            if (matchedIndex is int exactIndex)
-            {
-                unmatchedActualForeignKeys.RemoveAt(exactIndex);
-                continue;
-            }
-
-            var shapeMatchedIndex = FindFirstIndex(
-                unmatchedActualForeignKeys,
-                actualForeignKey => ShapesEqual(expectedForeignKey, actualForeignKey));
-            if (shapeMatchedIndex is int shapeIndex)
-            {
-                var actualForeignKey = unmatchedActualForeignKeys[shapeIndex];
-                unmatchedActualForeignKeys.RemoveAt(shapeIndex);
-                differences.Add(SchemaDifference.ForeignKeyMismatch(
-                    expectedTable, expectedForeignKey, actualForeignKey));
-                continue;
-            }
-
-            differences.Add(SchemaDifference.ForeignKeyMismatch(
-                expectedTable, expectedForeignKey, null));
-        }
-
-        foreach (var extraForeignKey in unmatchedActualForeignKeys)
-        {
-            differences.Add(SchemaDifference.ForeignKeyMismatch(expectedTable, null, extraForeignKey));
+            if (expected is null || actual is null || !KeysEqual(expected, actual))
+                differences.Add(SchemaDifference.ForeignKeyMismatch(expectedTable, expected, actual));
+            if (options.CompareObjectNames && !string.Equals(expected?.Name, actual?.Name, StringComparison.Ordinal))
+                differences.Add(SchemaDifference.ObjectMismatch(SchemaDifferenceKind.NameMismatch,
+                    expectedTable, expectedForeignKey: expected, actualForeignKey: actual));
         }
     }
 
-    private static void CompareIndexes(
-        SchemaTable expectedTable,
-        SchemaTable actualTable,
-        List<SchemaDifference> differences)
+    private static void CompareIndexes(SchemaTable expectedTable, SchemaTable actualTable,
+        List<SchemaDifference> differences, SchemaEvidenceComparisonOptions options)
     {
-        var unmatchedActualIndexes = new List<SchemaIndex>(actualTable.Indexes);
-        foreach (var expectedIndex in expectedTable.Indexes)
+        foreach (var (expected, actual) in MatchObjects(expectedTable.Indexes, actualTable.Indexes,
+                     value => value.Name, KeysEqual, ShapesEqual, options.CompareObjectNames))
         {
-            var matchedIndex = FindFirstIndex(
-                unmatchedActualIndexes,
-                actualIndex => KeysEqual(expectedIndex, actualIndex));
-            if (matchedIndex is int exactIndex)
-            {
-                unmatchedActualIndexes.RemoveAt(exactIndex);
-                continue;
-            }
-
-            var shapeMatchedIndex = FindFirstIndex(
-                unmatchedActualIndexes,
-                actualIndex => ShapesEqual(expectedIndex, actualIndex));
-            if (shapeMatchedIndex is int shapeIndex)
-            {
-                var actualIndex = unmatchedActualIndexes[shapeIndex];
-                unmatchedActualIndexes.RemoveAt(shapeIndex);
-                differences.Add(SchemaDifference.IndexMismatch(
-                    expectedTable, expectedIndex, actualIndex));
-                continue;
-            }
-
-            differences.Add(SchemaDifference.IndexMismatch(expectedTable, expectedIndex, null));
+            if (expected is null || actual is null || !KeysEqual(expected, actual))
+                differences.Add(SchemaDifference.IndexMismatch(expectedTable, expected, actual));
+            if (options.CompareObjectNames && !string.Equals(expected?.Name, actual?.Name, StringComparison.Ordinal))
+                differences.Add(SchemaDifference.ObjectMismatch(SchemaDifferenceKind.NameMismatch,
+                    expectedTable, expectedIndex: expected, actualIndex: actual));
+            if (!options.CompareIndexKeyDetails || expected is null || actual is null) continue;
+            if (expected.KeyColumnCount != actual.KeyColumnCount)
+                differences.Add(SchemaDifference.ObjectMismatch(SchemaDifferenceKind.IndexKeyColumnCountMismatch,
+                    expectedTable, expectedIndex: expected, actualIndex: actual));
+            if (!expected.IncludedColumns.SequenceEqual(actual.IncludedColumns, StringComparer.Ordinal))
+                differences.Add(SchemaDifference.ObjectMismatch(SchemaDifferenceKind.IndexIncludedColumnsMismatch,
+                    expectedTable, expectedIndex: expected, actualIndex: actual));
         }
+    }
 
-        foreach (var extraIndex in unmatchedActualIndexes)
-        {
-            differences.Add(SchemaDifference.IndexMismatch(expectedTable, null, extraIndex));
-        }
+    private static IEnumerable<(T? Expected, T? Actual)> MatchObjects<T>(
+        IReadOnlyList<T> expected, IReadOnlyList<T> actual, Func<T, string?> name,
+        Func<T, T, bool> exact, Func<T, T, bool> shape, bool compareNames) where T : class
+    {
+        var matches = new T?[expected.Count];
+        var remaining = new List<T>(actual);
+        // Reserve every same-name pair before structural fallback can consume one of them.
+        if (compareNames)
+            for (var i = 0; i < expected.Count; i++)
+                if (name(expected[i]) is string objectName)
+                {
+                    var match = FindFirstIndex(remaining, value => string.Equals(name(value), objectName, StringComparison.Ordinal));
+                    if (match is int index) { matches[i] = remaining[index]; remaining.RemoveAt(index); }
+                }
+        for (var i = 0; i < expected.Count; i++)
+            if (matches[i] is null)
+            {
+                var match = FindFirstIndex(remaining, value => exact(expected[i], value)) ??
+                    FindFirstIndex(remaining, value => shape(expected[i], value));
+                if (match is int index) { matches[i] = remaining[index]; remaining.RemoveAt(index); }
+            }
+        for (var i = 0; i < expected.Count; i++) yield return (expected[i], matches[i]);
+        foreach (var value in remaining) yield return (null, value);
     }
 
     private static bool KeysEqual(SchemaForeignKey expected, SchemaForeignKey actual) =>

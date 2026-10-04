@@ -66,4 +66,9 @@ var identity = await deployment.GetCanonicalTargetIdentityAsync(
 if (services.Count != 1 || identity.Length != 64 || deployment.Capability.Support != DatabaseDeploymentSupport.SingleAndMultiInstance)
     throw new InvalidOperationException("Explicit PostgreSQL deployment support did not resolve.");
 
+var preset = PostgreSqlStartupDatabaseGateOptions.Create(new BootstrapDatabaseConfiguration(
+    WellKnownDatabaseProviderIds.PostgreSql, "16", "Host=example;Database=app"), allowTargetCreation: false);
+if (!preset.EnableTargetPreparation || preset.AllowTargetCreation || preset.DeploymentMode != DatabaseDeploymentMode.MultiInstance)
+    throw new InvalidOperationException("The explicit PostgreSQL startup preset did not resolve.");
+
 static void ReportType(Type type) => Console.WriteLine($"Resolved {type.FullName}.");

@@ -82,6 +82,40 @@ public sealed class StartupDatabaseGateRegistrationTests
             service => service is StartupDatabaseGateHostedService);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Direct_builder_and_hosted_registration_share_singletons_in_both_orders(bool directFirst)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var builder = services.AddServiceMantle(Service, Instance);
+        if (directFirst) Assert.Same(builder, builder.AddServiceMantleStartupDatabaseGateServices());
+        builder.AddStartupDatabaseGate(Options());
+        builder.AddServiceMantleStartupDatabaseGateServices();
+        builder.AddStartupDatabaseGate(Options(DatabaseDeploymentMode.MultiInstance));
+        using var provider = services.BuildServiceProvider();
+        Assert.Single(provider.GetServices<StartupDatabaseGate>());
+        Assert.Single(provider.GetServices<StartupDatabaseReceipt>());
+        Assert.Single(provider.GetServices<DatabaseDeploymentCapabilityRegistry>());
+        Assert.Single(provider.GetServices<DatabaseTargetPreparationProviderRegistry>());
+        Assert.Single(provider.GetServices<DatabaseMigrationLockProviderRegistry>());
+        Assert.Single(provider.GetServices<BootstrapDatabaseProviderRegistry>());
+        Assert.Single(provider.GetServices<IHostedService>().OfType<StartupDatabaseGateHostedService>());
+        Assert.Equal(DatabaseDeploymentMode.SingleInstance, provider.GetRequiredService<StartupDatabaseGateOptions>().DeploymentMode);
+    }
+
+    [Fact]
+    public void Direct_builder_registration_has_no_hosted_entry_or_options()
+    {
+        var services = new ServiceCollection();
+        services.AddServiceMantle(Service, Instance).AddServiceMantleStartupDatabaseGateServices();
+        using var provider = services.BuildServiceProvider();
+        Assert.NotNull(provider.GetRequiredService<StartupDatabaseGate>());
+        Assert.Null(provider.GetService<StartupDatabaseGateOptions>());
+        Assert.DoesNotContain(provider.GetServices<IHostedService>(), service => service is StartupDatabaseGateHostedService);
+    }
+
     public static IEnumerable<object[]> SharedScenarios()
     {
         yield return new object[]

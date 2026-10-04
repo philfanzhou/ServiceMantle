@@ -219,13 +219,8 @@ public static class ServiceMantleServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(options);
 
-        builder.Services.TryAddSingleton<DatabaseDeploymentCapabilityRegistry>(serviceProvider =>
-            new DatabaseDeploymentCapabilityRegistry(
-                serviceProvider.GetServices<IDatabaseDeploymentCapabilityProvider>(),
-                serviceProvider.GetRequiredService<BootstrapDatabaseProviderRegistry>().ProviderIdResolver));
+        builder.Services.AddServiceMantleStartupDatabaseGateServices();
         builder.Services.TryAddSingleton(options);
-        builder.Services.TryAddSingleton<StartupDatabaseReceipt>();
-        builder.Services.TryAddSingleton<StartupDatabaseGate>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IHostedService,
             StartupDatabaseGateHostedService>());
