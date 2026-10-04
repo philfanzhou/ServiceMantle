@@ -40,7 +40,14 @@ public enum SchemaDifferenceKind
     /// <summary>
     /// A non-constraint index is absent on one side or its uniqueness differs.
     /// </summary>
-    IndexMismatch = 9
+    IndexMismatch = 9,
+
+    /// <summary>Matched object names differ, or a named object is absent.</summary>
+    NameMismatch = 10,
+    /// <summary>Matched indexes have different total key counts.</summary>
+    IndexKeyColumnCountMismatch = 11,
+    /// <summary>Matched indexes have different included columns.</summary>
+    IndexIncludedColumnsMismatch = 12
 }
 
 /// <summary>
@@ -224,4 +231,12 @@ public sealed class SchemaDifference
         SchemaIndex? actualIndex) =>
         new(SchemaDifferenceKind.IndexMismatch, table.Schema, table.Name, null,
             null, null, null, null, null, null, null, null, expectedIndex, actualIndex);
+
+    internal static SchemaDifference ObjectMismatch(SchemaDifferenceKind kind, SchemaTable table,
+        SchemaPrimaryKey? expectedPrimaryKey = null, SchemaPrimaryKey? actualPrimaryKey = null,
+        SchemaForeignKey? expectedForeignKey = null, SchemaForeignKey? actualForeignKey = null,
+        SchemaIndex? expectedIndex = null, SchemaIndex? actualIndex = null) =>
+        new(kind, table.Schema, table.Name, null, null, null, null, null,
+            expectedPrimaryKey, actualPrimaryKey, expectedForeignKey, actualForeignKey,
+            expectedIndex, actualIndex);
 }

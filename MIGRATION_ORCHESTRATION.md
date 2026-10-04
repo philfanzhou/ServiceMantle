@@ -53,6 +53,14 @@
    - `ErrorCode` 属性用于结构化错误处理
    - 消息中不含连接字符串或秘密
 
+### PostgreSQL 启动门显式选项预设
+
+`PostgreSqlStartupDatabaseGateOptions.Create(database, allowTargetCreation)` 组合现有公开选项：
+MultiInstance、enableTargetPreparation=true、显式创建许可、30秒lockWaitBudget/preparationTimeout，
+以及既有 `PostgreSqlMaintenanceConnection.DeriveConnectionString`。目标对象原样保留，旧选项默认不变。
+非法provider/连接串用固定白名单code的ArgumentException且无parser inner；不读配置/环境、注册DI或做I/O。
+调用方仍独立注册capability/preparation/lock/executor并判断创建许可；本预设不证明可达/权限或锁可用。
+
 ### PostgreSQL Provider（`ServiceMantle.Database.PostgreSql.Migration`）
 
 **`PostgreSqlMigrationLockProvider`** 实现 `IDatabaseMigrationLockProvider`：
@@ -514,3 +522,15 @@ stamp 的 id 与实际结构一致，也不回滚自身事务之外的副作用�
 - `Directory.Packages.props` - 加入 Testcontainers 包
 - `README.md` - 新增迁移编排章节
 - `MIGRATION_ORCHESTRATION.md` - 本文档
+
+## 直接调用启动门的注册入口
+
+核心包的 `services.AddServiceMantleStartupDatabaseGateServices()` 注册门、receipt 和四个共享注册表，
+不要求 options、身份或配置，不注册宿主服务、不解析执行器，也不进行 I/O。Web 的
+`ServiceMantleBuilder` 提供同名转发入口；它和 `AddStartupDatabaseGate(options)` 任意顺序调用均幂等，
+只有后者注册宿主入口，重复 options 仍保留首次值。配置在容器构建后确定的调用方可解析门与 receipt，
+再显式调用 `RunAsync(options, receipt, serviceId, token)` 并处理结果。
+
+门不直接释放执行器。外部构造后用 `AddSingleton(instance)` 注册的执行器仍由调用方释放；交给 DI
+创建并拥有的 scoped 执行器仍随门创建的 scope 释放。注册成功不代表运行成功，缺失执行器、阶段失败
+和取消沿用既有语义。直接入口不会自动运行，调用方负责触发时机。
