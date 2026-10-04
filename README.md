@@ -1459,6 +1459,24 @@ cleanup, Windows ACL equivalence, rotation and string erasure are outside this c
 the key alongside encrypted data; never log Resolve's explicit secret return. A lost key cannot
 be regenerated to decrypt an existing key ring.
 
+`RootKeySource` composes a captured injected string with an explicit fallback path. Construction
+does no I/O or path validation. Every `Resolve()` returns a non-whitespace injected value unchanged,
+including leading/trailing whitespace, without touching the file source. Otherwise it lazily
+publishes one `RootKeyFileSource` reference and calls its `Resolve()` every time, without caching
+file keys or failures. File safety and failure diagnostics follow the file contract above.
+
+```csharp
+var source = new RootKeySource(capturedInjectedRoot, explicitPrivateRootPath);
+builder.PersistKeysToServiceMantleEfCore<MyDbContext>(serviceId, _ => source.Resolve());
+```
+
+Registration, building the provider and obtaining key management options do not resolve the root.
+An empty key-ring read may invoke no resolver; storing a key or reading a nonempty ring invokes it.
+The selector does not validate injected entropy, provenance or UTF-16; the existing protector's
+validation still applies. It has no public secret/path properties and returns fixed metadata from
+`ToString()`. There is no automatic configuration, environment lookup, DI registration or rotation.
+Keep the same root when reverting to the original delegate, and retain any generated file.
+
 ## One-time Setup Code
 
 A pending installation carries a one-time Setup Code as attached state on the same

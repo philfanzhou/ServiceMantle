@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using ServiceMantle.Configuration;
 using ServiceMantle.Persistence.Relational.DataProtection;
 using Xunit;
 
@@ -340,12 +341,144 @@ public sealed class DataProtectionKeyRepositoryTests
         Assert.All(reloadedKeys, key => Assert.True(key.IsRevoked));
     }
 
-    private static ServiceProvider BuildServiceProvider(Harness harness)
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Root_source_is_lazy_and_real_key_ring_reloads_old_payload_with_a_new_source(bool injected)
+    {
+        await using var harness = await Harness.CreateAsync();
+        using var file = new RootFileFixture();
+        var path = injected ? "unrelated-secret\0.key" : file.Path;
+        var source = new RootKeySource(injected ? RootKey : null, path);
+        var calls = 0;
+        string payload;
+        string resolvedRoot;
+        using (var provider = BuildServiceProvider(harness, () => { calls++; return source.Resolve(); }))
+        {
+            var repository = Assert.IsType<EfCoreDataProtectionKeyRepository<KeyDbContext>>(
+                provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository);
+            Assert.Equal(0, calls);
+            Assert.Empty(repository.GetAllElements());
+            Assert.Equal(0, calls);
+            Assert.False(Directory.Exists(file.Parent));
+            var protector = provider.GetRequiredService<IDataProtectionProvider>().CreateProtector("root-source-integration");
+            payload = protector.Protect("application-payload");
+            Assert.Equal("application-payload", protector.Unprotect(payload));
+            Assert.True(calls > 0);
+            resolvedRoot = source.Resolve();
+            Assert.Equal(!injected, File.Exists(file.Path));
+        }
+
+        await using (var context = harness.Factory().CreateDbContext())
+        {
+            var row = await context.Set<DataProtectionKeyEntity>().SingleAsync(TestContext.Current.CancellationToken);
+            Assert.StartsWith("sm:v1:", row.EncryptedXml, StringComparison.Ordinal);
+            Assert.DoesNotContain(RootKey, row.EncryptedXml, StringComparison.Ordinal);
+            Assert.DoesNotContain("<key", row.EncryptedXml, StringComparison.Ordinal);
+        }
+        var reloaded = new RootKeySource(injected ? RootKey : null, path);
+        using (var provider = BuildServiceProvider(harness, reloaded.Resolve))
+            Assert.Equal("application-payload", provider.GetRequiredService<IDataProtectionProvider>()
+                .CreateProtector("root-source-integration").Unprotect(payload));
+        // Roll back to the original delegate with the same root; retain any generated file.
+        using (var provider = BuildServiceProvider(harness, () => resolvedRoot))
+            Assert.Equal("application-payload", provider.GetRequiredService<IDataProtectionProvider>()
+                .CreateProtector("root-source-integration").Unprotect(payload));
+        if (!injected)
+        {
+            Assert.Equal(resolvedRoot, File.ReadAllText(file.Path));
+            Assert.Single(Directory.GetFiles(file.Parent));
+            using var exclusive = new FileStream(file.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        }
+    }
+
+    [Theory]
+    [InlineData("missing-path")]
+    [InlineData("invalid-path")]
+    [InlineData("damaged-file")]
+    [InlineData("malformed-injection")]
+    public async Task Root_source_failures_keep_repository_classification_and_write_nothing(string kind)
+    {
+        await using var harness = await Harness.CreateAsync();
+        using var file = new RootFileFixture();
+        const string sentinel = "damaged-file-secret";
+        if (kind == "damaged-file") file.Write(sentinel);
+        var source = new RootKeySource(kind == "malformed-injection" ? "injected-secret\ud800" : null,
+            kind == "missing-path" ? null : kind == "invalid-path" ? "path-secret\0.key" : file.Path);
+        using var provider = BuildServiceProvider(harness, source.Resolve);
+        var repository = Assert.IsType<EfCoreDataProtectionKeyRepository<KeyDbContext>>(
+            provider.GetRequiredService<IOptions<KeyManagementOptions>>().Value.XmlRepository);
+        Assert.Empty(repository.GetAllElements());
+        var keyId = Guid.NewGuid();
+        var error = Assert.Throws<DataProtectionKeyRepositoryException>(() =>
+            repository.StoreElement(CreateKey(keyId, "xml-secret"), $"key-{keyId:D}"));
+        Assert.Equal(WellKnownDataProtectionKeyRepositoryErrorCodes.RootKeyUnavailable, error.ErrorCode);
+        AssertSafeSourceError(error, file.Path, sentinel);
+        await using var context = harness.Factory().CreateDbContext();
+        Assert.Equal(0, await context.Set<DataProtectionKeyEntity>().CountAsync(TestContext.Current.CancellationToken));
+        if (kind == "damaged-file")
+        {
+            Assert.Equal(sentinel, File.ReadAllText(file.Path));
+            Assert.Single(Directory.GetFiles(file.Parent));
+            using var exclusive = new FileStream(file.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        }
+        else Assert.False(Directory.Exists(file.Parent));
+    }
+
+    [Fact]
+    public async Task Root_source_rechecks_file_on_nonempty_repository_read_and_preserves_existing_rows()
+    {
+        await using var harness = await Harness.CreateAsync();
+        using var file = new RootFileFixture();
+        var source = new RootKeySource(null, file.Path);
+        var repository = harness.Repository(Service, source.Resolve);
+        var keyId = Guid.NewGuid();
+        repository.StoreElement(CreateKey(keyId, "xml-secret"), $"key-{keyId:D}");
+        Assert.Single(repository.GetAllElements());
+        const string sentinel = "damaged-file-secret";
+        file.Write(sentinel);
+        var error = Assert.Throws<DataProtectionKeyRepositoryException>(() => repository.GetAllElements());
+        Assert.Equal(WellKnownDataProtectionKeyRepositoryErrorCodes.DecryptionFailed, error.ErrorCode);
+        AssertSafeSourceError(error, file.Path, sentinel);
+        await using var context = harness.Factory().CreateDbContext();
+        Assert.Equal(1, await context.Set<DataProtectionKeyEntity>().CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(sentinel, File.ReadAllText(file.Path));
+        Assert.Single(Directory.GetFiles(file.Parent));
+        using var exclusive = new FileStream(file.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+
+    private static void AssertSafeSourceError(Exception error, string path, string sentinel)
+    {
+        Assert.Null(error.InnerException);
+        foreach (var material in new[] { path, sentinel, "path-secret", "injected-secret", "xml-secret", RootKey })
+            Assert.DoesNotContain(material, error.ToString(), StringComparison.Ordinal);
+    }
+
+    private sealed class RootFileFixture : IDisposable
+    {
+        private readonly string root = Canonical(Directory.CreateTempSubdirectory("key-ring-source-tests-").FullName);
+        internal string Parent => System.IO.Path.Combine(root, "private");
+        internal string Path => System.IO.Path.Combine(Parent, "root.key");
+        internal void Write(string text)
+        {
+            if (OperatingSystem.IsWindows()) Directory.CreateDirectory(Parent);
+            else Directory.CreateDirectory(Parent, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            File.WriteAllText(Path, text);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(Path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        public void Dispose() => Directory.Delete(root, true);
+        private static string Canonical(string path) => OperatingSystem.IsMacOS() && path.StartsWith("/var/", StringComparison.Ordinal)
+            ? "/private" + path : path;
+    }
+
+    private static ServiceProvider BuildServiceProvider(Harness harness) => BuildServiceProvider(harness, () => RootKey);
+
+    private static ServiceProvider BuildServiceProvider(Harness harness, Func<string> rootKeyResolver)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IDbContextFactory<KeyDbContext>>(harness.Factory());
         services.AddDataProtection()
-            .PersistKeysToServiceMantleEfCore<KeyDbContext>(Service, _ => RootKey);
+            .PersistKeysToServiceMantleEfCore<KeyDbContext>(Service, _ => rootKeyResolver());
         return services.BuildServiceProvider();
     }
 

@@ -20,6 +20,7 @@ using ServiceMantle.Migration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ServiceMantle;
+using ServiceMantle.Configuration;
 using ServiceMantle.Health;
 using ServiceMantle.Persistence.Relational;
 using ServiceMantle.Persistence.Relational.DataProtection;
@@ -28,13 +29,16 @@ using ServiceMantle.Persistence.Relational.Migration;
 using ServiceMantle.Persistence.Relational.Stores;
 
 var services = new ServiceCollection();
+var rootSource = new RootKeySource("persistence-consumer-root-key-placeholder", "unrelated\0.key");
+if (rootSource.Resolve() != "persistence-consumer-root-key-placeholder")
+    throw new InvalidOperationException("The injected root source did not preserve the captured value.");
 
 // The Data Protection entry keeps its product-identifying method name and its EfCore* class name;
 // it is reached through the capability sub-namespace next to the framework Data Protection using.
 services.AddDataProtection()
     .PersistKeysToServiceMantleEfCore<ConsumerDbContext>(
         ServiceId.Parse("persistence-consumer"),
-        _ => "persistence-consumer-root-key-placeholder");
+        _ => rootSource.Resolve());
 
 // The entry registers the repository as its own singleton and wires it into the framework's
 // KeyManagementOptions through an options configuration; both shapes are asserted as descriptors,
