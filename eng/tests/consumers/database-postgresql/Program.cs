@@ -9,6 +9,8 @@
 // invoked as a pure derivation, or named by type only. The package's Testcontainers tests own
 // the behavioral surface; this file owns the compile surface against the packed artifact.
 using Npgsql;
+using Microsoft.Extensions.DependencyInjection;
+using ServiceMantle.Bootstrap;
 using ServiceMantle.Health;
 using ServiceMantle.Migration;
 using ServiceMantle.Database.PostgreSql;
@@ -55,5 +57,13 @@ Console.WriteLine(
     "PostgreSQL provider consumer verified the capability namespaces: bootstrap validation, " +
     "target preparation, the health probe classifier, the migration lock provider, and the " +
     $"schema evidence reader {typeof(PostgreSqlSchemaEvidenceReader).FullName}.");
+
+var services = new ServiceCollection();
+services.AddServiceMantlePostgreSqlDeploymentCapability().AddServiceMantlePostgreSqlDeploymentCapability();
+var deployment = new PostgreSqlDatabaseDeploymentCapabilityProvider();
+var identity = await deployment.GetCanonicalTargetIdentityAsync(
+    new BootstrapDatabaseConfiguration(WellKnownDatabaseProviderIds.PostgreSql, "16", "Host=example;Database=app"), default);
+if (services.Count != 1 || identity.Length != 64 || deployment.Capability.Support != DatabaseDeploymentSupport.SingleAndMultiInstance)
+    throw new InvalidOperationException("Explicit PostgreSQL deployment support did not resolve.");
 
 static void ReportType(Type type) => Console.WriteLine($"Resolved {type.FullName}.");
