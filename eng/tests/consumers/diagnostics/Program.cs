@@ -26,7 +26,7 @@ try
         policy => policy.RequireAssertion(_ => true)));
 
     builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
-        new FixedHeaderResolver("trace-auth", "consumer-trace-secret"));
+        new FixedRemoteTelemetryAuthenticationResolver("trace-auth", "Authorization", "consumer-placeholder"));
 
     var serviceMantle = builder.Services.AddServiceMantle(
         ServiceId.Parse("package-consumer"),
