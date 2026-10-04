@@ -9,6 +9,7 @@
 // invoked as a pure derivation, or named by type only. The package's Testcontainers tests own
 // the behavioral surface; this file owns the compile surface against the packed artifact.
 using Npgsql;
+using ServiceMantle.Bootstrap;
 using ServiceMantle.Health;
 using ServiceMantle.Migration;
 using ServiceMantle.Database.PostgreSql;
@@ -55,5 +56,10 @@ Console.WriteLine(
     "PostgreSQL provider consumer verified the capability namespaces: bootstrap validation, " +
     "target preparation, the health probe classifier, the migration lock provider, and the " +
     $"schema evidence reader {typeof(PostgreSqlSchemaEvidenceReader).FullName}.");
+
+var preset = PostgreSqlStartupDatabaseGateOptions.Create(new BootstrapDatabaseConfiguration(
+    WellKnownDatabaseProviderIds.PostgreSql, "16", "Host=example;Database=app"), allowTargetCreation: false);
+if (!preset.EnableTargetPreparation || preset.AllowTargetCreation || preset.DeploymentMode != DatabaseDeploymentMode.MultiInstance)
+    throw new InvalidOperationException("The explicit PostgreSQL startup preset did not resolve.");
 
 static void ReportType(Type type) => Console.WriteLine($"Resolved {type.FullName}.");

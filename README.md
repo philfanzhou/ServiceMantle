@@ -1996,6 +1996,15 @@ Unknown proxy routing, session migration, transparent failover, and read-only ro
 outside the supported boundary. See the [server identity contract](docs/contracts/server-database-identity.md)
 for evidence, privileges, cleanup, error mappings, and precise non-guarantees.
 
+### PostgreSQL startup gate option preset
+
+`PostgreSqlStartupDatabaseGateOptions.Create(database, allowTargetCreation)` is a pure factory:
+MultiInstance, preparation enabled, explicit creation permission, thirty-second lock/preparation
+budgets and the existing derived maintenance connection. It preserves the supplied target and
+does not read configuration, register services or perform I/O. Invalid provider/connection syntax
+throws fixed coded `ArgumentException` without parser inner diagnostics. Register capability,
+preparation, locks and an executor separately; the preset does not prove reachability or privileges.
+
 ### PostgreSQL target preparation
 
 `ServiceMantle.Database.PostgreSql.PostgreSqlDatabaseTargetPreparationProvider` observes a PostgreSQL target with a single connection attempt. A structured "database does not exist" response (SQLSTATE `3D000`) proves the server is reachable and the target is missing. Authentication errors can occur before PostgreSQL checks the database name, so those observations report a reachable server with `TargetExists == null`; target-level `CONNECT` denial (`42501`) reports a known existing but unreachable target. `PrepareAsync` uses the caller-supplied administrative connection string with pooling forcibly disabled and outside any ambient transaction to check `pg_database` and, only when the target is absent, issue `CREATE DATABASE ... OWNER ...`; the owner is the target connection string's PostgreSQL username and must already exist as a role.
@@ -2471,6 +2480,16 @@ first. Caller cancellation ends the gate with `OperationCanceledException` witho
   that run the sequence before the host is built or inside their own outer initialization lock.
   Both entries share identical ordering, failure, and error-code semantics.
 - No `IConfiguration` is read: the caller reads its own configuration and supplies the values.
+
+For caller-driven execution, register `services.AddServiceMantleStartupDatabaseGateServices()`
+from the core package, or call the same method on `ServiceMantleBuilder`. This registers the gate,
+receipt and shared registries without options, service identity, configuration or a hosted entry.
+It performs no I/O and does not resolve an executor. Supply your providers and executor, build the
+container, obtain the gate and receipt, then call `gate.RunAsync(options, receipt, serviceId, token)`
+when your configuration is ready. The direct and hosted registration methods can be called in
+either order; their services remain singletons and the first hosted options registration is retained.
+The gate never directly disposes an executor: externally constructed singleton instances stay
+caller-owned, while DI-owned scoped executors are released with the gate's scope as before.
 
 Not guaranteed: nothing spans the preparation and the migration transactionally — a created target
 or a committed migration is not undone by a later failure or cancellation; multi-instance target
@@ -3198,3 +3217,10 @@ To override the SQL Server image:
 ```bash
 SERVICEMANTLE_SQLSERVER_IMAGE=mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04 RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Database.SqlServer.Tests -c Release
 ```
+
+Schema evidence also supports optional catalog object names, total index key counts (including
+unparsed expression keys), and separate included columns. Existing constructors and the default
+`SchemaEvidenceComparer.Compare` preserve their original dimensions. Pass
+`new SchemaEvidenceComparisonOptions(compareObjectNames: true, compareIndexKeyDetails: true)`
+to compare the additional evidence explicitly; expression text, order and predicates remain
+outside the contract. Provider readers and EF derivation retain their current evidence output.
