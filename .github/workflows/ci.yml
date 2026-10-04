@@ -296,10 +296,17 @@ jobs:
       # OpenTelemetry, Persistence.EntityFrameworkCore) against reintroduction and also guards
       # the Web capability prefix, which belongs to the ASP.NET Core adapter package alone
       # (#585); the neutral consumer references no adapter package that owns it.
+      - name: Verify core-only startup gate package consumption
+        run: >-
+          bash eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/startup-gate-core
+
       - name: Verify MariaDb deployment package consumption
         run: >-
           bash eng/tests/package-consumption.sh
-          --version 0.0.0-ci.${{ github.run_number }}
+          --version $PACKAGE_VERSION
           --packages artifacts/packages
           --consumer eng/tests/consumers/database-mariadb
 

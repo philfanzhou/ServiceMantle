@@ -1,6 +1,6 @@
 # 核心包 schema 证据模型与差异比对器
 
-ADR 0008（[0008-schema-evidence-components.md](decisions/0008-schema-evidence-components.md)）拆分出的
+ADR 0008（[0008-schema-evidence-components.md](../decisions/0008-schema-evidence-components.md)）拆分出的
 核心包构件（#608）：中立、不可变的快照/期望/差异模型，纯函数比对器，以及区分「目标数据库不存在」
 与「读取失败」的读取结果类型。落在 `ServiceMantle.Migration` 能力域，核心包不新增依赖。
 
@@ -23,7 +23,7 @@ ADR 0008（[0008-schema-evidence-components.md](decisions/0008-schema-evidence-c
   identity kind 逐维各出一条差异。
 - 主键：存在性与有序列清单。
 - 外键：按形状（列、引用 schema/表/列）关联；缺失/多余/删除规则不同各出一条差异。
-- 非约束索引：按列清单关联；缺失/多余/唯一性不同各出一条差异。索引名不在模型内。
+- 非约束索引：按列清单关联；缺失/多余/唯一性不同各出一条差异。旧入口不比较对象名称与索引键细节。
 
 维度之外的任何结构（CHECK 约束、默认值、触发器、视图、权限、分区、注释等）不产生差异；
 `SchemaColumn.HasStoredDefault` 是回填判断证据字段，本身永不产生差异（默认值的具体内容也不进模型）。
@@ -90,3 +90,25 @@ PostgreSQL 证据读取器已由 `ServiceMantle.Database.PostgreSql` 的
   作用域）。
 - `eng/tests/consumers/database-postgresql`：点名 PostgreSQL provider 包全部公开类型（含 #606 的
   probe failure classifier 与本读取器），接入 CI 的消费验证步骤。
+
+## 可选名称与索引键证据（#638）
+
+主键、外键和索引新增重载接收可空 `Name`，名称遵守同一标识符验证规则；旧构造签名保持，
+其名称为 null。表对有名 FK/index 按名称去重，对无名对象按原形状身份去重；两个身份域分开。
+同形状不同名称可共存，同名称不同形状仍拒绝。全部证据列表复制且不可变。
+
+索引的新重载接收 `KeyColumnCount` 与 `IncludedColumns`：`Columns` 仅含普通键列，
+键数量必须为正且不小于普通键列数，较大时 `HasExpressionKeys` 为 true；全表达式索引可使用
+空 `Columns`。旧构造仍拒绝空列。INCLUDE 与键分开，不输出表达式正文、位置、排序或谓词。
+
+`Compare(snapshot, expected, new SchemaEvidenceComparisonOptions(compareObjectNames: true,
+compareIndexKeyDetails: true))` 显式启用新维度，默认两项关闭，旧维度始终启用。
+严格匹配先保留所有同名对象，再按旧维度完整相等优先、相同形状次之的一对一回退，均保持输入顺序；
+不会把多个同形状对象折成一个。未匹配对象仍分别报告缺失/多余，开启名称维度时其已知名称也报告
+`NameMismatch`（缺失侧载荷为 null）。匹配对象名称不同（含有名/无名）报告 `NameMismatch`；
+键数量与有序 INCLUDE 列差异分别报告 `IndexKeyColumnCountMismatch` / `IndexIncludedColumnsMismatch`，
+每项携带完整双侧对象。名称和结构同时不同不会遮蔽结构事实，原枚举 0–9 数值不变。
+
+这些证据不证明表达式语义相等，不解释名称大小写别名；调用方显式选择维度并决定处置。
+核心模型没有数据库 I/O，取消、清理与事务不适用。PG reader 与 EF 推导的扩展由 #639/#640 交付，
+当前旧入口继续输出其既有证据；本项不改变读取器或接管决策。

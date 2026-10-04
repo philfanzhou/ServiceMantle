@@ -111,10 +111,17 @@ public sealed class SchemaColumn
 /// <summary>One immutable primary key of the neutral schema evidence model.</summary>
 public sealed class SchemaPrimaryKey
 {
+    /// <summary>Gets the catalog object name, or null when unknown.</summary>
+    public string? Name { get; }
     /// <summary>Initializes the immutable primary key.</summary>
     /// <param name="columns">The key columns, in constraint order.</param>
-    public SchemaPrimaryKey(IReadOnlyList<string> columns)
+    public SchemaPrimaryKey(IReadOnlyList<string> columns) : this(columns, null) { }
+
+    /// <summary>Initializes a key with an optional catalog object name.</summary>
+    public SchemaPrimaryKey(IReadOnlyList<string> columns, string? name)
     {
+        SchemaEvidenceModel.ValidateOptionalIdentifier(name, nameof(name));
+        Name = name;
         SchemaEvidenceModel.ValidateColumnList(columns, nameof(columns));
 
         Columns = [.. columns];
@@ -133,6 +140,8 @@ public sealed class SchemaPrimaryKey
 /// </summary>
 public sealed class SchemaForeignKey
 {
+    /// <summary>Gets the catalog object name, or null when unknown.</summary>
+    public string? Name { get; }
     /// <summary>Initializes the immutable foreign key.</summary>
     /// <param name="columns">The constrained columns, in constraint order.</param>
     /// <param name="referencedTable">The referenced table name.</param>
@@ -147,7 +156,19 @@ public sealed class SchemaForeignKey
         IReadOnlyList<string> referencedColumns,
         SchemaForeignKeyDeleteRule deleteRule,
         string? referencedSchema = null)
+        : this(columns, referencedTable, referencedColumns, deleteRule, referencedSchema, null) { }
+
+    /// <summary>Initializes a foreign key with an optional catalog object name.</summary>
+    public SchemaForeignKey(
+        IReadOnlyList<string> columns,
+        string referencedTable,
+        IReadOnlyList<string> referencedColumns,
+        SchemaForeignKeyDeleteRule deleteRule,
+        string? referencedSchema,
+        string? name)
     {
+        SchemaEvidenceModel.ValidateOptionalIdentifier(name, nameof(name));
+        Name = name;
         SchemaEvidenceModel.ValidateColumnList(columns, nameof(columns));
         SchemaEvidenceModel.ValidateColumnList(referencedColumns, nameof(referencedColumns));
         SchemaEvidenceModel.ValidateIdentifier(referencedTable, nameof(referencedTable));
@@ -186,32 +207,55 @@ public sealed class SchemaForeignKey
         $"({string.Join(", ", ReferencedColumns)}) on delete {DeleteRule}";
 }
 
-/// <summary>
-/// One immutable non-constraint index of the neutral schema evidence model: covered columns
-/// and uniqueness. Index names are deliberately not part of the model.
-/// </summary>
+/// <summary>One immutable non-constraint index with optional catalog evidence.</summary>
 public sealed class SchemaIndex
 {
-    /// <summary>Initializes the immutable index.</summary>
-    /// <param name="columns">The indexed columns, in index order.</param>
-    /// <param name="isUnique">Whether the index enforces uniqueness.</param>
+    /// <summary>Initializes an index using the original plain-column contract.</summary>
     public SchemaIndex(IReadOnlyList<string> columns, bool isUnique)
-    {
-        SchemaEvidenceModel.ValidateColumnList(columns, nameof(columns));
+        : this(columns, isUnique, null, ValidateLegacyColumns(columns), []) { }
 
-        Columns = [.. columns];
+    /// <summary>Initializes an index. Columns contain plain keys only; unparsed expression
+    /// keys are represented by a larger key count. Expression text and order are not modeled.</summary>
+    public SchemaIndex(IReadOnlyList<string> columns, bool isUnique, string? name,
+        int keyColumnCount, IReadOnlyList<string> includedColumns)
+    {
+        ArgumentNullException.ThrowIfNull(columns);
+        ArgumentNullException.ThrowIfNull(includedColumns);
+        SchemaEvidenceModel.ValidateOptionalIdentifier(name, nameof(name));
+        foreach (var column in columns)
+            SchemaEvidenceModel.ValidateIdentifier(column, nameof(columns));
+        foreach (var column in includedColumns)
+            SchemaEvidenceModel.ValidateIdentifier(column, nameof(includedColumns));
+        if (keyColumnCount <= 0 || keyColumnCount < columns.Count)
+            throw new ArgumentOutOfRangeException(nameof(keyColumnCount));
+        Columns = Array.AsReadOnly(columns.ToArray());
+        IncludedColumns = Array.AsReadOnly(includedColumns.ToArray());
+        Name = name;
         IsUnique = isUnique;
+        KeyColumnCount = keyColumnCount;
     }
 
-    /// <summary>Gets the indexed columns, in index order.</summary>
+    /// <summary>Gets the catalog object name, or null when unknown.</summary>
+    public string? Name { get; }
+    /// <summary>Gets the plain key columns, in key order.</summary>
     public IReadOnlyList<string> Columns { get; }
-
+    /// <summary>Gets the total count of plain and unparsed expression keys.</summary>
+    public int KeyColumnCount { get; }
+    /// <summary>Gets whether at least one key is an unparsed expression.</summary>
+    public bool HasExpressionKeys => KeyColumnCount > Columns.Count;
+    /// <summary>Gets the included columns, separately from keys.</summary>
+    public IReadOnlyList<string> IncludedColumns { get; }
     /// <summary>Gets whether the index enforces uniqueness.</summary>
     public bool IsUnique { get; }
-
     /// <summary>Returns the identifier-only index summary.</summary>
     public override string ToString() =>
         $"{(IsUnique ? "unique " : string.Empty)}index ({string.Join(", ", Columns)})";
+
+    private static int ValidateLegacyColumns(IReadOnlyList<string> columns)
+    {
+        SchemaEvidenceModel.ValidateColumnList(columns, nameof(columns));
+        return columns.Count;
+    }
 }
 
 /// <summary>
@@ -300,7 +344,7 @@ public sealed class SchemaTable
         foreach (var foreignKey in foreignKeys)
         {
             ArgumentNullException.ThrowIfNull(foreignKey, nameof(foreignKeys));
-            if (!identities.Add(ForeignKeyIdentity(foreignKey)))
+            if (!identities.Add(foreignKey.Name is null ? "shape\u0000" + ForeignKeyIdentity(foreignKey) : "name\u0000" + foreignKey.Name))
             {
                 throw new ArgumentException(
                     "The table contains a duplicate foreign key identity.",
@@ -320,7 +364,7 @@ public sealed class SchemaTable
         foreach (var index in indexes)
         {
             ArgumentNullException.ThrowIfNull(index, nameof(indexes));
-            if (!identities.Add(IndexIdentity(index)))
+            if (!identities.Add(index.Name is null ? "shape\u0000" + IndexIdentity(index) : "name\u0000" + index.Name))
             {
                 throw new ArgumentException(
                     "The table contains a duplicate index identity.",
