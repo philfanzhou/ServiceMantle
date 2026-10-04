@@ -2220,6 +2220,17 @@ limitation tracked separately by [#274](https://github.com/philfanzhou/ServiceMa
 real-cloud evidence required before support can be reconsidered. No real Autonomous support evidence
 is claimed, no wallet/cloud credential management is added, and Oracle Free CI is not Autonomous CI.
 
+### Oracle deployment capability
+
+`services.AddServiceMantleOracleDeploymentCapability()` explicitly and idempotently registers
+only the `SingleAndMultiInstance` deployment declaration. The built-in Oracle capability
+**does not provide a single-instance canonical schema identity**: it returns empty without
+parsing a connection string or performing I/O, and core orchestration deterministically returns
+`migration.lock_not_supported` without entering the executor. Use `MultiInstance` with a real
+Oracle lock provider. To support single-instance with your own canonical schema contract,
+register your custom `IDatabaseDeploymentCapabilityProvider` instead of the built-in one; do
+not register two declarations for Oracle. Bootstrap, target preparation and locks stay independent.
+
 ### Oracle DBMS_LOCK
 
 `ServiceMantle.Database.Oracle.Migration.OracleMigrationLockProvider` derives a stable name as
@@ -3214,6 +3225,14 @@ Invalid or unsupported inputs return an empty identity without I/O. Connection, 
 query and release failures expose a fixed exception without driver inner diagnostics; caller
 cancellation preserves its token. Credential-free identities include a distinct MySql domain.
 Multi-instance still needs a separately registered real lock and does not probe identity.
+
+Register PostgreSQL deployment support explicitly with
+`services.AddServiceMantlePostgreSqlDeploymentCapability()`. This registration is idempotent
+and does not register bootstrap, target preparation, or migration locking. Its single-instance
+identity is a credential-free digest of a single normalized TCP host, port, and explicit database
+name. Multi-host, socket, missing host/database, and invalid inputs return an unsupported identity.
+Database names retain ordinal case; DNS/server aliases are the caller's responsibility.
+Multi-instance orchestration still requires a separately registered real lock provider.
 
 Schema evidence also supports optional catalog object names, total index key counts (including
 unparsed expression keys), and separate included columns. Existing constructors and the default

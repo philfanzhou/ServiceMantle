@@ -303,6 +303,13 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/startup-gate-core
 
+      - name: Verify Oracle deployment package consumption
+        run: >-
+          bash eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/database-oracle
+
       - name: Verify MySql deployment package consumption
         run: >-
           bash eng/tests/package-consumption.sh
