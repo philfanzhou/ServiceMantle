@@ -1996,6 +1996,15 @@ Unknown proxy routing, session migration, transparent failover, and read-only ro
 outside the supported boundary. See the [server identity contract](docs/contracts/server-database-identity.md)
 for evidence, privileges, cleanup, error mappings, and precise non-guarantees.
 
+### PostgreSQL startup gate option preset
+
+`PostgreSqlStartupDatabaseGateOptions.Create(database, allowTargetCreation)` is a pure factory:
+MultiInstance, preparation enabled, explicit creation permission, thirty-second lock/preparation
+budgets and the existing derived maintenance connection. It preserves the supplied target and
+does not read configuration, register services or perform I/O. Invalid provider/connection syntax
+throws fixed coded `ArgumentException` without parser inner diagnostics. Register capability,
+preparation, locks and an executor separately; the preset does not prove reachability or privileges.
+
 ### PostgreSQL target preparation
 
 `ServiceMantle.Database.PostgreSql.PostgreSqlDatabaseTargetPreparationProvider` observes a PostgreSQL target with a single connection attempt. A structured "database does not exist" response (SQLSTATE `3D000`) proves the server is reachable and the target is missing. Authentication errors can occur before PostgreSQL checks the database name, so those observations report a reachable server with `TargetExists == null`; target-level `CONNECT` denial (`42501`) reports a known existing but unreachable target. `PrepareAsync` uses the caller-supplied administrative connection string with pooling forcibly disabled and outside any ambient transaction to check `pg_database` and, only when the target is absent, issue `CREATE DATABASE ... OWNER ...`; the owner is the target connection string's PostgreSQL username and must already exist as a role.
