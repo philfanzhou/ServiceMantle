@@ -3,6 +3,9 @@
 // on its own, so it deliberately enables no optional capability.
 using ServiceMantle;
 using ServiceMantle.Web;
+using ServiceMantle.Migration;
+using ServiceMantle.Bootstrap;
+using ServiceMantle.Web.Hosting;
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-consumer");
 try
@@ -13,7 +16,18 @@ try
         ServiceId.Parse("package-consumer"),
         InstanceId.Parse("package-consumer-01"),
         bootstrapFilePath: Path.Combine(bootstrapDirectory.FullName, "bootstrap.json"),
-        serviceVersion: "1.0.0");
+        serviceVersion: "1.0.0").AddServiceMantleStartupDatabaseGateServices();
+    // Verify composition on a separate collection; the live sample host remains opt-in.
+    var composedBuilder = WebApplication.CreateSlimBuilder(args);
+    var composed = composedBuilder.Services;
+    composed.AddServiceMantle(ServiceId.Parse("gate-consumer"), InstanceId.Parse("gate-consumer-01"))
+        .AddStartupDatabaseGate(new StartupDatabaseGateOptions(new BootstrapDatabaseConfiguration("CustomDb", "1", "opaque"), DatabaseDeploymentMode.SingleInstance, TimeSpan.FromSeconds(5)))
+        .AddServiceMantleStartupDatabaseGateServices();
+    await using var composedApplication = composedBuilder.Build();
+    var composedProvider = composedApplication.Services;
+    if (composedProvider.GetServices<StartupDatabaseGate>().Count() != 1 ||
+        composedProvider.GetServices<IHostedService>().OfType<StartupDatabaseGateHostedService>().Count() != 1)
+        throw new InvalidOperationException("Unexpected composed startup registration.");
 
     var application = builder.Build();
     await application.StartAsync();
