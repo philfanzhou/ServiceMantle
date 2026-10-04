@@ -15,6 +15,8 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
+using ServiceMantle.Migration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ServiceMantle;
@@ -85,6 +87,12 @@ ReportType(typeof(ServiceDatabaseProbeFailureKind));
 // compile-only consumer; compiling their names next to Microsoft.EntityFrameworkCore is the
 // assertion (a name shared with a framework type in scope fails this build instead of a
 // consumer's).
+var derivationOptions = new EfCoreExpectedSchemaDerivationOptions(true, _ => null);
+if (!derivationOptions.IncludeExtendedObjectEvidence)
+    throw new InvalidOperationException("Extended derivation options did not resolve.");
+Func<IModel, ExpectedSchema> legacyDerive = EfCoreExpectedSchemaDerivation.Derive;
+Func<IModel, ExpectedSchema> extendedDerive = model => EfCoreExpectedSchemaDerivation.Derive(model, derivationOptions);
+ReportType(typeof(EfCoreExpectedSchemaDerivationOptions));
 ReportType(typeof(EfCoreExpectedSchemaDerivation));
 ReportType(typeof(EfCoreMigrationBaselineWriter));
 ReportType(typeof(ModelBuilderExtensions));

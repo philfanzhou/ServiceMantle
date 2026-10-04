@@ -2435,6 +2435,14 @@ transaction. Verified on SQL Server (integration tests) and SQLite; the statemen
 providers whose dialect accepts a parameterized `SELECT` without `FROM` (PostgreSQL, SQL Server,
 SQLite — MySQL/Oracle-family dialects are not covered).
 
+### Explicit EF relational object evidence
+
+`EfCoreExpectedSchemaDerivation.Derive(model, new EfCoreExpectedSchemaDerivationOptions(true, resolver))`
+reports relational PK/FK/index names and plain key counts. The optional resolver receives an
+`ITableIndex` and returns store column names for INCLUDE; null means no INCLUDE. Invalid results
+or resolver exceptions fail without echo or inner exceptions. Legacy derivation does not invoke
+this resolver. The caller owns its purity and maps provider properties to store columns.
+
 ### PostgreSQL schema evidence reader
 
 The PostgreSQL provider package (`ServiceMantle.Database.PostgreSql.Migration`, per
