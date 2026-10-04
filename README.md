@@ -1932,6 +1932,36 @@ returned by the filesystem; a missing leaf keeps the caller's spelling. If regul
 count cannot be established reliably, the provider fails with
 `database_target_preparation.capability_not_supported`.
 
+#### Optional WAL crash recovery
+
+The no-argument provider retains its read-only, fail-closed behavior. To opt into one checkpoint
+attempt, construct `new SqliteDatabaseTargetPreparationProvider(new SqliteTargetRecoveryOptions(
+enabled: true, recoveryTimeout: TimeSpan.FromSeconds(30)))` and register that same instance as
+`IDatabaseTargetPreparationProvider` and, for single-instance gate orchestration,
+`IDatabaseDeploymentCapabilityProvider`. Recovery is provider-specific; the core gate options
+remain unchanged. Bootstrap validation continues to use its default read-only observer.
+
+Recovery requires a stable ordinary existing target with safe ordinary WAL/SHM sidecars, a single
+hard link per file and read/write access. Journals, directories, symbolic/reparse links, hard links,
+case aliases, missing targets and uncertain metadata never qualify. The provider reconstructs an
+owned `ReadWrite` (never create), private-cache, non-pooled connection, runs only
+`PRAGMA wal_checkpoint(TRUNCATE)` once, reads its busy result and releases all resources. It never
+explicitly deletes, renames or replaces target/sidecar files, and issues no application writes.
+SQLite's own replay/checkpoint/close may change files. Busy checkpoints fail closed; recovery is
+not a repair tool for corrupt databases or concurrent writers.
+
+After successful checkpoint and release, the provider revalidates the target and requires all
+sidecars to be absent, then performs one immutable read-only schema observation so WAL mode does
+not recreate sidecars. The URI is constructed internally from the validated path; caller URI/VFS
+settings remain rejected. This short observation relies on stable local files, since SQLite
+immutable reads disable locking/change detection. External replacement, subsequent writes by
+other processes, network filesystems and process termination remain outside the guarantee.
+
+Caller cancellation retains its token and sanitized diagnostics, including cancellation during
+resource release. An internal budget expiry returns `database_target_preparation.timeout`; SQLite
+busy waits have whole-second granularity. A committed checkpoint is not rolled back by later
+failure or cancellation. Disable recovery by returning to the default provider registration.
+
 #### Resolving a relative data source against an explicit base directory
 
 Before handing a connection string to EF Core or to ServiceMantle, consumers that keep a relative

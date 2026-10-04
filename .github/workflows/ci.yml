@@ -70,6 +70,20 @@ jobs:
           --diagnostic-synchronous-write
           --diagnostic-output-directory artifacts/test-diagnostics/bootstrap-windows
 
+      - name: Verify SQLite file preparation and WAL recovery
+        run: >-
+          dotnet test
+          --project tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj
+          --configuration Release
+          --timeout 5m
+          --filter-class "ServiceMantle.Database.Sqlite.Tests.SqliteDatabaseTargetPreparationProviderTests"
+          --filter-class "ServiceMantle.Database.Sqlite.Tests.SqliteWalRecoveryTests"
+          --minimum-expected-tests 1
+          --zero-tests-policy strict
+          --diagnostic
+          --diagnostic-synchronous-write
+          --diagnostic-output-directory artifacts/test-diagnostics/sqlite-windows
+
       - name: Upload test diagnostics
         if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -296,6 +310,13 @@ jobs:
       # OpenTelemetry, Persistence.EntityFrameworkCore) against reintroduction and also guards
       # the Web capability prefix, which belongs to the ASP.NET Core adapter package alone
       # (#585); the neutral consumer references no adapter package that owns it.
+      - name: Verify SQLite recovery package consumption
+        run: >-
+          bash eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/database-sqlite
+
       - name: Enforce provider-neutral consumer source boundary
         run: |
           set -euo pipefail

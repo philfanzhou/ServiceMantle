@@ -14,7 +14,9 @@ namespace ServiceMantle.Database.Sqlite;
 /// Only fully qualified local ordinary-file paths are supported. Symbolic links, reparse points,
 /// hard links, custom VFS implementations, shared cache, read-only/memory modes, URI filenames,
 /// and encrypted connection strings fail closed. Observation uses a reconstructed read-only,
-/// private-cache, non-pooled connection and never probes writability. Preparation initializes a
+/// private-cache, non-pooled connection and never probes writability by default. Explicit opt-in WAL
+/// recovery validates ordinary target/sidecar metadata and read-write access, then performs one
+/// checkpoint using an owned read-write, private-cache, non-pooled connection. Preparation initializes a
 /// unique same-directory temporary database and publishes it atomically without replacement.
 /// External replacement, network filesystem semantics, process termination, and cross-process
 /// exclusion are outside this contract.
@@ -26,23 +28,32 @@ public sealed class SqliteDatabaseTargetPreparationProvider :
     private static readonly TimeSpan MaximumPreparationTimeout =
         TimeSpan.FromMilliseconds(uint.MaxValue - 1D);
 
+    private readonly SqliteTargetRecoveryOptions recoveryOptions;
     private readonly ISqliteTargetFileSystem fileSystem;
     private readonly ISqliteDatabaseAccess databaseAccess;
     private readonly Func<SqlitePreparationCheckpoint, CancellationToken, ValueTask>? checkpoint;
 
     /// <summary>Initializes the SQLite provider with local filesystem and database access.</summary>
     public SqliteDatabaseTargetPreparationProvider()
-        : this(new SqliteTargetFileSystem(), new SqliteDatabaseAccess())
+        : this(new SqliteTargetRecoveryOptions())
+    {
+    }
+
+    /// <summary>Initializes the provider with explicit WAL recovery settings. Default observation remains read-only.</summary>
+    public SqliteDatabaseTargetPreparationProvider(SqliteTargetRecoveryOptions recoveryOptions)
+        : this(new SqliteTargetFileSystem(), new SqliteDatabaseAccess(), recoveryOptions: recoveryOptions ?? throw new ArgumentNullException(nameof(recoveryOptions)))
     {
     }
 
     internal SqliteDatabaseTargetPreparationProvider(
         ISqliteTargetFileSystem fileSystem,
         ISqliteDatabaseAccess databaseAccess,
-        Func<SqlitePreparationCheckpoint, CancellationToken, ValueTask>? checkpoint = null)
+        Func<SqlitePreparationCheckpoint, CancellationToken, ValueTask>? checkpoint = null,
+        SqliteTargetRecoveryOptions? recoveryOptions = null)
     {
         ArgumentNullException.ThrowIfNull(fileSystem);
         ArgumentNullException.ThrowIfNull(databaseAccess);
+        this.recoveryOptions = recoveryOptions ?? new SqliteTargetRecoveryOptions();
         this.fileSystem = fileSystem;
         this.databaseAccess = databaseAccess;
         this.checkpoint = checkpoint;
@@ -61,7 +72,8 @@ public sealed class SqliteDatabaseTargetPreparationProvider :
 
     /// <summary>
     /// Observes a validated local SQLite file without creating the file, parent directories,
-    /// temporary probes, journals, WAL files, or shared-memory files.
+    /// temporary probes, journals, WAL files, or shared-memory files by default. Explicit recovery
+    /// may checkpoint safe existing WAL targets once; its committed changes are not rolled back.
     /// </summary>
     public async ValueTask<DatabaseTargetObservation> ObserveAsync(
         BootstrapDatabaseConfiguration target,
@@ -114,7 +126,7 @@ public sealed class SqliteDatabaseTargetPreparationProvider :
 
     /// <summary>
     /// Explicitly creates a missing SQLite file from a same-directory temporary database and
-    /// publishes it without replacement. Existing targets are opened read-only and returned as
+    /// publishes it without replacement. Existing targets use the same observation and optional recovery policy and are returned as
     /// <see cref="DatabaseTargetPreparationOutcome.AlreadyExists"/> only when connectable.
     /// </summary>
     public async ValueTask<DatabaseTargetPreparationResult> PrepareAsync(
@@ -318,6 +330,12 @@ public sealed class SqliteDatabaseTargetPreparationProvider :
     {
         var sidecars = fileSystem.InspectSidecars(canonicalPath);
         cancellationToken.ThrowIfCancellationRequested();
+        if (sidecars == SqliteSidecarInspectionStatus.Present && recoveryOptions.Enabled)
+        {
+            var eligible = fileSystem.CanRecoverSidecars(canonicalPath);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (eligible) return await RecoverAndObserveAsync(canonicalPath, cancellationToken).ConfigureAwait(false);
+        }
         if (sidecars != SqliteSidecarInspectionStatus.None)
         {
             return sidecars switch
@@ -350,6 +368,43 @@ public sealed class SqliteDatabaseTargetPreparationProvider :
                 WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed,
                 targetExists: true)
         };
+    }
+
+    private async ValueTask<DatabaseTargetObservation> RecoverAndObserveAsync(string canonicalPath, CancellationToken cancellationToken)
+    {
+        using var timeout = new CancellationTokenSource(recoveryOptions.RecoveryTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
+        {
+            var status = await databaseAccess.RecoverAsync(canonicalPath, recoveryOptions.RecoveryTimeout, linked.Token).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            linked.Token.ThrowIfCancellationRequested();
+            if (status == SqliteRecoveryStatus.Failed)
+                return DatabaseTargetObservation.TargetUnreachable(WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed, targetExists: true);
+            var inspected = fileSystem.Inspect(canonicalPath);
+            linked.Token.ThrowIfCancellationRequested();
+            if (inspected.Status != SqlitePathInspectionStatus.ExistingFile || inspected.CanonicalPath != canonicalPath ||
+                fileSystem.InspectSidecars(canonicalPath) != SqliteSidecarInspectionStatus.None || status == SqliteRecoveryStatus.Busy)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                return DatabaseTargetObservation.TargetUnreachable(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, targetExists: true);
+            }
+            // No recursion: after release, only one read-only observation is permitted.
+            var observed = await databaseAccess.InspectRecoveredAsync(canonicalPath, linked.Token).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            linked.Token.ThrowIfCancellationRequested();
+            return observed == SqliteDatabaseInspectionStatus.Connectable
+                ? DatabaseTargetObservation.TargetConnectable()
+                : DatabaseTargetObservation.TargetUnreachable(observed == SqliteDatabaseInspectionStatus.PermissionDenied
+                    ? WellKnownDatabaseTargetPreparationErrorCodes.PermissionDenied
+                    : observed == SqliteDatabaseInspectionStatus.TargetConflict ? WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict
+                    : WellKnownDatabaseTargetPreparationErrorCodes.ConnectionFailed, targetExists: true);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested) { throw SafeCancellation(cancellationToken); }
+        catch (Exception) when (timeout.IsCancellationRequested)
+        { return DatabaseTargetObservation.TargetUnreachable(WellKnownDatabaseTargetPreparationErrorCodes.Timeout, targetExists: true); }
+        catch (Exception)
+        { return DatabaseTargetObservation.TargetUnreachable(WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed, targetExists: true); }
     }
 
     private async ValueTask<DatabaseTargetPreparationResult> ExistingPreparationResultAsync(
@@ -436,19 +491,32 @@ internal interface ISqliteDatabaseAccess
         string canonicalPath,
         CancellationToken cancellationToken);
 
+    ValueTask<SqliteDatabaseInspectionStatus> InspectRecoveredAsync(string canonicalPath, CancellationToken cancellationToken) =>
+        InspectAsync(canonicalPath, cancellationToken);
     ValueTask InitializeAsync(string temporaryPath, CancellationToken cancellationToken);
+    ValueTask<SqliteRecoveryStatus> RecoverAsync(string canonicalPath, TimeSpan timeout, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(SqliteRecoveryStatus.Failed);
 }
 
-internal sealed class SqliteDatabaseAccess : ISqliteDatabaseAccess
+internal enum SqliteRecoveryStatus { Recovered, Busy, Failed }
+internal enum SqliteRecoveryCheckpoint { Opened, Checkpointed, ResourcesReleased }
+
+internal sealed class SqliteDatabaseAccess(
+    Func<SqliteRecoveryCheckpoint, System.Data.ConnectionState, CancellationToken, ValueTask>? checkpoint = null) : ISqliteDatabaseAccess
 {
-    public async ValueTask<SqliteDatabaseInspectionStatus> InspectAsync(
-        string canonicalPath,
-        CancellationToken cancellationToken)
+    public ValueTask<SqliteDatabaseInspectionStatus> InspectAsync(string canonicalPath, CancellationToken cancellationToken) =>
+        InspectConnectionAsync(canonicalPath, immutable: false, cancellationToken);
+
+    public ValueTask<SqliteDatabaseInspectionStatus> InspectRecoveredAsync(string canonicalPath, CancellationToken cancellationToken) =>
+        InspectConnectionAsync(canonicalPath, immutable: true, cancellationToken);
+
+    private static async ValueTask<SqliteDatabaseInspectionStatus> InspectConnectionAsync(
+        string canonicalPath, bool immutable, CancellationToken cancellationToken)
     {
         try
         {
             await using var connection = new SqliteConnection(BuildConnectionString(
-                canonicalPath,
+                immutable ? new Uri(canonicalPath).AbsoluteUri + "?immutable=1" : canonicalPath,
                 SqliteOpenMode.ReadOnly));
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             await using var command = connection.CreateCommand();
@@ -492,12 +560,51 @@ internal sealed class SqliteDatabaseAccess : ISqliteDatabaseAccess
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static string BuildConnectionString(string path, SqliteOpenMode mode) =>
+    public async ValueTask<SqliteRecoveryStatus> RecoverAsync(string canonicalPath, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = SqliteRecoveryStatus.Failed;
+        var seconds = Math.Max(1, (int)Math.Ceiling(timeout.TotalSeconds));
+        var connection = new SqliteConnection(BuildConnectionString(canonicalPath, SqliteOpenMode.ReadWrite, seconds));
+        try
+        {
+            await using (connection)
+            {
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (checkpoint is not null) await checkpoint(SqliteRecoveryCheckpoint.Opened, connection.State, cancellationToken).ConfigureAwait(false);
+                await using var command = connection.CreateCommand();
+                command.CommandTimeout = seconds;
+                command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false) && reader.FieldCount == 3)
+                {
+                    var busy = reader.GetInt32(0);
+                    _ = reader.GetInt32(1);
+                    _ = reader.GetInt32(2);
+                    result = busy == 0 ? SqliteRecoveryStatus.Recovered : SqliteRecoveryStatus.Busy;
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                if (checkpoint is not null) await checkpoint(SqliteRecoveryCheckpoint.Checkpointed, connection.State, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (checkpoint is not null) await checkpoint(SqliteRecoveryCheckpoint.ResourcesReleased, connection.State, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
+    }
+
+    private static string BuildConnectionString(string path, SqliteOpenMode mode, int defaultTimeout = 30) =>
         new SqliteConnectionStringBuilder
         {
             DataSource = path,
             Mode = mode,
             Cache = SqliteCacheMode.Private,
-            Pooling = false
+            Pooling = false,
+            DefaultTimeout = defaultTimeout
         }.ConnectionString;
 }
