@@ -686,6 +686,15 @@ There are no ServiceMantle options for changing or removing this baseline. Unmar
 responses whose headers were already sent are unchanged. The capability does not add HSTS, HTTPS
 redirection, CORS, cross-origin isolation headers, TLS configuration, or a policy for HTML UI.
 
+## Outbound Correlation ID
+
+Explicitly attach `services.AddHttpClient("trusted").AddServiceMantleCorrelationIdPropagation()`
+to a trusted client. It reads the current middleware-resolved private slot on every send, preserves
+caller outbound headers, and generates no background ID. Only accepted slot values are added;
+pooled handlers retain no context or value. Registration is idempotent and needs no host identity.
+Caller cancellation at completion releases an owned response and throws with the original token.
+Control destination trust and automatic redirects; Correlation IDs do not carry secrets or authority.
+
 ## Request Correlation ID
 
 `UseServiceMantleCorrelationId()` resolves exactly one Correlation ID per request and publishes that
