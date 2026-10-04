@@ -2367,6 +2367,19 @@ supported usage, and the lease is not a fencing token; it cannot undo side effec
 loss is detected.
 
 
+### SQL Server deployment capability
+
+Register SQL Server deployment support explicitly with
+`services.AddServiceMantleSqlServerDeploymentCapability()`. Single-instance identity accepts
+an explicit database and a single TCP endpoint, normalizes host/default port 1433, and opens
+one owned unpooled, non-enlisted connection to read `SELECT DB_NAME()`. The server's canonical
+name is encoded ordinally with provider/domain, host and port, independently of credentials.
+Named instances, non-TCP protocols, LocalDB, attached files, failover partners and ambiguous
+endpoints return an unsupported identity without I/O. Driver failures expose a fixed exception
+without inner diagnostics; caller cancellation retains its token after resource release.
+Multi-instance still needs a separately registered real lock and does not probe identity.
+DNS/proxy/server aliases are not resolved by this provider.
+
 ### SQL Server application lock
 
 `ServiceMantle.Database.SqlServer.Migration.SqlServerMigrationLockProvider` derives the resource as

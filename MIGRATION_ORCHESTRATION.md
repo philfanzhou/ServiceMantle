@@ -87,6 +87,22 @@ MultiInstance、enableTargetPreparation=true、显式创建许可、30秒lockWai
      - 关闭连接（会话锁由 PostgreSQL 释放）
      - 抑制任何错误，避免掩盖主异常
 
+### SQL Server 显式部署声明与身份
+
+`services.AddServiceMantleSqlServerDeploymentCapability()` 仅幂等注册独立的 SingleAndMultiInstance
+声明，不隐含 bootstrap/preparation/lock。单实例只接受显式 InitialCatalog 和单 TCP endpoint，
+DataSource主机trim/小写，缺省端口1433；连接被强制为规范tcp endpoint，非池化、不enlist。
+命名实例、np/lpc等非TCP、LocalDB、AttachDBFilename、UserInstance、FailoverPartner、空库或
+不明确endpoint纯解析失败关闭，零 I/O；核心返回LockNotSupported且executor=0。
+合法输入只在一个owned连接上执行固定只读 `SELECT DB_NAME()`，以服务器返回的canonical库名
+Ordinal编码，既合并CI服务器同一库拼写，也保留CS服务器不同库，不能用库自身collation猜测
+实例目录名字规则。provider/domain、host、port、库名按UTF-8长度分隔摘要；凭据不参与身份。
+正常/异常、command/connection完整释放后均检查caller取消。失败用固定无inner InvalidOperationException，
+核心LockFailed；预算超时LockTimeout，caller取消原token优先。无DDL/transaction/cache/提交工作单元。
+missing目标先prepare；MultiInstance仍单独真实锁且不调用身份方法。DNS/代理/server别名不解析，
+不会查询注册表或SQL Browser；单实例不承诺进程外互斥。CI/CS真实验收分别使用不同实例的server
+catalog collation，非仅改变database数据collation。
+
 ### Oracle 显式部署声明与单实例拒绝边界
 
 `services.AddServiceMantleOracleDeploymentCapability()` 幂等注册独立声明，支持等级
