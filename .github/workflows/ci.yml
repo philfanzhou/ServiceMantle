@@ -275,6 +275,13 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/persistence-relational
 
+      - name: Verify SqlServer deployment package consumption
+        run: >-
+          bash eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/database-sqlserver
+
       # The PostgreSQL provider package's dedicated consumer (#610): its first consumer names the
       # package's whole public surface — bootstrap validation, target preparation, the maintenance
       # connection derivation, the health probe classifier (#606), the migration lock provider,
@@ -310,12 +317,12 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/database-oracle
 
-      - name: Verify SqlServer deployment package consumption
+      - name: Verify MariaDb deployment package consumption
         run: >-
           bash eng/tests/package-consumption.sh
           --version $PACKAGE_VERSION
           --packages artifacts/packages
-          --consumer eng/tests/consumers/database-sqlserver
+          --consumer eng/tests/consumers/database-mariadb
 
       - name: Enforce provider-neutral consumer source boundary
         run: |
