@@ -63,8 +63,23 @@ public sealed class SqlServerDeploymentIdentityRealTests
         {
             await setup.OpenAsync(TestContext.Current.CancellationToken);
             await using var command = setup.CreateCommand();
-            command.CommandText = caseSensitive ? "CREATE DATABASE [Distinct]; CREATE DATABASE [distinct];" : "CREATE DATABASE [Distinct];";
+            // Case-sensitive catalog names do not give the default physical files distinct
+            // paths. Keep both logical names while assigning unrelated MDF/LDF filenames.
+            command.CommandText = """
+                CREATE DATABASE [Distinct]
+                ON PRIMARY (NAME = N'deployment_upper_data', FILENAME = N'/var/opt/mssql/data/deployment_upper.mdf')
+                LOG ON (NAME = N'deployment_upper_log', FILENAME = N'/var/opt/mssql/data/deployment_upper.ldf');
+                """;
             await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            if (caseSensitive)
+            {
+                command.CommandText = """
+                    CREATE DATABASE [distinct]
+                    ON PRIMARY (NAME = N'deployment_lower_data', FILENAME = N'/var/opt/mssql/data/deployment_lower.mdf')
+                    LOG ON (NAME = N'deployment_lower_log', FILENAME = N'/var/opt/mssql/data/deployment_lower.ldf');
+                    """;
+                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
         }
         builder.InitialCatalog = "Distinct";
         var distinct = await provider.GetCanonicalTargetIdentityAsync(Target(), TestContext.Current.CancellationToken);
