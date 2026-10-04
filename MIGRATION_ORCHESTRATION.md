@@ -516,6 +516,20 @@ stamp 的 id 与实际结构一致，也不回滚自身事务之外的副作用�
 - `README.md` - 新增迁移编排章节
 - `MIGRATION_ORCHESTRATION.md` - 本文档
 
+## MariaDb 显式部署声明与身份
+
+`services.AddServiceMantleMariaDbDeploymentCapability()` 仅幂等注册独立的部署声明；
+`MariaDbDatabaseDeploymentCapabilityProvider` 声明 SingleAndMultiInstance，不隐含其他能力。
+单实例纯解析只接受单 TCP server/port 与显式数据库；非法、多个host或非TCP返回空身份且零 I/O，
+由核心映射 LockNotSupported（executor=0）。合法输入仅开一个自己拥有的非池化/non-enlisted连接，
+只读查询 `SELECT @@lower_case_table_names, DATABASE(), LOWER(DATABASE())`；规则0保留server名字，
+1/2使用server lower名字，未知规则/空名字失败关闭，不凭CLR或未知collation猜测。
+UTF-8长度分隔的provider/domain、trim小写主机、端口与server规范库名构成SHA-256身份，凭据不进入身份。
+打开/读取/完整释放后的正常和异常完成均观察caller取消；失败统一安全无inner InvalidOperationException，
+核心返回LockFailed，acquisition预算超时为LockTimeout，caller取消原token优先。没有DDL、写入、
+transaction或cache，不保存caller工作单元。缺失目标先prepare；MultiInstance另行真实锁且身份调用0。
+DNS/代理/server别名不解析，单实例不承诺进程外互斥；数据库大小写等价由真实metadata决定。
+
 ## PostgreSQL 显式部署声明
 
 `services.AddServiceMantlePostgreSqlDeploymentCapability()` 仅幂等注册部署 capability，
