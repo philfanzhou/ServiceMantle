@@ -428,6 +428,48 @@ public sealed class OtlpRegistrationTests
         options.Traces.Endpoint = new Uri(endpoint);
     }
 
+    [Theory]
+    [InlineData(true, "primary")]
+    [InlineData(true, "different")]
+    [InlineData(false, "primary")]
+    public async Task Fixed_core_resolver_composes_with_both_official_signal_options(bool enabled, string configuredName)
+    {
+        var (builder, serviceMantle) = CreateHostBuilder();
+        builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
+            new FixedRemoteTelemetryAuthenticationResolver("primary", "Authorization", "Bearer fixed secret"));
+        serviceMantle.AddOpenTelemetryOtlpExporter(options =>
+        {
+            options.Traces.Enabled = enabled; options.Metrics.Enabled = enabled;
+            options.Traces.Endpoint = new Uri("https://collector.example:4317/");
+            options.Metrics.Endpoint = new Uri("https://collector.example:4317/");
+            options.Traces.AuthenticationHeaderName = configuredName;
+            options.Metrics.AuthenticationHeaderName = configuredName;
+        });
+        using var host = builder.Build();
+        if (enabled && configuredName != "primary")
+        {
+            var error = await Assert.ThrowsAsync<OtlpConfigurationException>(() => host.StartAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(WellKnownOtlpErrorCodes.AuthenticationMissing, error.ErrorCode);
+            Assert.DoesNotContain("fixed secret", error.ToString());
+        }
+        else
+        {
+            await host.StartAsync(TestContext.Current.CancellationToken);
+            if (enabled)
+            {
+                var options = host.Services.GetRequiredService<IOptionsMonitor<OtlpExporterOptions>>();
+                Assert.Equal("Authorization=Bearer%20fixed%20secret", options.Get("ServiceMantle.Otlp.Traces").Headers);
+                Assert.Equal("Authorization=Bearer%20fixed%20secret", options.Get("ServiceMantle.Otlp.Metrics").Headers);
+            }
+            else
+            {
+                Assert.Null(host.Services.GetService<TracerProvider>());
+                Assert.Null(host.Services.GetService<MeterProvider>());
+            }
+            await host.StopAsync(TestContext.Current.CancellationToken);
+        }
+    }
+
     private static (HostApplicationBuilder Builder, ServiceMantleBuilder ServiceMantle) CreateHostBuilder()
     {
         var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());

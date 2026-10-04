@@ -39,7 +39,7 @@ try
     // using. The returned values are placeholders, not secrets.
     builder.Services.AddSingleton<IRemoteLogAuthorizationResolver, NeutralLogResolver>();
     builder.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
-        new FixedTelemetryResolver("trace-auth", "provider-neutral-placeholder"));
+        new FixedRemoteTelemetryAuthenticationResolver("trace-auth", "Authorization", "consumer-placeholder"));
 
     // The two contracts uplifted from the ASP.NET Core adapter into the core package (#572): the
     // consumer-owned health snapshot source is implemented and registered through

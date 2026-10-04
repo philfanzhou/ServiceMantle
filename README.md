@@ -143,6 +143,15 @@ historical identities, upstream runtime/HTTP metrics, consumer-added resources/v
 backend retention. This is the last explicitly published observation, not a fresh database read or
 proof of persistent installation status. The consumer controls its correctness and freshness.
 
+## Fixed telemetry authentication
+
+Register `new FixedRemoteTelemetryAuthenticationResolver("collector-auth", "Authorization", value)`
+explicitly as `IRemoteTelemetryAuthenticationResolver`. Exact ordinal lookup returns an immutable
+header; all misses return false/null. Names are 1–128 ASCII letters/digits or `._-`, header names
+are 1–128 HTTP tokens, and values are nonempty without CR/LF. No trimming or configuration lookup
+occurs. Diagnostics and ToString reveal no captured name or value; successful header.Value is
+an explicit secret channel. Rotation, memory erasure and caller serialization are caller-owned.
+
 ## Optional OTLP exporter
 
 `ServiceMantle.Diagnostics` ships the official
