@@ -1427,6 +1427,29 @@ Concurrent insertion remains idempotent only when EF Core identifies the failed 
 the safe `installation.storage_error` exception channel even if a row happens to exist; classification
 does not depend on provider-specific error numbers.
 
+## Private root key file source
+
+`RootKeyFileSource` in `ServiceMantle.Configuration` captures a fully qualified local file path
+without I/O. Explicit `Resolve()` reuses a canonical 32-byte Base64 key (44 ASCII characters,
+optionally one final LF/CRLF), or writes a private same-directory CreateNew temporary file,
+flushes and closes it, atomically hard-links it into place, and rereads the shared winner.
+Bind `source.Resolve` to the existing synchronous rootKeyResolver callback; registration and
+injected-value precedence remain caller-owned.
+
+Use a trusted dedicated parent directory. An existing Unix parent must be owner-only and
+accessible; only its missing direct leaf may be created with 0700. Existing files must be
+0400/0600; newly created temporary files are 0600 before writing any secret. Invalid format,
+permissions, symlinks/reparse points, non-regular objects and unknown metadata fail closed with
+fixed diagnostics, without replacing targets or adjusting existing permissions. Supported native
+metadata layouts are Linux/macOS/Windows x64 and arm64; Windows ACLs belong to the caller.
+
+The atomic link commits the complete key; all successful concurrent creators read that winner.
+Only each call's own temporary name is eligible for best-effort deletion. External replacement,
+malicious hard links, network/special filesystem durability, directory fsync, forced termination
+cleanup, Windows ACL equivalence, rotation and string erasure are outside this contract. Back up
+the key alongside encrypted data; never log Resolve's explicit secret return. A lost key cannot
+be regenerated to decrypt an existing key ring.
+
 ## One-time Setup Code
 
 A pending installation carries a one-time Setup Code as attached state on the same

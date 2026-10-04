@@ -70,6 +70,19 @@ jobs:
           --diagnostic-synchronous-write
           --diagnostic-output-directory artifacts/test-diagnostics/bootstrap-windows
 
+      - name: Verify root key file lifecycle
+        run: >-
+          dotnet test
+          --project tests/ServiceMantle.Tests/ServiceMantle.Tests.csproj
+          --configuration Release
+          --timeout 5m
+          --filter-class "ServiceMantle.Tests.Configuration.RootKeyFileSourceTests"
+          --minimum-expected-tests 1
+          --zero-tests-policy strict
+          --diagnostic
+          --diagnostic-synchronous-write
+          --diagnostic-output-directory artifacts/test-diagnostics/root-key-windows
+
       - name: Verify SQLite file preparation and WAL recovery
         run: >-
           dotnet test

@@ -20,12 +20,17 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ServiceMantle;
+using ServiceMantle.Configuration;
 using ServiceMantle.Diagnostics;
 using ServiceMantle.Discovery;
 using ServiceMantle.Health;
 using ServiceMantle.Installation;
 using ServiceMantle.Logging;
 using ServiceMantle.Migration;
+
+var externalRootSource = new RootKeyFileSource(Path.Combine(Path.GetTempPath(), "servicemantle-neutral-private", "root.key"));
+Func<string> externalRootResolver = externalRootSource.Resolve;
+_ = externalRootResolver; // Explicit synchronous source without adapter-owned types or I/O at construction.
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-provider-neutral");
 try
