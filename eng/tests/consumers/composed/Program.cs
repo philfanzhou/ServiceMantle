@@ -41,6 +41,7 @@ var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-consume
 try
 {
     var builder = WebApplication.CreateSlimBuilder(args);
+    builder.Services.AddHttpClient("trusted").AddServiceMantleCorrelationIdPropagation().AddServiceMantleCorrelationIdPropagation();
     builder.Logging.ClearProviders();
     builder.Services.AddAuthorization(options => options.AddPolicy(
         "metrics-scrape",

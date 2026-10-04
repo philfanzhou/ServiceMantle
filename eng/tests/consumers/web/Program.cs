@@ -6,11 +6,15 @@ using ServiceMantle.Web;
 using ServiceMantle.Migration;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Web.Hosting;
+using ServiceMantle.Web.Http;
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-consumer");
 try
 {
     var builder = WebApplication.CreateSlimBuilder(args);
+    builder.Services.AddHttpClient("trusted").AddServiceMantleCorrelationIdPropagation().AddServiceMantleCorrelationIdPropagation();
+    if (!typeof(CorrelationIdPropagationHandler).IsSubclassOf(typeof(DelegatingHandler)))
+        throw new InvalidOperationException("Correlation ID propagation handler did not resolve.");
     builder.Logging.ClearProviders();
     builder.Services.AddServiceMantle(
         ServiceId.Parse("package-consumer"),
