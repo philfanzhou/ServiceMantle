@@ -87,6 +87,18 @@ MultiInstance、enableTargetPreparation=true、显式创建许可、30秒lockWai
      - 关闭连接（会话锁由 PostgreSQL 释放）
      - 抑制任何错误，避免掩盖主异常
 
+### Oracle 显式部署声明与单实例拒绝边界
+
+`services.AddServiceMantleOracleDeploymentCapability()` 幂等注册独立声明，支持等级
+SingleAndMultiInstance仅用于部署验证，不代表内置single-instance身份已经可用。
+内置 `OracleDatabaseDeploymentCapabilityProvider.GetCanonicalTargetIdentityAsync` 校验参数与caller
+取消后确定返回空身份，不解析UserID/密码，不做I/O；核心SingleInstance编排返回
+`migration.lock_not_supported`且executor=0。不能用DataSource混合不同schema，也不会把UserID输出。
+选择MultiInstance并另外注册真实Oracle锁；确需SingleInstance时，以
+`services.AddSingleton<IDatabaseDeploymentCapabilityProvider, YourOracleCapability>()` 注册自己
+符合核心canonical schema契约的声明，替代内置类型，不要同时注册同provider两次。
+本项没有资源/写入/事务或回滚；旧Oracle bootstrap/preparation/lock行为保持。
+
 ### Oracle Provider（`ServiceMantle.Database.Oracle.Migration`）
 
 **`OracleMigrationLockProvider`** 实现 `IDatabaseMigrationLockProvider`：
@@ -522,6 +534,17 @@ stamp 的 id 与实际结构一致，也不回滚自身事务之外的副作用�
 - `Directory.Packages.props` - 加入 Testcontainers 包
 - `README.md` - 新增迁移编排章节
 - `MIGRATION_ORCHESTRATION.md` - 本文档
+
+## PostgreSQL 显式部署声明
+
+`services.AddServiceMantlePostgreSqlDeploymentCapability()` 仅幂等注册部署 capability，
+不隐含 bootstrap、preparation 或 lock。`PostgreSqlDatabaseDeploymentCapabilityProvider`
+声明 `SingleAndMultiInstance`；单实例身份不打开连接，只从显式单 TCP Host/Port/Database
+按 UTF-8 长度分隔字段构造 SHA-256 摘要，domain 区分 provider。主机 trim/小写、端口默认5432；
+数据库名保留 Ordinal，用户名、密码、超时、池和属性拼写/顺序不参与身份。多主机、socket、
+空主机/库与非法连接串返回空身份，核心确定返回 `migration.lock_not_supported`，执行器不调用。
+入口与返回前检查 caller token，parser异常不向外暴露。DNS/代理/数据库名大小写别名不解析，
+调用方负责对齐规范名字；MultiInstance 仍单独注册真实锁，并不会调用该身份方法。
 
 ## 直接调用启动门的注册入口
 
