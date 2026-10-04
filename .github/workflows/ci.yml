@@ -77,6 +77,7 @@ jobs:
           --configuration Release
           --timeout 5m
           --filter-class "ServiceMantle.Tests.Configuration.RootKeyFileSourceTests"
+          --filter-class "ServiceMantle.Tests.Configuration.RootKeySourceTests"
           --minimum-expected-tests 1
           --zero-tests-policy strict
           --diagnostic

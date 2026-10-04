@@ -31,6 +31,10 @@ using ServiceMantle.Migration;
 var externalRootSource = new RootKeyFileSource(Path.Combine(Path.GetTempPath(), "servicemantle-neutral-private", "root.key"));
 Func<string> externalRootResolver = externalRootSource.Resolve;
 _ = externalRootResolver; // Explicit synchronous source without adapter-owned types or I/O at construction.
+var composedRootSource = new RootKeySource("neutral-consumer-root-placeholder", "unrelated\0.key");
+if (composedRootSource.Resolve() != "neutral-consumer-root-placeholder" ||
+    composedRootSource.ToString() != "RootKeySource(Lazy=True)")
+    throw new InvalidOperationException("The injected root source did not preserve the captured value.");
 
 var bootstrapDirectory = Directory.CreateTempSubdirectory("servicemantle-provider-neutral");
 try
