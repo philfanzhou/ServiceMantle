@@ -3185,3 +3185,10 @@ To override the SQL Server image:
 ```bash
 SERVICEMANTLE_SQLSERVER_IMAGE=mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04 RUN_SERVICEMANTLE_SQLSERVER_TESTS=true dotnet test --project tests/ServiceMantle.Database.SqlServer.Tests -c Release
 ```
+
+Schema evidence also supports optional catalog object names, total index key counts (including
+unparsed expression keys), and separate included columns. Existing constructors and the default
+`SchemaEvidenceComparer.Compare` preserve their original dimensions. Pass
+`new SchemaEvidenceComparisonOptions(compareObjectNames: true, compareIndexKeyDetails: true)`
+to compare the additional evidence explicitly; expression text, order and predicates remain
+outside the contract. Provider readers and EF derivation retain their current evidence output.
