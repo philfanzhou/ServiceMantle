@@ -70,6 +70,20 @@ jobs:
           --diagnostic-synchronous-write
           --diagnostic-output-directory artifacts/test-diagnostics/bootstrap-windows
 
+      - name: Verify SQLite file preparation and WAL recovery
+        run: >-
+          dotnet test
+          --project tests/ServiceMantle.Database.Sqlite.Tests/ServiceMantle.Database.Sqlite.Tests.csproj
+          --configuration Release
+          --timeout 5m
+          --filter-class "ServiceMantle.Database.Sqlite.Tests.SqliteDatabaseTargetPreparationProviderTests"
+          --filter-class "ServiceMantle.Database.Sqlite.Tests.SqliteWalRecoveryTests"
+          --minimum-expected-tests 1
+          --zero-tests-policy strict
+          --diagnostic
+          --diagnostic-synchronous-write
+          --diagnostic-output-directory artifacts/test-diagnostics/sqlite-windows
+
       - name: Upload test diagnostics
         if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -240,6 +254,13 @@ jobs:
           --version $PACKAGE_VERSION
           --packages artifacts/packages
           --consumer eng/tests/consumers/logging
+
+      - name: Verify SQLite recovery package consumption
+        run: >-
+          bash eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/database-sqlite
 
       # Four modules in one project, next to the ASP.NET Core implicit usings and the framework
       # namespaces those modules' entry points require. Ordinary types carry no product prefix now,

@@ -283,6 +283,25 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 状态更新。CI 与 ReleaseTool 要求该环境，在变量缺失、跳过、发现零个测试、容器或连接失败时失败，
 并使用 ADR 固定的 Oracle Database Free 镜像。
 
+## SQLite WAL 恢复的显式选择
+
+`SqliteTargetRecoveryOptions` 默认关闭；调用方可构造启用恢复的
+`SqliteDatabaseTargetPreparationProvider` 实例，并通过既有 preparation/deployment 注册表使用它。
+核心启动门 options 没有 provider-specific 开关，默认 Bootstrap 验证仍只读。恢复只针对稳定可信的
+普通 existing 目标和安全普通 WAL/SHM：journal、目录、链接、hardlink、大小写别名、无目标、权限
+不足或无法确认的 metadata 都不进入恢复 I/O。
+
+单次调用最多一次 `PRAGMA wal_checkpoint(TRUNCATE)`，使用 ReadWrite（不创建）、Private、非池化连接；
+读 busy 结果并完整释放资源后重新检查目标与 sidecar，再做一次 immutable 只读 schema 观察，避免
+WAL 模式的普通只读连接重新生成 sidecar。库不自行删除、移动、替换文件，也不写应用数据；SQLite
+合法 replay/checkpoint/close 的修改不承诺字节不变。忙锁或剩余 sidecar 失败关闭，内部预算到期映射
+Timeout，SQLite busy 等待以整秒计；调用方取消保留原 token，清理期间取消也不能返回成功。
+
+immutable 短暂观察只用于成功 checkpoint、全部关闭且 sidecar 已消失之后，不接纳调用方 URI/VFS；
+它关闭变更检测与锁，因此外部替换、随后其他进程写入、网络文件系统和进程终止仍是非保证边界。
+恢复不支持多实例 SQLite、不修损坏、不回滚已经持久化的 checkpoint；关闭后续恢复不能撤销旧写入。
+真实崩溃子进程、busy writer、非法路径零恢复 I/O、一次尝试和取消/清理测试同时进入 Linux 与 Windows CI。
+
 ## 局限与后续工作
 
 ### 当前范围（已实现）

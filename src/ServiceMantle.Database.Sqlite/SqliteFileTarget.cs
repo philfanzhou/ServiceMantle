@@ -136,6 +136,7 @@ internal interface ISqliteTargetFileSystem
 {
     SqlitePathInspection Inspect(string path);
     SqliteSidecarInspectionStatus InspectSidecars(string canonicalPath);
+    bool CanRecoverSidecars(string canonicalPath) => false;
     string CreateTemporaryFile(string canonicalTargetPath);
     SqlitePublishStatus Publish(string temporaryPath, string canonicalTargetPath);
     void DeleteTemporaryFile(string temporaryPath);
@@ -312,6 +313,38 @@ internal sealed class SqliteTargetFileSystem : ISqliteTargetFileSystem
             exception is IOException or ArgumentException or NotSupportedException)
         {
             return SqliteSidecarInspectionStatus.CapabilityNotSupported;
+        }
+    }
+
+    public bool CanRecoverSidecars(string canonicalPath)
+    {
+        // Revalidate the target and ancestors; Present alone also includes unsafe entry kinds.
+        try
+        {
+            var target = Inspect(canonicalPath);
+            if (target.Status != SqlitePathInspectionStatus.ExistingFile ||
+                !string.Equals(target.CanonicalPath, canonicalPath, StringComparison.Ordinal) ||
+                !SqliteNativeFileMetadata.HasReadWriteAccess(canonicalPath)) return false;
+            var parent = Path.GetDirectoryName(canonicalPath)!;
+            var leaf = Path.GetFileName(canonicalPath);
+            var names = new[] { leaf + "-journal", leaf + "-wal", leaf + "-shm" };
+            var found = false;
+            foreach (var entry in new DirectoryInfo(parent).EnumerateFileSystemInfos())
+            {
+                var expected = names.FirstOrDefault(name => string.Equals(name, entry.Name, StringComparison.OrdinalIgnoreCase));
+                if (expected is null) continue;
+                if (!string.Equals(expected, entry.Name, StringComparison.Ordinal) || expected == names[0]) return false;
+                var metadata = SqliteNativeFileMetadata.Inspect(entry.FullName);
+                if (metadata.Status != SqliteNativeFileMetadataStatus.Success || !metadata.IsRegularFile ||
+                    metadata.IsSymbolicLink || metadata.HardLinkCount != 1 ||
+                    !SqliteNativeFileMetadata.HasReadWriteAccess(entry.FullName)) return false;
+                found = true;
+            }
+            return found;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
         }
     }
 
@@ -573,6 +606,21 @@ internal readonly record struct SqliteNativeFileMetadata(
             return new(SqliteNativeFileMetadataStatus.CapabilityNotSupported, false, false, false, 0);
         }
     }
+
+    internal static bool HasReadWriteAccess(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if ((File.GetAttributes(path) & FileAttributes.ReadOnly) != 0) return false;
+            using var handle = CreateFile(path, 0xC0000000, FileShare.ReadWrite | FileShare.Delete,
+                IntPtr.Zero, FileMode.Open, 0x02200000, IntPtr.Zero);
+            return !handle.IsInvalid;
+        }
+        return Access(path, 6) == 0;
+    }
+
+    [DllImport("libc", EntryPoint = "access", SetLastError = true, CharSet = CharSet.Ansi)]
+    private static extern int Access(string path, int mode);
 
     private static SqliteNativeFileMetadata FromUnix(uint mode, ulong hardLinkCount)
     {
