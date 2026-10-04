@@ -58,41 +58,62 @@ public static class EfCoreExpectedSchemaDerivation
     /// A mapped column has no store type; the derivation requires a model produced by a
     /// relational provider.
     /// </exception>
-    public static ExpectedSchema Derive(IModel model)
+    public static ExpectedSchema Derive(IModel model) => Derive(model, new EfCoreExpectedSchemaDerivationOptions());
+
+    /// <summary>Derives explicitly enabled object names and caller-resolved INCLUDE evidence.</summary>
+    /// <remarks>The include resolver receives relational indexes and must return store column names.
+    /// Its purity and external effects are caller-owned. Invalid output or resolver exceptions fail safely.</remarks>
+    public static ExpectedSchema Derive(IModel model, EfCoreExpectedSchemaDerivationOptions options)
     {
         ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(options);
 
-        var relationalModel = model.GetRelationalModel();
-        var tables = relationalModel.Tables
-            .OrderBy(table => table.Schema, StringComparer.Ordinal)
-            .ThenBy(table => table.Name, StringComparer.Ordinal)
-            .Select(DeriveTable)
-            .ToList();
+        try
+        {
+            var relationalModel = model.GetRelationalModel();
+            var tables = relationalModel.Tables
+                .OrderBy(table => table.Schema, StringComparer.Ordinal)
+                .ThenBy(table => table.Name, StringComparer.Ordinal)
+                .Select(table => DeriveTable(table, options))
+                .ToList();
 
-        return new ExpectedSchema(tables);
+            return new ExpectedSchema(tables);
+        }
+        catch (Exception) when (options.IncludeExtendedObjectEvidence)
+        {
+            throw new InvalidOperationException("Extended schema evidence could not be derived.");
+        }
     }
 
-    private static SchemaTable DeriveTable(ITable table)
+    private static SchemaTable DeriveTable(ITable table, EfCoreExpectedSchemaDerivationOptions options)
     {
         var columns = table.Columns.Select(DeriveColumn).ToList();
         var primaryKey = table.PrimaryKey is null
             ? null
-            : new SchemaPrimaryKey(table.PrimaryKey.Columns.Select(column => column.Name).ToList());
+            : new SchemaPrimaryKey(table.PrimaryKey.Columns.Select(column => column.Name).ToList(),
+                options.IncludeExtendedObjectEvidence ? table.PrimaryKey.Name : null);
         var foreignKeys = table.ForeignKeyConstraints
             .Select(constraint => new SchemaForeignKey(
                 constraint.Columns.Select(column => column.Name).ToList(),
                 constraint.PrincipalTable.Name,
                 constraint.PrincipalColumns.Select(column => column.Name).ToList(),
                 MapDeleteRule(constraint.OnDeleteAction),
-                constraint.PrincipalTable.Schema))
+                constraint.PrincipalTable.Schema,
+                options.IncludeExtendedObjectEvidence ? constraint.Name : null))
             .ToList();
         var indexes = table.Indexes
-            .Select(index => new SchemaIndex(
-                index.Columns.Select(column => column.Name).ToList(),
-                index.IsUnique))
+            .Select(index => DeriveIndex(index, options))
             .ToList();
 
         return new SchemaTable(table.Name, columns, primaryKey, foreignKeys, indexes, table.Schema);
+    }
+
+    private static SchemaIndex DeriveIndex(ITableIndex index, EfCoreExpectedSchemaDerivationOptions options)
+    {
+        var columns = index.Columns.Select(column => column.Name).ToList();
+        if (!options.IncludeExtendedObjectEvidence) return new SchemaIndex(columns, index.IsUnique);
+        var included = options.IncludeColumnResolver?.Invoke(index);
+        return new SchemaIndex(columns, index.IsUnique, index.Name, columns.Count, included ?? []);
     }
 
     private static SchemaColumn DeriveColumn(IColumn column)

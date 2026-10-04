@@ -274,6 +274,68 @@ public sealed class EfCoreExpectedSchemaDerivationTests
             schema.Tables.Select(table => table.ToString()));
     }
 
+    [Fact]
+    public void Extended_evidence_uses_real_names_copies_includes_and_compares_strictly()
+    {
+        using var context = CreateContext(model => model
+            .Entity<Parent>(e =>
+            {
+                e.ToTable("parents", "app");
+                e.HasKey(x => x.Id).HasName("pk_custom");
+                e.HasIndex(x => x.Name, "first").HasDatabaseName("ix_first");
+                e.HasIndex(x => x.Name, "second").HasDatabaseName("ix_second");
+                e.Property(x => x.Code).HasColumnName("code_store");
+            })
+            .Entity<Dependent>(e =>
+            {
+                e.ToTable("dependents", "app");
+                e.HasKey(x => x.Id);
+                e.HasOne<Parent>().WithMany().HasForeignKey(x => x.PrincipalId).HasConstraintName("fk_custom");
+            }));
+        var included = new List<string> { "code_store" };
+        var options = new EfCoreExpectedSchemaDerivationOptions(true, index => index.Name == "ix_first" ? included : null);
+        var expected = EfCoreExpectedSchemaDerivation.Derive(context.Model, options);
+        var parent = expected.Tables.Single(t => t.Name == "parents");
+        Assert.Equal("pk_custom", parent.PrimaryKey!.Name);
+        Assert.Equal("fk_custom", expected.Tables.Single(t => t.Name == "dependents").ForeignKeys[0].Name);
+        Assert.Equal(["ix_first", "ix_second"], parent.Indexes.Select(i => i.Name));
+        Assert.Equal(["code_store"], parent.Indexes[0].IncludedColumns);
+        Assert.Empty(parent.Indexes[1].IncludedColumns);
+        Assert.All(parent.Indexes, i => Assert.Equal(i.Columns.Count, i.KeyColumnCount));
+        var second = EfCoreExpectedSchemaDerivation.Derive(context.Model, options);
+        Assert.Empty(SchemaEvidenceComparer.Compare(new SchemaSnapshot(expected.Tables), second,
+            new SchemaEvidenceComparisonOptions(true, true)));
+        included.Clear();
+        Assert.Equal(["code_store"], parent.Indexes[0].IncludedColumns);
+        var changed = new SchemaTable(parent.Name, parent.Columns, new SchemaPrimaryKey(parent.PrimaryKey.Columns, "wrong"),
+            parent.ForeignKeys, parent.Indexes.Select(i => new SchemaIndex(i.Columns, i.IsUnique, i.Name, 2, [])).ToList(), parent.Schema);
+        var differences = SchemaEvidenceComparer.Compare(new SchemaSnapshot([changed]), new ExpectedSchema([parent]),
+            new SchemaEvidenceComparisonOptions(true, true));
+        Assert.Contains(differences, d => d.Kind == SchemaDifferenceKind.NameMismatch);
+        Assert.Contains(differences, d => d.Kind == SchemaDifferenceKind.IndexKeyColumnCountMismatch);
+        Assert.Contains(differences, d => d.Kind == SchemaDifferenceKind.IndexIncludedColumnsMismatch);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("bad\nsecret")]
+    public void Invalid_include_output_and_resolver_exceptions_fail_without_echo_or_inner(string value)
+    {
+        using var context = CreateContext(m => m.Entity<Parent>(e => { e.HasKey(x => x.Id); e.HasIndex(x => x.Name); }));
+        var error = Assert.Throws<InvalidOperationException>(() => EfCoreExpectedSchemaDerivation.Derive(context.Model,
+            new EfCoreExpectedSchemaDerivationOptions(true, _ => [value])));
+        Assert.Equal("Extended schema evidence could not be derived.", error.Message);
+        Assert.Null(error.InnerException);
+        var thrown = Assert.Throws<InvalidOperationException>(() => EfCoreExpectedSchemaDerivation.Derive(context.Model,
+            new EfCoreExpectedSchemaDerivationOptions(true, _ => throw new Exception("secret"))));
+        Assert.DoesNotContain("secret", thrown.Message);
+        Assert.Null(thrown.InnerException);
+        var legacy = EfCoreExpectedSchemaDerivation.Derive(context.Model,
+            new EfCoreExpectedSchemaDerivationOptions(false, _ => throw new Exception("must not run")));
+        Assert.Null(legacy.Tables[0].PrimaryKey!.Name);
+        Assert.Null(legacy.Tables[0].Indexes[0].Name);
+    }
+
     private static Action<ModelBuilder> CreateIdentityModel(IdentityConfiguration configuration) =>
         model => model.Entity<IdentityEntity>(entity =>
         {
