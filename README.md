@@ -2468,6 +2468,16 @@ first. Caller cancellation ends the gate with `OperationCanceledException` witho
   Both entries share identical ordering, failure, and error-code semantics.
 - No `IConfiguration` is read: the caller reads its own configuration and supplies the values.
 
+For caller-driven execution, register `services.AddServiceMantleStartupDatabaseGateServices()`
+from the core package, or call the same method on `ServiceMantleBuilder`. This registers the gate,
+receipt and shared registries without options, service identity, configuration or a hosted entry.
+It performs no I/O and does not resolve an executor. Supply your providers and executor, build the
+container, obtain the gate and receipt, then call `gate.RunAsync(options, receipt, serviceId, token)`
+when your configuration is ready. The direct and hosted registration methods can be called in
+either order; their services remain singletons and the first hosted options registration is retained.
+The gate never directly disposes an executor: externally constructed singleton instances stay
+caller-owned, while DI-owned scoped executors are released with the gate's scope as before.
+
 Not guaranteed: nothing spans the preparation and the migration transactionally — a created target
 or a committed migration is not undone by a later failure or cancellation; multi-instance target
 creation keeps the preparation provider's existing concurrency semantics; consumers bypassing the
