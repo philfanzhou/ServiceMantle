@@ -37,6 +37,26 @@ public sealed class PostgreSqlSchemaEvidenceReaderContractTests
 
         Assert.Equal(System.Data.ConnectionState.Closed, connection.State);
     }
+    [Fact]
+    public async Task Failure_completion_cancellation_uses_original_token_without_driver_inner()
+    {
+        using var cts = new CancellationTokenSource();
+        var reader = new PostgreSqlSchemaEvidenceReader(step => { if (step == "final") cts.Cancel(); });
+        await using var connection = new NpgsqlConnection("Host=127.0.0.1;Port=1;Database=x;Timeout=1");
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reader.ReadAsync(connection, cts.Token));
+        Assert.Equal(cts.Token, error.CancellationToken);
+        Assert.Null(error.InnerException);
+    }
+
+    [Fact]
+    public void Options_copy_validate_and_deduplicate_exact_pairs()
+    {
+        var pairs = new List<(string, string)> { ("a", "same"), ("b", "same"), ("a", "same") };
+        var options = new PostgreSqlSchemaEvidenceReadOptions(true, pairs);
+        pairs.Clear();
+        Assert.Equal(2, options.Tables!.Count);
+        Assert.Throws<ArgumentException>(() => new PostgreSqlSchemaEvidenceReadOptions(true, [("a", "bad\nname")]));
+    }
 }
 
 /// <summary>
@@ -263,6 +283,93 @@ public sealed class PostgreSqlSchemaEvidenceReaderTests : IAsyncLifetime
         Assert.Equal(3, retry.AppliedMigrationIds.Count);
     }
 
+    [Fact]
+    public async Task Extended_scope_reads_names_expression_counts_and_includes_without_writing()
+    {
+        var cs = await CreateSeededDatabaseAsync("extended");
+        await ExecuteAsync(cs, """
+            CREATE SCHEMA other;
+            CREATE TABLE other.children (id integer);
+            CREATE TABLE other.empty ();
+            CREATE TABLE other."bad
+            name" ();
+            CREATE TABLE app.pk_include (id integer, detail text, CONSTRAINT custom_pk PRIMARY KEY (id) INCLUDE (detail));
+            CREATE INDEX ix_duplicate ON app.children (parent_tenant, id);
+            CREATE INDEX ix_include ON app.children (parent_tenant) INCLUDE (parent_code);
+            CREATE INDEX ix_mixed ON app.children (lower(parent_code), parent_tenant) INCLUDE (id);
+            """);
+        await using var connection = new NpgsqlConnection(cs);
+        var reader = new PostgreSqlSchemaEvidenceReader();
+        var options = new PostgreSqlSchemaEvidenceReadOptions(true, [("app", "children"), ("app", "pk_include")]);
+        var result = await reader.ReadAsync(connection, options, TestContext.Current.CancellationToken);
+        Assert.Equal(SchemaEvidenceReadState.Succeeded, result.State);
+        Assert.Equal(["app.children", "app.pk_include"], result.Snapshot!.Tables.Select(t => t.ToString()));
+        var table = result.Snapshot.Tables[0];
+        Assert.Equal("pk_children", table.PrimaryKey!.Name);
+        Assert.Equal("fk_cascade", table.ForeignKeys[0].Name);
+        Assert.Equal(["id"], result.Snapshot.Tables[1].PrimaryKey!.Columns);
+        Assert.Equal("custom_pk", result.Snapshot.Tables[1].PrimaryKey!.Name);
+        Assert.Equal(2, table.Indexes.Count(i => i.Columns.SequenceEqual(new[] { "parent_tenant", "id" })));
+        var expression = Assert.Single(table.Indexes, i => i.Name == "ux_children_expr");
+        Assert.Empty(expression.Columns);
+        Assert.True(expression.HasExpressionKeys);
+        Assert.Equal(1, expression.KeyColumnCount);
+        var mixed = Assert.Single(table.Indexes, i => i.Name == "ix_mixed");
+        Assert.Equal(["parent_tenant"], mixed.Columns);
+        Assert.Equal(2, mixed.KeyColumnCount);
+        Assert.Equal(["id"], mixed.IncludedColumns);
+        var include = Assert.Single(table.Indexes, i => i.Name == "ix_include");
+        Assert.Equal(["parent_tenant"], include.Columns);
+        Assert.Equal(["parent_code"], include.IncludedColumns);
+        var different = new SchemaTable(table.Name, table.Columns,
+            new SchemaPrimaryKey(table.PrimaryKey.Columns, "wrong_pk"), table.ForeignKeys,
+            table.Indexes.Select(i => i.Name == "ix_include"
+                ? new SchemaIndex(i.Columns, i.IsUnique, i.Name, 2, ["id"]) : i).ToList(), table.Schema);
+        var differences = SchemaEvidenceComparer.Compare(result.Snapshot,
+            new ExpectedSchema([different, result.Snapshot.Tables[1]]), new SchemaEvidenceComparisonOptions(true, true));
+        Assert.Contains(differences, d => d.Kind == SchemaDifferenceKind.NameMismatch);
+        Assert.Contains(differences, d => d.Kind == SchemaDifferenceKind.IndexKeyColumnCountMismatch);
+        Assert.Contains(differences, d => d.Kind == SchemaDifferenceKind.IndexIncludedColumnsMismatch);
+        var empty = await reader.ReadAsync(connection, new PostgreSqlSchemaEvidenceReadOptions(true, []), TestContext.Current.CancellationToken);
+        Assert.Empty(empty.Snapshot!.Tables);
+        Assert.Equal(result.AppliedMigrationIds, empty.AppliedMigrationIds);
+        var absent = await reader.ReadAsync(connection, new PostgreSqlSchemaEvidenceReadOptions(true, [("app", "absent")]), TestContext.Current.CancellationToken);
+        Assert.Empty(absent.Snapshot!.Tables);
+        var repeated = await reader.ReadAsync(connection, options, TestContext.Current.CancellationToken);
+        Assert.Empty(SchemaEvidenceComparer.Compare(repeated.Snapshot!, new ExpectedSchema(result.Snapshot.Tables),
+            new SchemaEvidenceComparisonOptions(true, true)));
+        Assert.Equal(result.AppliedMigrationIds, repeated.AppliedMigrationIds);
+        Assert.Equal(System.Data.ConnectionState.Open, connection.State);
+        var legacyCs = await CreateSeededDatabaseAsync("legacy_scope");
+        await using var legacyConnection = new NpgsqlConnection(legacyCs);
+        var legacy = await reader.ReadAsync(legacyConnection, new PostgreSqlSchemaEvidenceReadOptions(false, [("app", "children")]), TestContext.Current.CancellationToken);
+        Assert.All(legacy.Snapshot!.Tables[0].Indexes, i => Assert.Null(i.Name));
+        Assert.DoesNotContain(legacy.Snapshot.Tables[0].Indexes, i => i.HasExpressionKeys);
+    }
+
+    [Theory]
+    [InlineData("history")]
+    [InlineData("tables")]
+    [InlineData("ReadColumnsAsync")]
+    [InlineData("ReadPrimaryKeysAsync")]
+    [InlineData("ReadForeignKeysAsync")]
+    [InlineData("ReadIndexesAsync")]
+    [InlineData("final")]
+    public async Task Completion_cancellation_after_resources_are_released_has_safe_original_token(string checkpoint)
+    {
+        var cs = await CreateSeededDatabaseAsync("completion");
+        using var cts = new CancellationTokenSource();
+        var reader = new PostgreSqlSchemaEvidenceReader(step => { if (step == checkpoint) cts.Cancel(); });
+        await using var connection = new NpgsqlConnection(cs);
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reader.ReadAsync(connection, cts.Token));
+        Assert.Equal(cts.Token, exception.CancellationToken);
+        Assert.Null(exception.InnerException);
+        Assert.Equal(System.Data.ConnectionState.Open, connection.State);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1";
+        Assert.Equal(1, await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+    }
+
     private async Task<SchemaEvidenceReadResult> ReadAsync(
         string connectionString,
         CancellationToken cancellationToken)
@@ -392,5 +499,5 @@ public sealed class PostgreSqlSchemaEvidenceReaderTests : IAsyncLifetime
             ?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
 
     private static string GetPostgresImage() =>
-        Environment.GetEnvironmentVariable("SERVICEMANTLE_POSTGRES_IMAGE") ?? "postgres:15-alpine";
+        Environment.GetEnvironmentVariable("SERVICEMANTLE_POSTGRES_IMAGE") ?? "postgres:16-alpine";
 }

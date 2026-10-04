@@ -46,6 +46,10 @@ if (classifier.Classify(new NpgsqlException("consumer classification probe")) !=
 // shared with an Npgsql or core type would fail this compilation rather than a consumer's.
 // The schema evidence reader (#610) is only named here — reading runs on a caller connection
 // against a real database, which belongs to the package's gated tests, never to this consumer.
+var evidenceOptions = new PostgreSqlSchemaEvidenceReadOptions(true, [("app", "items")]);
+if (!evidenceOptions.IncludeExtendedObjectEvidence || evidenceOptions.Tables!.Count != 1)
+    throw new InvalidOperationException("Explicit schema evidence options did not resolve.");
+ReportType(typeof(PostgreSqlSchemaEvidenceReadOptions));
 ReportType(typeof(PostgreSqlSchemaEvidenceReader));
 ReportType(typeof(PostgreSqlMigrationLockProvider));
 ReportType(typeof(PostgreSqlDatabaseProbeFailureClassifier));

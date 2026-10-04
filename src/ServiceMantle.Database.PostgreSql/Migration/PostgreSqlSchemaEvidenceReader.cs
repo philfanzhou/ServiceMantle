@@ -41,8 +41,8 @@ namespace ServiceMantle.Database.PostgreSql.Migration;
 /// </para>
 /// <para>
 /// Non-guarantees: the read is one observation, not a transactional point-in-time image —
-/// concurrent DDL can interleave between the queries; indexes with expression columns are not
-/// read (outside the model's dimensions); identifier alignment with the expected side (for
+/// concurrent DDL can interleave between the queries; the default entry excludes expression
+/// indexes, while explicit extended evidence reports their key counts without expression text; identifier alignment with the expected side (for
 /// example the <c>public</c> default schema versus an unconfigured EF model deriving null) is
 /// the caller's responsibility per the contract in
 /// <c>docs/contracts/schema-evidence-models.md</c>.
@@ -50,6 +50,14 @@ namespace ServiceMantle.Database.PostgreSql.Migration;
 /// </remarks>
 public sealed class PostgreSqlSchemaEvidenceReader
 {
+    private readonly Action<string>? completionCheckpoint;
+
+    /// <summary>Creates a read-only evidence reader.</summary>
+    public PostgreSqlSchemaEvidenceReader() { }
+
+    internal PostgreSqlSchemaEvidenceReader(Action<string> completionCheckpoint) =>
+        this.completionCheckpoint = completionCheckpoint;
+
     private const string HistoryTableName = "__EFMigrationsHistory";
     private const string TargetMissingSqlState = "3D000";
     private const string UndefinedTableSqlState = "42P01";
@@ -140,6 +148,32 @@ public sealed class PostgreSqlSchemaEvidenceReader
         ORDER BY n.nspname, tbl.relname, idx.relname, keys.ord
         """;
 
+    private const string ExtendedPrimaryKeysScript = $"""
+        SELECT n.nspname, tbl.relname, a.attname, con.conname
+        FROM pg_catalog.pg_index i
+        JOIN pg_catalog.pg_class tbl ON i.indrelid = tbl.oid
+        JOIN pg_catalog.pg_namespace n ON tbl.relnamespace = n.oid
+        JOIN pg_catalog.pg_constraint con ON con.conindid = i.indexrelid AND con.contype = 'p'
+        JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS keys(attnum, ord) ON true
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = tbl.oid AND a.attnum = keys.attnum
+        WHERE i.indisprimary AND keys.ord <= i.indnkeyatts AND {TableFilter}
+        ORDER BY n.nspname, tbl.relname, keys.ord
+        """;
+
+    private const string ExtendedIndexesScript = $"""
+        SELECT n.nspname, tbl.relname, idx.relname, i.indisunique,
+               a.attname, i.indnkeyatts, keys.ord
+        FROM pg_catalog.pg_index i
+        JOIN pg_catalog.pg_class tbl ON i.indrelid = tbl.oid
+        JOIN pg_catalog.pg_class idx ON i.indexrelid = idx.oid
+        JOIN pg_catalog.pg_namespace n ON tbl.relnamespace = n.oid
+        JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS keys(attnum, ord) ON true
+        LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = tbl.oid AND a.attnum = keys.attnum
+        WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint con WHERE con.conindid = i.indexrelid)
+          AND {TableFilter}
+        ORDER BY n.nspname, tbl.relname, idx.relname, keys.ord
+        """;
+
     /// <summary>
     /// Reads the complete schema evidence on the caller's connection.
     /// </summary>
@@ -157,14 +191,24 @@ public sealed class PostgreSqlSchemaEvidenceReader
     /// The <paramref name="cancellationToken"/> was observed cancelled; no failure fact is
     /// produced.
     /// </exception>
+    public Task<SchemaEvidenceReadResult> ReadAsync(
+        NpgsqlConnection connection,
+        CancellationToken cancellationToken = default) =>
+        ReadAsync(connection, new PostgreSqlSchemaEvidenceReadOptions(), cancellationToken);
+
+    /// <summary>Reads explicitly selected tables and optional extended object evidence.</summary>
+    /// <remarks>Null scope selects all candidate tables; an empty scope selects none. The caller owns
+    /// the connection and any transaction. Concurrent DDL can interleave; expressions are not interpreted.</remarks>
     public async Task<SchemaEvidenceReadResult> ReadAsync(
         NpgsqlConnection connection,
+        PostgreSqlSchemaEvidenceReadOptions options,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(options);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var databaseName = connection.Database is { Length: > 0 } name ? name : "database";
+        var databaseName = IsValidIdentifier(connection.Database) ? connection.Database : "database";
         var step = new StepTracker(databaseName);
         try
         {
@@ -175,22 +219,25 @@ public sealed class PostgreSqlSchemaEvidenceReader
 
             var appliedMigrationIds = await ReadAppliedMigrationIdsAsync(
                 connection, step, cancellationToken).ConfigureAwait(false);
-            var snapshot = await ReadSnapshotAsync(connection, step, cancellationToken)
+            var snapshot = await ReadSnapshotAsync(connection, options, step, cancellationToken)
                 .ConfigureAwait(false);
             return SchemaEvidenceReadResult.Success(appliedMigrationIds, snapshot);
-        }
-        catch (Exception exception) when (exception is OperationCanceledException &&
-                                          cancellationToken.IsCancellationRequested)
-        {
-            throw;
         }
         catch (Exception exception)
         {
             return ClassifyFailure(exception, databaseName, step.Identifier);
         }
+        finally
+        {
+            completionCheckpoint?.Invoke("final");
+            cancellationToken.ThrowIfCancellationRequested();
+        }
     }
 
-    private static async Task<IReadOnlyList<string>> ReadAppliedMigrationIdsAsync(
+    private static bool IsValidIdentifier(string? value) => value is { Length: >= 1 and <= 128 } &&
+        !string.IsNullOrWhiteSpace(value) && !value.Any(char.IsControl);
+
+    private async Task<IReadOnlyList<string>> ReadAppliedMigrationIdsAsync(
         NpgsqlConnection connection,
         StepTracker step,
         CancellationToken cancellationToken)
@@ -216,11 +263,14 @@ public sealed class PostgreSqlSchemaEvidenceReader
             appliedMigrationIds.Clear();
         }
 
+        completionCheckpoint?.Invoke("history");
+        cancellationToken.ThrowIfCancellationRequested();
         return appliedMigrationIds;
     }
 
-    private static async Task<SchemaSnapshot> ReadSnapshotAsync(
+    private async Task<SchemaSnapshot> ReadSnapshotAsync(
         NpgsqlConnection connection,
+        PostgreSqlSchemaEvidenceReadOptions options,
         StepTracker step,
         CancellationToken cancellationToken)
     {
@@ -234,10 +284,15 @@ public sealed class PostgreSqlSchemaEvidenceReader
                 .ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                tables.Add((reader.GetString(0), reader.GetString(1)));
+                var pair = (reader.GetString(0), reader.GetString(1));
+                if (options.Tables is null || options.Tables.Contains(pair))
+                    tables.Add(pair);
             }
         }
 
+        completionCheckpoint?.Invoke("tables");
+        cancellationToken.ThrowIfCancellationRequested();
+        if (tables.Count == 0) return new SchemaSnapshot([]);
         var schemas = tables.Select(table => table.Schema).ToArray();
         var names = tables.Select(table => table.Name).ToArray();
 
@@ -245,12 +300,12 @@ public sealed class PostgreSqlSchemaEvidenceReader
         var columns = await ReadColumnsAsync(connection, schemas, names, cancellationToken)
             .ConfigureAwait(false);
         step.Identifier = "pg_index";
-        var primaryKeys = await ReadPrimaryKeysAsync(connection, schemas, names, cancellationToken)
+        var primaryKeys = await ReadPrimaryKeysAsync(connection, schemas, names, options.IncludeExtendedObjectEvidence, cancellationToken)
             .ConfigureAwait(false);
         step.Identifier = "pg_constraint";
-        var foreignKeys = await ReadForeignKeysAsync(connection, schemas, names, cancellationToken)
+        var foreignKeys = await ReadForeignKeysAsync(connection, schemas, names, options.IncludeExtendedObjectEvidence, cancellationToken)
             .ConfigureAwait(false);
-        var indexes = await ReadIndexesAsync(connection, schemas, names, cancellationToken)
+        var indexes = await ReadIndexesAsync(connection, schemas, names, options.IncludeExtendedObjectEvidence, cancellationToken)
             .ConfigureAwait(false);
 
         var schemaTables = tables
@@ -270,160 +325,208 @@ public sealed class PostgreSqlSchemaEvidenceReader
         return new SchemaSnapshot(schemaTables);
     }
 
-    private static async Task<Dictionary<(string Schema, string Table), List<SchemaColumn>>> ReadColumnsAsync(
+    private async Task<Dictionary<(string Schema, string Table), List<SchemaColumn>>> ReadColumnsAsync(
         NpgsqlConnection connection,
         string[] schemas,
         string[] names,
         CancellationToken cancellationToken)
     {
-        var columns = new Dictionary<(string, string), List<SchemaColumn>>();
-        await using var command = connection.CreateCommand();
-        command.CommandText = ColumnsScript;
-        command.Parameters.AddWithValue("schemaNames", schemas);
-        command.Parameters.AddWithValue("tableNames", names);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            var key = (reader.GetString(0), reader.GetString(1));
-            if (!columns.TryGetValue(key, out var tableColumns))
+            var columns = new Dictionary<(string, string), List<SchemaColumn>>();
+            await using var command = connection.CreateCommand();
+            command.CommandText = ColumnsScript;
+            command.Parameters.AddWithValue("schemaNames", schemas);
+            command.Parameters.AddWithValue("tableNames", names);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                columns[key] = tableColumns = [];
-            }
-
-            tableColumns.Add(new SchemaColumn(
-                reader.GetString(2),
-                reader.GetString(3),
-                reader.GetBoolean(4),
-                MapIdentityKind(reader.GetString(5)),
-                reader.GetBoolean(6)));
-        }
-
-        return columns;
-    }
-
-    private static async Task<Dictionary<(string Schema, string Table), SchemaPrimaryKey>> ReadPrimaryKeysAsync(
-        NpgsqlConnection connection,
-        string[] schemas,
-        string[] names,
-        CancellationToken cancellationToken)
-    {
-        var primaryKeys = new Dictionary<(string, string), List<string>>();
-        await using var command = connection.CreateCommand();
-        command.CommandText = PrimaryKeysScript;
-        command.Parameters.AddWithValue("schemaNames", schemas);
-        command.Parameters.AddWithValue("tableNames", names);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            var key = (reader.GetString(0), reader.GetString(1));
-            if (!primaryKeys.TryGetValue(key, out var columns))
-            {
-                primaryKeys[key] = columns = [];
-            }
-
-            columns.Add(reader.GetString(2));
-        }
-
-        return primaryKeys.ToDictionary(
-            pair => pair.Key,
-            pair => new SchemaPrimaryKey(pair.Value));
-    }
-
-    private static async Task<Dictionary<(string Schema, string Table), List<SchemaForeignKey>>> ReadForeignKeysAsync(
-        NpgsqlConnection connection,
-        string[] schemas,
-        string[] names,
-        CancellationToken cancellationToken)
-    {
-        // Foreign keys arrive as one row per (constraint, position); the per-table list keeps the
-        // constraint creation order of the query, and the constraint name is only the grouping
-        // key — it never enters the model.
-        var foreignKeys = new Dictionary<(string, string), List<SchemaForeignKey>>();
-        var constraints = new Dictionary<
-            (string Schema, string Table, string Constraint),
-            ConstraintRows>();
-        var orderedKeys = new List<(string Schema, string Table, string Constraint)>();
-        await using var command = connection.CreateCommand();
-        command.CommandText = ForeignKeysScript;
-        command.Parameters.AddWithValue("schemaNames", schemas);
-        command.Parameters.AddWithValue("tableNames", names);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            var tableKey = (reader.GetString(0), reader.GetString(1));
-            var constraintKey = (reader.GetString(0), reader.GetString(1), reader.GetString(2));
-            if (!constraints.TryGetValue(constraintKey, out var rows))
-            {
-                constraints[constraintKey] = rows = new ConstraintRows(
-                    reader.GetString(5), reader.GetString(6), MapDeleteRule(reader.GetString(3)[0]));
-                orderedKeys.Add(constraintKey);
-                if (!foreignKeys.TryGetValue(tableKey, out var tableForeignKeys))
+                var key = (reader.GetString(0), reader.GetString(1));
+                if (!columns.TryGetValue(key, out var tableColumns))
                 {
-                    foreignKeys[tableKey] = tableForeignKeys = [];
+                    columns[key] = tableColumns = [];
                 }
 
-                tableForeignKeys.Add(null!);
-                rows.TableIndex = tableForeignKeys.Count - 1;
+                tableColumns.Add(new SchemaColumn(
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    reader.GetBoolean(4),
+                    MapIdentityKind(reader.GetString(5)),
+                    reader.GetBoolean(6)));
             }
 
-            rows.Columns.Add(reader.GetString(4));
-            rows.ReferencedColumns.Add(reader.GetString(7));
+            return columns;
         }
-
-        foreach (var (schema, table, constraintName) in orderedKeys)
+        finally
         {
-            var rows = constraints[(schema, table, constraintName)];
-            foreignKeys[(schema, table)][rows.TableIndex] = new SchemaForeignKey(
-                rows.Columns,
-                rows.ReferencedTable,
-                rows.ReferencedColumns,
-                rows.Rule,
-                rows.ReferencedSchema);
+            completionCheckpoint?.Invoke("ReadColumnsAsync");
+            cancellationToken.ThrowIfCancellationRequested();
         }
-
-        return foreignKeys;
     }
 
-    private static async Task<Dictionary<(string Schema, string Table), List<SchemaIndex>>> ReadIndexesAsync(
+    private async Task<Dictionary<(string Schema, string Table), SchemaPrimaryKey>> ReadPrimaryKeysAsync(
         NpgsqlConnection connection,
         string[] schemas,
         string[] names,
+        bool extended,
         CancellationToken cancellationToken)
     {
-        // Index columns arrive as one row per (index, position); index names only group the
-        // rows and never enter the model.
-        var indexes = new Dictionary<(string, string), List<SchemaIndex>>();
-        var orderedIndexKeys = new List<(string Schema, string Table, string Index)>();
-        var indexColumns = new Dictionary<(string, string, string), List<string>>();
-        var indexUniqueness = new Dictionary<(string, string, string), bool>();
-        await using var command = connection.CreateCommand();
-        command.CommandText = IndexesScript;
-        command.Parameters.AddWithValue("schemaNames", schemas);
-        command.Parameters.AddWithValue("tableNames", names);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            var tableKey = (reader.GetString(0), reader.GetString(1));
-            var indexKey = (reader.GetString(0), reader.GetString(1), reader.GetString(2));
-            if (!indexColumns.TryGetValue(indexKey, out var columns))
+            var primaryKeys = new Dictionary<(string, string), List<string>>();
+            var constraintNames = new Dictionary<(string, string), string>();
+            await using var command = connection.CreateCommand();
+            command.CommandText = extended ? ExtendedPrimaryKeysScript : PrimaryKeysScript;
+            command.Parameters.AddWithValue("schemaNames", schemas);
+            command.Parameters.AddWithValue("tableNames", names);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                indexColumns[indexKey] = columns = [];
-                indexUniqueness[indexKey] = reader.GetBoolean(3);
-                orderedIndexKeys.Add(indexKey);
-                indexes.TryAdd(tableKey, []);
+                var key = (reader.GetString(0), reader.GetString(1));
+                if (!primaryKeys.TryGetValue(key, out var columns))
+                {
+                    primaryKeys[key] = columns = [];
+                }
+
+                columns.Add(reader.GetString(2));
+                if (extended) constraintNames[key] = reader.GetString(3);
             }
 
-            columns.Add(reader.GetString(4));
+            return primaryKeys.ToDictionary(
+                pair => pair.Key,
+                pair => new SchemaPrimaryKey(pair.Value, extended ? constraintNames[pair.Key] : null));
         }
-
-        foreach (var (schema, table, index) in orderedIndexKeys)
+        finally
         {
-            indexes[(schema, table)].Add(new SchemaIndex(
-                indexColumns[(schema, table, index)],
-                indexUniqueness[(schema, table, index)]));
+            completionCheckpoint?.Invoke("ReadPrimaryKeysAsync");
+            cancellationToken.ThrowIfCancellationRequested();
         }
+    }
 
-        return indexes;
+    private async Task<Dictionary<(string Schema, string Table), List<SchemaForeignKey>>> ReadForeignKeysAsync(
+        NpgsqlConnection connection,
+        string[] schemas,
+        string[] names,
+        bool extended,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Foreign keys arrive as one row per (constraint, position); the per-table list keeps the
+            // constraint creation order of the query, and the constraint name is only the grouping
+            // key; extended evidence also carries the catalog name.
+            var foreignKeys = new Dictionary<(string, string), List<SchemaForeignKey>>();
+            var constraints = new Dictionary<
+                (string Schema, string Table, string Constraint),
+                ConstraintRows>();
+            var orderedKeys = new List<(string Schema, string Table, string Constraint)>();
+            await using var command = connection.CreateCommand();
+            command.CommandText = ForeignKeysScript;
+            command.Parameters.AddWithValue("schemaNames", schemas);
+            command.Parameters.AddWithValue("tableNames", names);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var tableKey = (reader.GetString(0), reader.GetString(1));
+                var constraintKey = (reader.GetString(0), reader.GetString(1), reader.GetString(2));
+                if (!constraints.TryGetValue(constraintKey, out var rows))
+                {
+                    constraints[constraintKey] = rows = new ConstraintRows(
+                        reader.GetString(5), reader.GetString(6), MapDeleteRule(reader.GetString(3)[0]));
+                    orderedKeys.Add(constraintKey);
+                    if (!foreignKeys.TryGetValue(tableKey, out var tableForeignKeys))
+                    {
+                        foreignKeys[tableKey] = tableForeignKeys = [];
+                    }
+
+                    tableForeignKeys.Add(null!);
+                    rows.TableIndex = tableForeignKeys.Count - 1;
+                }
+
+                rows.Columns.Add(reader.GetString(4));
+                rows.ReferencedColumns.Add(reader.GetString(7));
+            }
+
+            foreach (var (schema, table, constraintName) in orderedKeys)
+            {
+                var rows = constraints[(schema, table, constraintName)];
+                foreignKeys[(schema, table)][rows.TableIndex] = new SchemaForeignKey(
+                    rows.Columns,
+                    rows.ReferencedTable,
+                    rows.ReferencedColumns,
+                    rows.Rule,
+                    rows.ReferencedSchema,
+                    extended ? constraintName : null);
+            }
+
+            return foreignKeys;
+        }
+        finally
+        {
+            completionCheckpoint?.Invoke("ReadForeignKeysAsync");
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
+    private async Task<Dictionary<(string Schema, string Table), List<SchemaIndex>>> ReadIndexesAsync(
+        NpgsqlConnection connection,
+        string[] schemas,
+        string[] names,
+        bool extended,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Index rows retain ordinal key/include evidence in the explicit mode.
+            var indexes = new Dictionary<(string, string), List<SchemaIndex>>();
+            var orderedIndexKeys = new List<(string Schema, string Table, string Index)>();
+            var indexColumns = new Dictionary<(string, string, string), List<string>>();
+            var indexUniqueness = new Dictionary<(string, string, string), bool>();
+            var includedColumns = new Dictionary<(string, string, string), List<string>>();
+            var keyCounts = new Dictionary<(string, string, string), int>();
+            await using var command = connection.CreateCommand();
+            command.CommandText = extended ? ExtendedIndexesScript : IndexesScript;
+            command.Parameters.AddWithValue("schemaNames", schemas);
+            command.Parameters.AddWithValue("tableNames", names);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var tableKey = (reader.GetString(0), reader.GetString(1));
+                var indexKey = (reader.GetString(0), reader.GetString(1), reader.GetString(2));
+                if (!indexColumns.TryGetValue(indexKey, out var columns))
+                {
+                    indexColumns[indexKey] = columns = [];
+                    indexUniqueness[indexKey] = reader.GetBoolean(3);
+                    includedColumns[indexKey] = [];
+                    if (extended) keyCounts[indexKey] = reader.GetInt16(5);
+                    orderedIndexKeys.Add(indexKey);
+                    indexes.TryAdd(tableKey, []);
+                }
+
+                if (!extended) columns.Add(reader.GetString(4));
+                else if (!reader.IsDBNull(4))
+                {
+                    if (reader.GetInt64(6) <= keyCounts[indexKey]) columns.Add(reader.GetString(4));
+                    else includedColumns[indexKey].Add(reader.GetString(4));
+                }
+            }
+
+            foreach (var (schema, table, index) in orderedIndexKeys)
+            {
+                var key = (schema, table, index);
+                indexes[(schema, table)].Add(extended
+                    ? new SchemaIndex(indexColumns[key], indexUniqueness[key], index,
+                        keyCounts[key], includedColumns[key])
+                    : new SchemaIndex(indexColumns[key], indexUniqueness[key]));
+            }
+
+            return indexes;
+        }
+        finally
+        {
+            completionCheckpoint?.Invoke("ReadIndexesAsync");
+            cancellationToken.ThrowIfCancellationRequested();
+        }
     }
 
     private static SchemaIdentityKind MapIdentityKind(string attidentity) => attidentity switch

@@ -2435,6 +2435,15 @@ transaction. Verified on SQL Server (integration tests) and SQLite; the statemen
 providers whose dialect accepts a parameterized `SELECT` without `FROM` (PostgreSQL, SQL Server,
 SQLite — MySQL/Oracle-family dialects are not covered).
 
+### Explicit PostgreSQL object evidence
+
+`ReadAsync(connection, new PostgreSqlSchemaEvidenceReadOptions(true, [("app", "items")]), token)`
+selects exact schema/table pairs and reports real PK/FK/index names, expression key counts and
+INCLUDE columns. Null scope selects all candidate tables; empty scope returns no tables while
+migration history still reads. The legacy entry retains its evidence dimensions. Expressions
+are not interpreted; caller connections and transactions remain caller-owned. Every completion,
+including resource release and failure, observes the caller token without exposing driver text.
+
 ### PostgreSQL schema evidence reader
 
 The PostgreSQL provider package (`ServiceMantle.Database.PostgreSql.Migration`, per
