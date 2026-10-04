@@ -283,23 +283,6 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 状态更新。CI 与 ReleaseTool 要求该环境，在变量缺失、跳过、发现零个测试、容器或连接失败时失败，
 并使用 ADR 固定的 Oracle Database Free 镜像。
 
-## 分阶段调用启动门
-
-`StartupDatabaseGate.PrepareAsync(options, token)` 共享完整 `RunAsync` 的部署校验与可选目标准备阶段，
-不创建迁移 scope、不解析 executor、不读取或修改任何 receipt。结果 `StartupDatabasePreparationResult`
-仅含 `Succeeded`、安全 `ErrorCode` 与 `Skipped`；准备关闭仍校验部署，Skipped 成功不能当作目标已创建
-或已验证可连接。准备开启时，已有可连接目标 Observe1/Prepare0；允许创建的缺失目标 Observe2/Prepare1。
-
-调用方可先单独准备，在成功后另建 `enableTargetPreparation=false` 的既有 options 调用完整 Run，
-避免重复观察/创建；显式关闭时也必须将 allowTargetCreation 保持 false。库不缓存或推断已准备状态，
-重复/并发 standalone 调用仍依具体 provider 现有并发语义，不能承诺分阶段互斥。只有 Run 更新一次性
-receipt；单独准备在 receipt 任意状态下都不触碰它。
-
-两种入口的 provider 缺失、创建拒绝、服务器 maintenance 缺失、timeout、不可达、异常与重观察失败
-错误码及顺序相同。调用方取消在入口与 provider 正常、异常、清理返回后检查，保留原 token 且无驱动
-inner；provider 内部 OCE 在 caller 未取消时仍是有限失败。步骤间外部操作不受保护，已提交的目标创建
-不因后续失败/取消回滚。迁移 scope 的释放契约沿用现有行为，本项没有扩写迁移编排。
-
 ## 局限与后续工作
 
 ### 当前范围（已实现）
@@ -485,6 +468,23 @@ stamp 的 id 与实际结构一致，也不回滚自身事务之外的副作用�
 - 门不读取 `IConfiguration`；目标配置、部署模式与创建许可由消费方读取后显式传入。
 - 门不执行 EF Core 迁移、不判断遗留库能否接管——这两者仍归消费方 executor。
 
+## 分阶段调用启动门
+
+`StartupDatabaseGate.PrepareAsync(options, token)` 共享完整 `RunAsync` 的部署校验与可选目标准备阶段，
+不创建迁移 scope、不解析 executor、不读取或修改任何 receipt。结果 `StartupDatabasePreparationResult`
+仅含 `Succeeded`、安全 `ErrorCode` 与 `Skipped`；准备关闭仍校验部署，Skipped 成功不能当作目标已创建
+或已验证可连接。准备开启时，已有可连接目标 Observe1/Prepare0；允许创建的缺失目标 Observe2/Prepare1。
+
+调用方可先单独准备，在成功后另建 `enableTargetPreparation=false` 的既有 options 调用完整 Run，
+避免重复观察/创建；显式关闭时也必须将 allowTargetCreation 保持 false。库不缓存或推断已准备状态，
+重复/并发 standalone 调用仍依具体 provider 现有并发语义，不能承诺分阶段互斥。只有 Run 更新一次性
+receipt；单独准备在 receipt 任意状态下都不触碰它。
+
+两种入口的 provider 缺失、创建拒绝、服务器 maintenance 缺失、timeout、不可达、异常与重观察失败
+错误码及顺序相同。调用方取消在入口与 provider 正常、异常、清理返回后检查，保留原 token 且无驱动
+inner；provider 内部 OCE 在 caller 未取消时仍是有限失败。步骤间外部操作不受保护，已提交的目标创建
+不因后续失败/取消回滚。迁移 scope 的释放契约沿用现有行为，本项没有扩写迁移编排。
+
 ## 变更文件
 
 ### 核心包
@@ -532,6 +532,20 @@ stamp 的 id 与实际结构一致，也不回滚自身事务之外的副作用�
 - `Directory.Packages.props` - 加入 Testcontainers 包
 - `README.md` - 新增迁移编排章节
 - `MIGRATION_ORCHESTRATION.md` - 本文档
+
+## MariaDb 显式部署声明与身份
+
+`services.AddServiceMantleMariaDbDeploymentCapability()` 仅幂等注册独立的部署声明；
+`MariaDbDatabaseDeploymentCapabilityProvider` 声明 SingleAndMultiInstance，不隐含其他能力。
+单实例纯解析只接受单 TCP server/port 与显式数据库；非法、多个host或非TCP返回空身份且零 I/O，
+由核心映射 LockNotSupported（executor=0）。合法输入仅开一个自己拥有的非池化/non-enlisted连接，
+只读查询 `SELECT @@lower_case_table_names, DATABASE(), LOWER(DATABASE())`；规则0保留server名字，
+1/2使用server lower名字，未知规则/空名字失败关闭，不凭CLR或未知collation猜测。
+UTF-8长度分隔的provider/domain、trim小写主机、端口与server规范库名构成SHA-256身份，凭据不进入身份。
+打开/读取/完整释放后的正常和异常完成均观察caller取消；失败统一安全无inner InvalidOperationException，
+核心返回LockFailed，acquisition预算超时为LockTimeout，caller取消原token优先。没有DDL、写入、
+transaction或cache，不保存caller工作单元。缺失目标先prepare；MultiInstance另行真实锁且身份调用0。
+DNS/代理/server别名不解析，单实例不承诺进程外互斥；数据库大小写等价由真实metadata决定。
 
 ## PostgreSQL 显式部署声明
 

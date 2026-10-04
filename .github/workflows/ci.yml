@@ -252,6 +252,13 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/composed
 
+      - name: Verify standalone preparation package consumption
+        run: >-
+          bash eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/startup-preparation
+
       # The Consul registration entry lives in a framework namespace and keeps the product prefix
       # on its class name; this consumer names it and calls both registration forms statically
       # from the packed artifact, without starting a host or creating any client, timer, or
@@ -310,12 +317,12 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/database-oracle
 
-      - name: Verify standalone preparation package consumption
+      - name: Verify MariaDb deployment package consumption
         run: >-
           bash eng/tests/package-consumption.sh
           --version $PACKAGE_VERSION
           --packages artifacts/packages
-          --consumer eng/tests/consumers/startup-preparation
+          --consumer eng/tests/consumers/database-mariadb
 
       - name: Enforce provider-neutral consumer source boundary
         run: |
