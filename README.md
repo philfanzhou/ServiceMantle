@@ -2465,6 +2465,33 @@ creation keeps the preparation provider's existing concurrency semantics; consum
 gate are not covered. The gate does not run EF Core migrations itself — the consuming service's
 `IDatabaseMigrationExecutor` stays responsible for execution and takeover decisions.
 
+### Standalone target preparation
+
+`await gate.PrepareAsync(options, token)` runs the same deployment validation and optional target
+preparation stage as `RunAsync`, without creating a migration scope, resolving an executor, or
+reading/updating any receipt. `StartupDatabasePreparationResult` contains only `Succeeded`, a safe
+`ErrorCode` and `Skipped`. Disabled preparation still validates deployment and returns skipped
+success with zero provider calls; this does not prove the target exists or is connectable.
+
+After successful enabled preparation, callers can explicitly skip it in the later complete run:
+
+```csharp
+var preparation = await gate.PrepareAsync(options, token);
+if (!preparation.Succeeded)
+    throw new InvalidOperationException(preparation.ErrorCode);
+var migrationOptions = new StartupDatabaseGateOptions(
+    options.Database, options.DeploymentMode, options.LockWaitBudget);
+var result = await gate.RunAsync(migrationOptions, receipt, serviceId, token);
+```
+
+There is no cached preparation state, automatic skip decision, receipt transition, or one-time
+limit on the standalone step. Creation permission, server maintenance connection requirements,
+provider timeouts, failure codes and caller cancellation are shared with the complete run. A
+provider's normal, exceptional or cleanup completion is followed by the caller cancellation
+checkpoint. Internal cancellation remains a finite failure. Only the complete run writes the
+receipt. Changes made by callers or other actors between steps are outside the guarantee, and
+committed target creation is not rolled back after later failure or cancellation.
+
 ## Non-goals (first version)
 
 - No product-specific user / OAuth / JWT domain models.
