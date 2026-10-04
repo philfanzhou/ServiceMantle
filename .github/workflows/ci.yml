@@ -255,6 +255,13 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/logging
 
+      - name: Verify SQLite recovery package consumption
+        run: >-
+          bash eng/tests/package-consumption.sh
+          --version $PACKAGE_VERSION
+          --packages artifacts/packages
+          --consumer eng/tests/consumers/database-sqlite
+
       # Four modules in one project, next to the ASP.NET Core implicit usings and the framework
       # namespaces those modules' entry points require. Ordinary types carry no product prefix now,
       # so this is where an ambiguity between a ServiceMantle type and a framework type of the same
@@ -324,12 +331,12 @@ jobs:
           --packages artifacts/packages
           --consumer eng/tests/consumers/database-oracle
 
-      - name: Verify SQLite recovery package consumption
+      - name: Verify MariaDb deployment package consumption
         run: >-
           bash eng/tests/package-consumption.sh
           --version $PACKAGE_VERSION
           --packages artifacts/packages
-          --consumer eng/tests/consumers/database-sqlite
+          --consumer eng/tests/consumers/database-mariadb
 
       - name: Enforce provider-neutral consumer source boundary
         run: |
