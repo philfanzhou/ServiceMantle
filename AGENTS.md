@@ -68,6 +68,13 @@ ASP.NET Core、数据库 provider 与 EF Core 持久化能力通过独立包提�
    确认调用方没有新增 using 冲突或全限定名负担。消费项目必须覆盖本次改名涉及的每一个包，并且
    同时 using 该包入口所需的框架 namespace——没有被消费项目引用的包，CS0104 不会在 CI 里暴露。
 
+## 发布操作
+
+- 自动选择版本时，按 `CONTRIBUTING.md` 的“发布版本策略”只递增 patch，不因功能规模自行
+  递增 major/minor；选择 RC 时先明确稳定版基线与候选周期。
+- 推送 tag 前核对准确版本、源码提交、官方 feed 与现有 tag 的占用情况，按 `RELEASING.md`
+  执行发布及实际结果回读；不得把推送 tag、草稿或 edge artifact 报告为 NuGet 发布完成。
+
 ## 验证与包边界
 
 按改动风险运行最小充分验证。常规本地入口为：

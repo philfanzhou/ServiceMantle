@@ -9,8 +9,8 @@
 2. 给该 commit 打 tag 并推送：
 
    ```bash
-   git tag v0.1.0-rc.1 <commit-on-main>
-   git push origin v0.1.0-rc.1
+   git tag v0.3.1-rc.1 <commit-on-main>
+   git push origin v0.3.1-rc.1
    ```
 
 3. 关注 **Package release** workflow。推送 NuGet.org 之前，发布 job 会在 `nuget.org`
@@ -22,6 +22,12 @@
 `0.0.0-edge.<run>.<attempt>`，只作为 workflow artifact 存在。
 
 ## 版本规则
+
+自动选择版本遵守 [贡献指南的发布版本策略](CONTRIBUTING.md#发布版本策略)：以最近已发布稳定版为
+基线，只递增 patch，major/minor 保持不变。例如稳定版 `0.3.0` 之后发布 `0.3.1-rc.1`；同一
+候选周期继续发 `0.3.1-rc.2`，转正式版时发布 `0.3.1`。只有维护者明确指定其他版本号时才使用
+该版本，不按功能规模自行升级 major/minor。推送前核对所选 tag 与每个注册包的目标版本均未被
+其他发布占用；失败重跑遵守下文同版本、同提交的规则。
 
 版本号是去掉前导 `v` 的 tag。`v0.1.0` 发布 `0.1.0`；`v0.1.0-rc.1` 发布预发布版本
 `0.1.0-rc.1`。NuGet 把任何带预发布标签的版本视为预发布，因此不需要额外做任何标记。
