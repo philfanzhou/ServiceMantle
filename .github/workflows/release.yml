@@ -26,6 +26,7 @@ jobs:
     outputs:
       number: ${{ steps.version.outputs.number }}
       publish: ${{ steps.version.outputs.publish }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       # Full history, because the tag has to be proved to be on main before anything is published.
       - name: Check out repository
@@ -279,3 +280,37 @@ jobs:
           --consumer eng/tests/consumers/web
           --attempts 30
           --delay-seconds 30
+
+  # A stable version is announced where consumers look for it — the repository's Releases page —
+  # not only on NuGet.org. Prerelease tags (rc, alpha) publish packages only, so a candidate never
+  # becomes the repository's current release. This job runs after the NuGet push succeeded, so the
+  # release it creates always names a version that is already on the feed. Re-running a tag whose
+  # release already exists leaves that release untouched and passes, matching the `already present`
+  # handling of the package push.
+  github-release:
+    name: Publish the GitHub release for a stable version
+    needs: [version, publish-nuget]
+    if: ${{ needs.version.outputs.publish == 'true' && needs.version.outputs.prerelease == 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # The tag name reaches the shell through the environment rather than expression
+      # interpolation: a git tag may contain quotes, and a name spliced into the command line could
+      # then run as shell.
+      - name: Create the release for the pushed tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub release $TAG_NAME already exists; leaving it as it is."
+            exit 0
+          fi
+          gh release create "$TAG_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG_NAME" \
+            --generate-notes \
+            --latest

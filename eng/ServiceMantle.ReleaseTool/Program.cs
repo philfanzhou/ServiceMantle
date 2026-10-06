@@ -106,9 +106,10 @@ internal static class Program
             tagged,
             RequiredOption(args, "--untagged-version"));
 
-        // Two key=value lines so a workflow can append them straight to $GITHUB_OUTPUT.
+        // Three key=value lines so a workflow can append them straight to $GITHUB_OUTPUT.
         output.WriteLine($"number={resolved.Number}");
         output.WriteLine($"publish={(resolved.Publish ? "true" : "false")}");
+        output.WriteLine($"prerelease={(resolved.Prerelease ? "true" : "false")}");
     }
 
     private static async Task PublishAsync(

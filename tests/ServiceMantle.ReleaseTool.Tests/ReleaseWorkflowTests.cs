@@ -179,6 +179,43 @@ public sealed class ReleaseWorkflowTests
         Assert.Contains("--version \"$PACKAGE_VERSION\"", job, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Only_a_stable_tag_publishes_a_github_release()
+    {
+        var job = Job("github-release");
+
+        // Prerelease classification comes from resolve-version, never from a shell-side re-derivation
+        // of the tag name, so it stays identical to the unit-tested rule.
+        Assert.Contains(
+            "if: ${{ needs.version.outputs.publish == 'true' && needs.version.outputs.prerelease == 'false' }}",
+            job,
+            StringComparison.Ordinal);
+        Assert.Contains("prerelease: ${{ steps.version.outputs.prerelease }}", Job("version"), StringComparison.Ordinal);
+
+        // The release is created only after the packages are on NuGet.org, and an upstream failure
+        // or cancellation skips it the same way it skips the push.
+        foreach (var gate in new[] { "version", "publish-nuget" })
+        {
+            Assert.Contains(gate, NeedsOf(job));
+        }
+
+        Assert.DoesNotContain("always()", job, StringComparison.Ordinal);
+        Assert.DoesNotContain("failure()", job, StringComparison.Ordinal);
+        Assert.Contains("gh release create", job, StringComparison.Ordinal);
+        // The tag name may contain quote characters, so it reaches the shell through the
+        // environment, never through expression interpolation.
+        Assert.Contains("TAG_NAME: ${{ github.ref_name }}", job, StringComparison.Ordinal);
+        Assert.DoesNotContain("create \"${{", job, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_repository_write_permission_is_scoped_to_the_github_release_job()
+    {
+        Assert.Contains("contents: write", Job("github-release"), StringComparison.Ordinal);
+        Assert.Single(
+            Regex.Matches(Release, @"contents:\s*write", RegexOptions.None, TimeSpan.FromSeconds(5)));
+    }
+
     /// <summary>
     /// The post-publish restore retry must be an explicit, finite budget that stays below the job
     /// timeout, so index latency fails through the script's own non-zero exit instead of degrading
