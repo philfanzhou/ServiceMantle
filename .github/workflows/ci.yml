@@ -149,6 +149,24 @@ jobs:
           --version $PACKAGE_VERSION
           --commit ${{ github.sha }}
 
+      - name: Verify SQL Server target identity
+        env:
+          RUN_SERVICEMANTLE_SQLSERVER_TESTS: true
+        run: >-
+          dotnet test
+          --project tests/ServiceMantle.Database.SqlServer.Tests/ServiceMantle.Database.SqlServer.Tests.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          --timeout 3m
+          --filter-class ServiceMantle.Database.SqlServer.Tests.SqlServerDeploymentIdentityRealTests
+          --minimum-expected-tests 2
+          --zero-tests-policy strict
+          --fail-skips on
+          --diagnostic
+          --diagnostic-synchronous-write
+          --diagnostic-output-directory artifacts/test-diagnostics/sqlserver-identity
+
       - name: Start pinned Oracle Database Free
         shell: bash
         run: |
