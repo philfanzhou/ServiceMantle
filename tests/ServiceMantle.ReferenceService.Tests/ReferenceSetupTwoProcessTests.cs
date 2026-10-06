@@ -103,7 +103,7 @@ public sealed class ReferenceSetupTwoProcessTests : IAsyncLifetime
         var other = ReferenceEquals(issuer, first) ? second : first;
         await WaitUntilAsync(() => other.Output.Contains(
             ReferenceSetupCodeIssuer.AlreadyIssuedHint, StringComparison.Ordinal));
-        var code = ExtractCode(issuer.Output);
+        var code = await WaitForCodeAsync(issuer);
 
         // One installation row, still pending, with one digest; the schema history carries the
         // full known migration set exactly once - the second process added no second history.
@@ -287,7 +287,9 @@ public sealed class ReferenceSetupTwoProcessTests : IAsyncLifetime
         var client = new HttpClient { BaseAddress = firstAddress, Timeout = ReferenceServiceBudgets.Request };
         var inFlight = PostSetupAsync(client, code);
         await WaitUntilAsync(async () =>
-            (await ReadAsync(target, "SELECT last_value::text FROM setup2_death_arrivals"))[0] != "0");
+            // A fresh sequence already has last_value=1; is_called distinguishes that
+            // initial value from an actual workspace insert reaching the death gate.
+            (await ReadAsync(target, "SELECT is_called::text FROM setup2_death_arrivals"))[0] == "true");
 
         // The process tree dies while its completion is parked in the trigger. The in-flight
         // request ends in transport failure, and the aborted connection rolls the transaction
@@ -391,9 +393,9 @@ public sealed class ReferenceSetupTwoProcessTests : IAsyncLifetime
         var deadline = DateTime.UtcNow + ReferenceServiceBudgets.Start;
         while (DateTime.UtcNow < deadline)
         {
-            if (CountOccurrences(service.Output, CodeBannerAnchor) == 1)
+            if (ReferenceSetupCodeBanner.TryRead(service.Output, out var code))
             {
-                return ExtractCode(service.Output);
+                return code;
             }
 
             Assert.False(
@@ -403,14 +405,6 @@ public sealed class ReferenceSetupTwoProcessTests : IAsyncLifetime
         }
 
         throw new InvalidOperationException("the setup code banner did not appear in time");
-    }
-
-    private static string ExtractCode(string output)
-    {
-        var lines = output.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        var index = Array.IndexOf(lines, CodeBannerAnchor);
-        Assert.True(index >= 0, "no setup code banner was printed: " + output);
-        return lines[index + 1];
     }
 
     private static int CountOccurrences(string text, string value)

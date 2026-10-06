@@ -167,6 +167,25 @@ jobs:
           --diagnostic-synchronous-write
           --diagnostic-output-directory artifacts/test-diagnostics/sqlserver-identity
 
+      - name: Verify reference setup process boundaries
+        env:
+          RUN_SERVICEMANTLE_POSTGRES_TESTS: true
+        run: >-
+          dotnet test
+          --project tests/ServiceMantle.ReferenceService.Tests/ServiceMantle.ReferenceService.Tests.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          --timeout 3m
+          --filter-class ServiceMantle.ReferenceService.Tests.ReferenceSetupTwoProcessTests
+          --filter-class ServiceMantle.ReferenceService.Tests.ReferenceSetupCodeBannerTests
+          --minimum-expected-tests 13
+          --zero-tests-policy strict
+          --fail-skips on
+          --diagnostic
+          --diagnostic-synchronous-write
+          --diagnostic-output-directory artifacts/test-diagnostics/reference-setup-processes
+
       - name: Start pinned Oracle Database Free
         shell: bash
         run: |

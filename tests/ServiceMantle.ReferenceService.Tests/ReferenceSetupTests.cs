@@ -532,9 +532,9 @@ public sealed class ReferenceSetupTests : IAsyncLifetime
 
     private static string ExtractCode(IReadOnlyList<string> lines)
     {
-        var index = Array.IndexOf([.. lines], "one-time setup code:");
-        Assert.True(index >= 0, "no setup code banner was printed: " + string.Join('\n', lines));
-        return lines[index + 1];
+        Assert.True(ReferenceSetupCodeBanner.TryRead(string.Join('\n', lines), out var code),
+            "a complete, unambiguous setup code banner was not captured");
+        return code;
     }
 
     private static async Task<string> WaitForCodeAsync(ReferenceServiceProcess process)
@@ -542,10 +542,9 @@ public sealed class ReferenceSetupTests : IAsyncLifetime
         var deadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < deadline)
         {
-            var lines = process.Output.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Contains("one-time setup code:"))
+            if (ReferenceSetupCodeBanner.TryRead(process.Output, out var code))
             {
-                return ExtractCode(lines);
+                return code;
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(50), Token);

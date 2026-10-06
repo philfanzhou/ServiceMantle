@@ -220,7 +220,7 @@ public sealed class ReferencePackageSmokeTests : IClassFixture<ReferencePackageS
             Environment.NewLine,
             service.Output.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .SkipWhile(line => !line.Equals(CodeBannerAnchor, StringComparison.Ordinal))
-                .Take(2));
+                .TakeWhile(line => !line.StartsWith("expires at ", StringComparison.Ordinal)));
         Assert.Contains(code, banner, StringComparison.Ordinal);
         Assert.Equal(1, CountOccurrences(service.Output, code));
         foreach (var text in responses)
@@ -301,12 +301,9 @@ public sealed class ReferencePackageSmokeTests : IClassFixture<ReferencePackageS
         var deadline = DateTime.UtcNow + ReferenceServiceBudgets.Start;
         while (DateTime.UtcNow < deadline)
         {
-            var lines = service.Output.Split(
-                '\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-            var index = Array.IndexOf(lines, CodeBannerAnchor);
-            if (index >= 0 && index + 1 < lines.Length)
+            if (ReferenceSetupCodeBanner.TryRead(service.Output, out var code))
             {
-                return lines[index + 1];
+                return code;
             }
 
             Assert.False(
