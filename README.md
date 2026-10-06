@@ -2832,8 +2832,10 @@ combination validation to the global setting catalog:
 
 | Key | Type | Sensitive | Meaning |
 | --- | --- | --- | --- |
-| `loki.uri` | String | no | The Loki base endpoint; an absolute HTTPS URI without user info, query, or fragment. |
-| `loki.authorization` | String | yes | The Authorization header value, 1–4096 characters without control characters. |
+| `loki.uri` | String | no | The Loki base endpoint; HTTPS by default, or explicitly allowed HTTP; no user info, query, or fragment. |
+| `loki.authorization` | String | yes | A non-blank Authorization header value, 1–4096 characters without control characters; absent for explicit no authentication. |
+| `loki.allow_insecure_http` | Boolean | no | Explicitly permits HTTP on any host; defaults to `false`. |
+| `loki.allow_no_authentication` | Boolean | no | Explicitly selects no authentication; defaults to `false`, and requires deleting `loki.authorization` in the same candidate. |
 
 ```csharp
 // snapshot: an activated ServiceSettingSnapshot, read by the consumer's own loader.
@@ -2842,20 +2844,50 @@ var lokiState = builder.AddServiceMantleGrafanaLokiFromSettings(
     options => options.BatchSize = 200);
 ```
 
-The classification owns enablement, the endpoint, and the authorization resolver name. A usable
-pair enables the sink under the explicit entry's validation rules and registers exactly one
-in-memory `FixedRemoteLogAuthorizationResolver` answering the fixed
-`servicemantle-loki-settings` name. An empty pair keeps the sink disabled with zero registered
-activity. An unusable pair (a non-HTTPS endpoint, a half-configured pair, or an unusable
-authorization value) also keeps the sink disabled; the returned `GrafanaLokiSettingState` carries
-a value-free category (`endpoint_invalid`, `endpoint_missing`, `authorization_missing`,
-`authorization_invalid`) for the consumer's post-startup warning. Categories, exceptions, and
-diagnostics never contain the endpoint or the Authorization value. The strict update validation
-(`loki.invalid_endpoint`, `loki.authorization_value_invalid`, `setting.required` on the missing
-half) is the management rule: a saved value must be one the next start can use; the startup
-classification deliberately tolerates values an older release already stored. Not guaranteed:
-remote reachability or delivery (the upstream sink's semantics apply), and changes take effect
-only after a restart.
+All four settings require restart. The classification owns enablement, the endpoint, the
+HTTP policy, the loopback testing policy (always off for snapshots), and the authorization resolver
+name. The callback controls batching, labels, and timeouts. Authenticated settings register one
+in-memory `FixedRemoteLogAuthorizationResolver` answering `servicemantle-loki-settings`; explicit
+no authentication registers and resolves no resolver and sends no Authorization header.
+An empty endpoint/Authorization pair stays disabled even when policy flags are set. Unusable
+settings return the existing value-free categories (`endpoint_invalid`, `endpoint_missing`,
+`authorization_missing`, `authorization_invalid`); the last category also includes a stored
+credential conflicting with no authentication. Errors never echo endpoints or credentials.
+Strict management validation rejects unusable complete candidates; a separate definitions-only
+startup registry can still load legacy strings for tolerant classification. Boolean parsing and
+persisted-type validation always precede classification.
+
+For an internal HTTP endpoint without authentication, submit this one management update batch
+using the normal `ServiceSettingUpdateService` and the caller-owned transaction:
+
+```csharp
+var changes = new Dictionary<string, string?>
+{
+    [GrafanaLokiSettingDefinitions.Endpoint] = "http://loki.internal:3100/prefix",
+    [GrafanaLokiSettingDefinitions.AllowInsecureHttp] = "true",
+    [GrafanaLokiSettingDefinitions.AllowNoAuthentication] = "true",
+    [GrafanaLokiSettingDefinitions.Authorization] = null // delete, never silently ignore
+};
+// UpdateAsync validates and stages the batch; the caller commits, then restarts.
+```
+
+HTTP and authentication are independent choices: HTTPS/HTTP can each use authentication or
+explicit no authentication. Existing HTTPS plus Authorization settings with no new keys keep the
+old behavior. Missing or deleted policy keys default to `false`; missing Authorization never
+implicitly selects no authentication. To restore authentication, delete or set the no-authentication
+flag to `false` and supply valid Authorization in the same batch. To disable shipping, delete the
+endpoint and Authorization together; valid policy flags may remain stored.
+
+Before downgrading to an older package that does not recognize the new keys, use the new package
+to delete both policy keys and restore HTTPS plus Authorization (or delete both endpoint and
+Authorization), commit, and restart. The old loader rejects unknown keys, so downgrading while
+leaving the new keys stored is unsupported. The existing raw two-argument classification and
+endpoint-parser APIs retain their strict defaults and binary signatures.
+
+HTTP explicitly accepts plaintext transmission of logs and any Authorization header. The caller
+owns network trust and access control. ServiceMantle does not guarantee confidentiality, network
+integrity, reachability, durable delivery, or reliable message storage. Saving settings does not
+change the current snapshot or running sink; changes take effect after restart.
 
 ### Migrating from the separate Grafana Loki package
 

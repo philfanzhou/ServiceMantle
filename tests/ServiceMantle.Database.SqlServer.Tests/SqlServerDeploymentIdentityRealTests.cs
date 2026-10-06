@@ -1,3 +1,5 @@
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Configurations;
 using Microsoft.Data.SqlClient;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Testing;
@@ -21,10 +23,18 @@ public sealed class SqlServerDeploymentIdentityRealTests
         // Initialize the system catalog before accepting clients. The pinned image does not
         // apply MSSQL_COLLATION to the packaged system database templates on ordinary startup.
         // This is the same --setup/-q path used by its mssql-conf/set-collation.sh.
+        const string setupComplete = "/tmp/servicemantle-catalog-setup-complete";
         await using var container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04")
             .WithPassword("Deployment-password-1").WithEnvironment("MSSQL_MEMORY_LIMIT_MB", "1024")
             .WithEntrypoint("/bin/bash", "-c")
-            .WithCommand($"/opt/mssql/bin/sqlservr --setup -q{expectedCollation} && exec /opt/mssql/bin/sqlservr").Build();
+            .WithCommand($"/opt/mssql/bin/sqlservr --setup -q{expectedCollation} && touch {setupComplete} && exec /opt/mssql/bin/sqlservr")
+            // --setup itself accepts SQL queries before exiting. A successful SELECT 1
+            // alone can therefore signal readiness of the process that is about to stop.
+            // Wait for setup to exit, then query the final server before creating clients.
+            .WithWaitStrategy(Wait.ForUnixContainer()
+                .UntilFileExists(setupComplete, FileSystem.Container)
+                .UntilCommandIsCompleted("/opt/mssql-tools18/bin/sqlcmd", "-C", "-b", "-r", "1", "-d", "master", "-Q", "SELECT 1;"))
+            .Build();
         await container.StartAsync(TestContext.Current.CancellationToken);
         var administrator = new SqlConnectionStringBuilder(container.GetConnectionString()) { InitialCatalog = "master", Pooling = false, Enlist = false };
         await using (var setup = new SqlConnection(administrator.ConnectionString))
@@ -41,9 +51,23 @@ public sealed class SqlServerDeploymentIdentityRealTests
             await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
         var builder = new SqlConnectionStringBuilder(administrator.ConnectionString) { InitialCatalog = "CaseDb", UserID = "identity_user", Password = "Identity-password-1" };
-        var provider = new SqlServerDatabaseDeploymentCapabilityProvider();
+        var probe = new DiagnosticProbe();
+        var provider = new SqlServerDatabaseDeploymentCapabilityProvider(probe);
         BootstrapDatabaseConfiguration Target() => new(WellKnownDatabaseProviderIds.SqlServer, "16", builder.ConnectionString);
-        var first = await provider.GetCanonicalTargetIdentityAsync(Target(), TestContext.Current.CancellationToken);
+        async Task<string> ReadIdentityAsync()
+        {
+            try
+            {
+                return await provider.GetCanonicalTargetIdentityAsync(Target(), TestContext.Current.CancellationToken);
+            }
+            catch (InvalidOperationException) when (probe.FailureDiagnostics is not null)
+            {
+                // Diagnose the fixture without exposing the driver's messages, connection
+                // string, or credentials, or changing the provider's safe exception contract.
+                throw new Xunit.Sdk.XunitException(probe.FailureDiagnostics);
+            }
+        }
+        var first = await ReadIdentityAsync();
         Assert.NotEmpty(first);
         await using (var verifier = new SqlConnection(administrator.ConnectionString))
         {
@@ -53,12 +77,12 @@ public sealed class SqlServerDeploymentIdentityRealTests
             Assert.Equal(0, Convert.ToInt32(await sessions.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
         }
         builder.UserID = administrator.UserID; builder.Password = administrator.Password;
-        Assert.Equal(first, await provider.GetCanonicalTargetIdentityAsync(Target(), TestContext.Current.CancellationToken));
+        Assert.Equal(first, await ReadIdentityAsync());
         builder.InitialCatalog = "casedb";
         if (caseSensitive)
             await Assert.ThrowsAsync<InvalidOperationException>(() => provider.GetCanonicalTargetIdentityAsync(Target(), TestContext.Current.CancellationToken).AsTask());
         else
-            Assert.Equal(first, await provider.GetCanonicalTargetIdentityAsync(Target(), TestContext.Current.CancellationToken));
+            Assert.Equal(first, await ReadIdentityAsync());
         await using (var setup = new SqlConnection(administrator.ConnectionString))
         {
             await setup.OpenAsync(TestContext.Current.CancellationToken);
@@ -82,12 +106,34 @@ public sealed class SqlServerDeploymentIdentityRealTests
             }
         }
         builder.InitialCatalog = "Distinct";
-        var distinct = await provider.GetCanonicalTargetIdentityAsync(Target(), TestContext.Current.CancellationToken);
+        var distinct = await ReadIdentityAsync();
         builder.InitialCatalog = "distinct";
-        Assert.Equal(!caseSensitive, distinct == await provider.GetCanonicalTargetIdentityAsync(Target(), TestContext.Current.CancellationToken));
+        Assert.Equal(!caseSensitive, distinct == await ReadIdentityAsync());
         builder.Password = "invalid-secret";
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => provider.GetCanonicalTargetIdentityAsync(Target(), TestContext.Current.CancellationToken).AsTask());
         Assert.Null(error.InnerException); Assert.DoesNotContain("invalid-secret", error.ToString());
+    }
+
+    private sealed class DiagnosticProbe : ISqlServerCanonicalTargetProbe
+    {
+        private readonly SqlServerCanonicalTargetProbe inner = new();
+        public string? FailureDiagnostics { get; private set; }
+
+        public async ValueTask<string?> ReadAsync(SqlConnectionStringBuilder builder, CancellationToken token)
+        {
+            FailureDiagnostics = null;
+            try
+            {
+                return await inner.ReadAsync(builder, token);
+            }
+            catch (SqlException exception)
+            {
+                FailureDiagnostics = "SQL Server identity probe failed; " + string.Join(", ",
+                    exception.Errors.Cast<SqlError>().Select(error =>
+                        $"number={error.Number}, state={error.State}, class={error.Class}"));
+                throw;
+            }
+        }
     }
 }
 
