@@ -1,4 +1,5 @@
 using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Configurations;
 using Microsoft.Data.SqlClient;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Testing;
@@ -31,7 +32,7 @@ public sealed class SqlServerDeploymentIdentityRealTests
             // alone can therefore signal readiness of the process that is about to stop.
             // Wait for setup to exit, then query the final server before creating clients.
             .WithWaitStrategy(Wait.ForUnixContainer()
-                .UntilFileExists(setupComplete)
+                .UntilFileExists(setupComplete, FileSystem.Container)
                 .UntilCommandIsCompleted("/opt/mssql-tools18/bin/sqlcmd", "-C", "-b", "-r", "1", "-d", "master", "-Q", "SELECT 1;"))
             .Build();
         await container.StartAsync(TestContext.Current.CancellationToken);
