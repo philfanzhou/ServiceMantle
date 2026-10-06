@@ -19,6 +19,18 @@ public sealed class ReleaseVersionTests
     }
 
     [Theory]
+    [InlineData("v0.1.0", false)]
+    [InlineData("v10.20.30", false)]
+    [InlineData("v0.1.0-rc.1", true)]
+    [InlineData("v0.1.0-alpha.1", true)]
+    public void A_tag_reports_whether_the_version_is_a_prerelease(string refName, bool expected)
+    {
+        var resolved = ReleaseVersion.Resolve(refName, tagged: true, untaggedVersion: "0.0.0-edge.1");
+
+        Assert.Equal(expected, resolved.Prerelease);
+    }
+
+    [Theory]
     // Build metadata is dropped by NuGet, so two tags differing only after '+' would land on the
     // same package slot.
     [InlineData("v0.1.0+build.5")]
@@ -46,6 +58,9 @@ public sealed class ReleaseVersionTests
 
         Assert.Equal("0.0.0-edge.7.1", resolved.Number);
         Assert.False(resolved.Publish);
+        // The edge version carries a prerelease label, so it classifies as one even though the
+        // publish flag already keeps it away from every release surface.
+        Assert.True(resolved.Prerelease);
     }
 
     [Fact]

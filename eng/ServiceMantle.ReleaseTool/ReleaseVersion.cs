@@ -13,7 +13,14 @@ internal static class ReleaseVersion
     internal const string TagPrefix = "v";
 
     /// <summary>Validates one release version and returns it unchanged.</summary>
-    internal static string Require(string value, string description)
+    internal static string Require(string value, string description) =>
+        Validate(value, description).ToNormalizedString();
+
+    /// <summary>
+    /// Validates one release version and returns it parsed, so callers can read classifications
+    /// (such as prerelease) without parsing the validated string a second time.
+    /// </summary>
+    internal static NuGetVersion Validate(string value, string description)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -41,7 +48,7 @@ internal static class ReleaseVersion
                 $"('{parsed.ToNormalizedString()}').");
         }
 
-        return value;
+        return parsed;
     }
 
     /// <summary>Decides the version a push of <paramref name="refName"/> should produce.</summary>
@@ -52,7 +59,11 @@ internal static class ReleaseVersion
     {
         if (!tagged)
         {
-            return new ResolvedVersion(Require(untaggedVersion, "untagged version"), Publish: false);
+            var untagged = Validate(untaggedVersion, "untagged version");
+            return new ResolvedVersion(
+                untagged.ToNormalizedString(),
+                Publish: false,
+                Prerelease: untagged.IsPrerelease);
         }
 
         if (string.IsNullOrWhiteSpace(refName) ||
@@ -62,10 +73,17 @@ internal static class ReleaseVersion
                 $"A release tag must start with '{TagPrefix}', for example v1.2.3 or v1.2.3-rc.1.");
         }
 
+        var version = Validate(refName[TagPrefix.Length..], "release tag version");
         return new ResolvedVersion(
-            Require(refName[TagPrefix.Length..], "release tag version"),
-            Publish: true);
+            version.ToNormalizedString(),
+            Publish: true,
+            Prerelease: version.IsPrerelease);
     }
 }
 
-internal sealed record ResolvedVersion(string Number, bool Publish);
+/// <param name="Prerelease">
+/// Whether the version carries a prerelease label. The release workflow creates a GitHub release
+/// only for a stable version, so this classification has to be decided here — next to the version
+/// rule — rather than re-derived from the tag name in workflow shell.
+/// </param>
+internal sealed record ResolvedVersion(string Number, bool Publish, bool Prerelease);

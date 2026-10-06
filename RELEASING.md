@@ -16,7 +16,9 @@
 3. 关注 **Package release** workflow。推送 NuGet.org 之前，发布 job 会在 `nuget.org`
    environment 上暂停，等待必需 reviewer 的人工批准；批准前核对触发本次运行的 tag 与
    `version` job 解析出的版本号。批准后，每个已注册的包及其符号包都以 tag 对应的版本
-   出现在 NuGet.org 上，并且一个消费项目已经从 NuGet.org 还原回该版本。
+   出现在 NuGet.org 上，并且一个消费项目已经从 NuGet.org 还原回该版本。若是正式版
+   （版本号不带预发布后缀），workflow 还会为该 tag 自动创建 GitHub Release（见
+   [GitHub Release](#github-release) 一节）；RC 等候选版本只发布 NuGet 包。
 
 推送到 `main` 会运行相同的验证并产生相同的产物，但不发布任何东西。它们的版本号是
 `0.0.0-edge.<run>.<attempt>`，只作为 workflow artifact 存在。
@@ -86,6 +88,9 @@ NuGet 会丢弃它，`v1.0.0+a` 和 `v1.0.0+b` 会碰撞同一个包槽位。
 
 已发布的版本绝不删除或替换。如果发布的版本有错，发布一个新版本。
 
+重跑同一个 tag 时，已存在的 GitHub Release 不会被修改或覆盖，`github-release` job 直接视为
+成功；需要修订 release notes 时在 GitHub 页面上手动编辑。
+
 要在不推送的情况下演练，给命令加 `--dry-run`：它执行每一项检查和每一次 feed 比对，但不推送
 任何内容。
 
@@ -106,6 +111,19 @@ dotnet run --project eng/ServiceMantle.ReleaseTool -- publish \
 
 推送在 feed 接受之后过一段时间才变得可还原，因此最初的几次尝试预期会失败。预算是有限的——
 十次尝试、间隔三十秒——耗尽预算会使运行失败，而不是无限期等待。
+
+## GitHub Release
+
+版本号不带预发布后缀的 tag（例如 `v0.3.1`，区别于 `v0.3.1-rc.1`）在 NuGet.org 发布成功后，
+`github-release` job 会为该 tag 自动创建 GitHub Release：以 tag 名为标题，release notes 由
+GitHub 按合并记录自动生成，并标记为 latest。预发布 tag 不创建 GitHub Release，只发布 NuGet
+包，避免候选版本占据 Releases 页面的最新位置。
+
+「是否预发布版本」由 `resolve-version` 随版本号一起判定，与版本规则一样位于 release tool 并有
+单元测试，workflow 不在 shell 里复制这条判定。
+
+创建 GitHub Release 需要仓库写权限，`contents: write` 只授予这一个 job，其余 job 仍以
+`contents: read` 运行。
 
 ## 凭据
 
