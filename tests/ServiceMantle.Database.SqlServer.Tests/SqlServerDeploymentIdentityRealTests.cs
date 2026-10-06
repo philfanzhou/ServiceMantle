@@ -1,3 +1,4 @@
+using DotNet.Testcontainers.Builders;
 using Microsoft.Data.SqlClient;
 using ServiceMantle.Bootstrap;
 using ServiceMantle.Testing;
@@ -21,10 +22,18 @@ public sealed class SqlServerDeploymentIdentityRealTests
         // Initialize the system catalog before accepting clients. The pinned image does not
         // apply MSSQL_COLLATION to the packaged system database templates on ordinary startup.
         // This is the same --setup/-q path used by its mssql-conf/set-collation.sh.
+        const string setupComplete = "/tmp/servicemantle-catalog-setup-complete";
         await using var container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04")
             .WithPassword("Deployment-password-1").WithEnvironment("MSSQL_MEMORY_LIMIT_MB", "1024")
             .WithEntrypoint("/bin/bash", "-c")
-            .WithCommand($"/opt/mssql/bin/sqlservr --setup -q{expectedCollation} && exec /opt/mssql/bin/sqlservr").Build();
+            .WithCommand($"/opt/mssql/bin/sqlservr --setup -q{expectedCollation} && touch {setupComplete} && exec /opt/mssql/bin/sqlservr")
+            // --setup itself accepts SQL queries before exiting. A successful SELECT 1
+            // alone can therefore signal readiness of the process that is about to stop.
+            // Wait for setup to exit, then query the final server before creating clients.
+            .WithWaitStrategy(Wait.ForUnixContainer()
+                .UntilFileExists(setupComplete)
+                .UntilCommandIsCompleted("/opt/mssql-tools18/bin/sqlcmd", "-C", "-b", "-r", "1", "-d", "master", "-Q", "SELECT 1;"))
+            .Build();
         await container.StartAsync(TestContext.Current.CancellationToken);
         var administrator = new SqlConnectionStringBuilder(container.GetConnectionString()) { InitialCatalog = "master", Pooling = false, Enlist = false };
         await using (var setup = new SqlConnection(administrator.ConnectionString))
