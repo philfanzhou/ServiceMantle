@@ -4,12 +4,12 @@ namespace ServiceMantle.Logging.Remote;
 
 /// <summary>
 /// Defines the snapshot-driven Grafana Loki settings and the management-update combination rules
-/// for the <c>loki.uri</c> / <c>loki.authorization</c> pair.
+/// for the endpoint, Authorization value, and explicit transport/authentication policies.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The combination validation is the strict management-update rule: a saved value must be one the
-/// next start can use, so an endpoint that is not an absolute HTTPS URI without user info, query,
+/// next start can use, so an endpoint that is not an allowed absolute HTTP(S) URI without user info, query,
 /// or fragment, an unusable Authorization value, or a half-configured pair is rejected here. The
 /// startup classification (<see cref="GrafanaLokiSettingState"/>) is deliberately more tolerant:
 /// values an older release already stored disable the sink with a fixed warning category instead
@@ -23,7 +23,7 @@ namespace ServiceMantle.Logging.Remote;
 public sealed class GrafanaLokiSettingDefinitions
     : IServiceSettingDefinitionProvider, IServiceSettingCompositeValidator
 {
-    /// <summary>The Loki base endpoint; an absolute HTTPS URI.</summary>
+    /// <summary>The Loki base endpoint; HTTPS by default, or explicitly allowed HTTP.</summary>
     public const string Endpoint = "loki.uri";
 
     /// <summary>
@@ -32,6 +32,12 @@ public sealed class GrafanaLokiSettingDefinitions
     /// </summary>
     public const string Authorization = "loki.authorization";
 
+    /// <summary>Explicitly permits HTTP transport; defaults to false and requires restart.</summary>
+    public const string AllowInsecureHttp = "loki.allow_insecure_http";
+
+    /// <summary>Explicitly selects no authentication; requires removal of Authorization and restart.</summary>
+    public const string AllowNoAuthentication = "loki.allow_no_authentication";
+
     /// <summary>The maximum usable Authorization value length.</summary>
     public const int MaximumAuthorizationLength = 4_096;
 
@@ -39,7 +45,9 @@ public sealed class GrafanaLokiSettingDefinitions
     public IEnumerable<ServiceSettingDefinition> GetDefinitions() =>
     [
         new(Endpoint, ServiceSettingValueType.String, requiresRestart: true),
-        new(Authorization, ServiceSettingValueType.String, isSensitive: true, requiresRestart: true)
+        new(Authorization, ServiceSettingValueType.String, isSensitive: true, requiresRestart: true),
+        new(AllowInsecureHttp, ServiceSettingValueType.Boolean, defaultValue: "false", requiresRestart: true),
+        new(AllowNoAuthentication, ServiceSettingValueType.Boolean, defaultValue: "false", requiresRestart: true)
     ];
 
     /// <inheritdoc />
@@ -49,30 +57,15 @@ public sealed class GrafanaLokiSettingDefinitions
 
         context.TryGetValue(Endpoint, out var endpointValue);
         context.TryGetValue(Authorization, out var authorizationValue);
-        var endpointText = TextOrNull(endpointValue);
-        var authorizationText = TextOrNull(authorizationValue);
-        var hasEndpoint = endpointText is not null;
-        var hasAuthorization = authorizationText is not null;
-
-        if (hasEndpoint && !GrafanaLokiSettingState.TryParseEndpoint(endpointText, out _))
-        {
-            yield return new ServiceSettingValidationError(
-                Endpoint, WellKnownGrafanaLokiErrorCodes.InvalidEndpoint);
-        }
-
-        if (hasAuthorization && !IsUsableAuthorization(authorizationText))
-        {
-            yield return new ServiceSettingValidationError(
-                Authorization, WellKnownGrafanaLokiErrorCodes.AuthorizationValueInvalid);
-        }
-
-        if (hasEndpoint != hasAuthorization)
-        {
-            yield return new ServiceSettingValidationError(
-                hasEndpoint ? Authorization : Endpoint,
-                WellKnownServiceSettingValidationErrorCodes.Required);
-        }
+        context.TryGetValue(AllowInsecureHttp, out var httpValue);
+        context.TryGetValue(AllowNoAuthentication, out var noAuthenticationValue);
+        return GrafanaLokiSettingState.Evaluate(
+            TextOrNull(endpointValue), TextOrNull(authorizationValue),
+            BooleanOrFalse(httpValue), BooleanOrFalse(noAuthenticationValue), strict: true).Errors;
     }
+
+    internal static bool BooleanOrFalse(ServiceSettingValue? value) =>
+        value is { HasValue: true, ValueType: ServiceSettingValueType.Boolean } && value.GetBoolean();
 
     /// <summary>
     /// The one Authorization rule the update validation and the startup classification share: a

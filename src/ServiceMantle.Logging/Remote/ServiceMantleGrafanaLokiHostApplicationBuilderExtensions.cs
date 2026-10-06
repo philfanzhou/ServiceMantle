@@ -24,7 +24,8 @@ public static class ServiceMantleGrafanaLokiHostApplicationBuilderExtensions
     /// <param name="snapshot">The activated setting snapshot.</param>
     /// <param name="configure">
     /// An optional action over the remaining sink options (batching, labels, timeouts). The
-    /// classification owns <c>Enabled</c>, <c>Endpoint</c>, and <c>AuthorizationHeaderResolverName</c>.
+    /// classification owns <c>Enabled</c>, <c>Endpoint</c>, <c>AuthorizationHeaderResolverName</c>,
+    /// <c>AllowInsecureHttp</c>, and <c>AllowInsecureLoopbackForTesting</c>.
     /// </param>
     /// <returns>
     /// The classified state. A usable pair enables the sink under the existing explicit
@@ -39,9 +40,10 @@ public static class ServiceMantleGrafanaLokiHostApplicationBuilderExtensions
     /// <c>IConfiguration</c> is read and no value is written back.
     /// </para>
     /// <para>
-    /// An enabled classification registers one <see cref="FixedRemoteLogAuthorizationResolver"/>
+    /// An enabled authenticated classification registers one <see cref="FixedRemoteLogAuthorizationResolver"/>
     /// answering <see cref="SettingDrivenAuthorizationResolverName"/> with the stored value, in
-    /// memory only. Disabled and unusable classifications register no resolver, no sink factory
+    /// memory only. Explicit no authentication registers and resolves no resolver. Disabled and
+    /// unusable classifications register no resolver, no sink factory
     /// replacement, and no lifecycle activity beyond the explicit entry's own default-disabled
     /// shape. Repeating this call with an equivalent snapshot is idempotent; the underlying
     /// explicit registration keeps its own idempotency and conflict rules.
@@ -62,7 +64,7 @@ public static class ServiceMantleGrafanaLokiHostApplicationBuilderExtensions
             IServiceSettingCompositeValidator,
             GrafanaLokiSettingDefinitions>());
 
-        if (state.Status == GrafanaLokiSettingStatus.Enabled &&
+        if (state.Status == GrafanaLokiSettingStatus.Enabled && state.Authorization is not null &&
             !builder.Services.Any(descriptor =>
                 descriptor.ServiceType == typeof(IRemoteLogAuthorizationResolver) &&
                 descriptor.ImplementationInstance is FixedRemoteLogAuthorizationResolver))
@@ -80,18 +82,13 @@ public static class ServiceMantleGrafanaLokiHostApplicationBuilderExtensions
         builder.AddServiceMantleGrafanaLoki(options =>
         {
             configure?.Invoke(options);
-            if (state.Status == GrafanaLokiSettingStatus.Enabled)
-            {
-                options.Enabled = true;
-                options.Endpoint = state.Endpoint;
-                options.AuthorizationHeaderResolverName = SettingDrivenAuthorizationResolverName;
-            }
-            else
-            {
-                // The classification owns enablement: an unusable or empty pair keeps the sink
-                // off regardless of what the optional configuration asked for.
-                options.Enabled = false;
-            }
+            options.AllowInsecureHttp = state.AllowInsecureHttp;
+            options.AllowInsecureLoopbackForTesting = false;
+            options.Endpoint = state.Endpoint;
+            options.AuthorizationHeaderResolverName = state.Authorization is null
+                ? null : SettingDrivenAuthorizationResolverName;
+            // The classification owns enablement even when the callback requests activity.
+            options.Enabled = state.Status == GrafanaLokiSettingStatus.Enabled;
         });
 
         return state;
