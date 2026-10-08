@@ -4,12 +4,12 @@ namespace ServiceMantle.Logging.Remote;
 
 /// <summary>
 /// Defines the snapshot-driven Grafana Loki settings and the management-update combination rules
-/// for the endpoint, Authorization value, and explicit transport/authentication policies.
+/// for the endpoint, Authorization value, and the explicit no-authentication policy.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The combination validation is the strict management-update rule: a saved value must be one the
-/// next start can use, so an endpoint that is not an allowed absolute HTTP(S) URI without user info, query,
+/// next start can use, so an endpoint that is not an absolute HTTP(S) URI without user info, query,
 /// or fragment, an unusable Authorization value, or a half-configured pair is rejected here. The
 /// startup classification (<see cref="GrafanaLokiSettingState"/>) is deliberately more tolerant:
 /// values an older release already stored disable the sink with a fixed warning category instead
@@ -23,7 +23,7 @@ namespace ServiceMantle.Logging.Remote;
 public sealed class GrafanaLokiSettingDefinitions
     : IServiceSettingDefinitionProvider, IServiceSettingCompositeValidator
 {
-    /// <summary>The Loki base endpoint; HTTPS by default, or explicitly allowed HTTP.</summary>
+    /// <summary>The Loki base endpoint; an absolute HTTP(S) URI.</summary>
     public const string Endpoint = "loki.uri";
 
     /// <summary>
@@ -31,9 +31,6 @@ public sealed class GrafanaLokiSettingDefinitions
     /// never has a plaintext default.
     /// </summary>
     public const string Authorization = "loki.authorization";
-
-    /// <summary>Explicitly permits HTTP transport; defaults to false and requires restart.</summary>
-    public const string AllowInsecureHttp = "loki.allow_insecure_http";
 
     /// <summary>Explicitly selects no authentication; requires removal of Authorization and restart.</summary>
     public const string AllowNoAuthentication = "loki.allow_no_authentication";
@@ -46,7 +43,6 @@ public sealed class GrafanaLokiSettingDefinitions
     [
         new(Endpoint, ServiceSettingValueType.String, requiresRestart: true),
         new(Authorization, ServiceSettingValueType.String, isSensitive: true, requiresRestart: true),
-        new(AllowInsecureHttp, ServiceSettingValueType.Boolean, defaultValue: "false", requiresRestart: true),
         new(AllowNoAuthentication, ServiceSettingValueType.Boolean, defaultValue: "false", requiresRestart: true)
     ];
 
@@ -57,11 +53,10 @@ public sealed class GrafanaLokiSettingDefinitions
 
         context.TryGetValue(Endpoint, out var endpointValue);
         context.TryGetValue(Authorization, out var authorizationValue);
-        context.TryGetValue(AllowInsecureHttp, out var httpValue);
         context.TryGetValue(AllowNoAuthentication, out var noAuthenticationValue);
         return GrafanaLokiSettingState.Evaluate(
             TextOrNull(endpointValue), TextOrNull(authorizationValue),
-            BooleanOrFalse(httpValue), BooleanOrFalse(noAuthenticationValue), strict: true).Errors;
+            BooleanOrFalse(noAuthenticationValue), strict: true).Errors;
     }
 
     internal static bool BooleanOrFalse(ServiceSettingValue? value) =>

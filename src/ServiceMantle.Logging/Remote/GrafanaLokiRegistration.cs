@@ -96,10 +96,7 @@ internal sealed class GrafanaLokiConfigurationProvider(
         var endpoint = options.Endpoint;
         if (endpoint is null ||
             !endpoint.IsAbsoluteUri ||
-            !GrafanaLokiSettingState.TryParseEndpoint(endpoint.OriginalString,
-                options.AllowInsecureHttp ||
-                    (options.AllowInsecureLoopbackForTesting && endpoint.IsAbsoluteUri && endpoint.IsLoopback),
-                out _))
+            !GrafanaLokiSettingState.TryParseEndpoint(endpoint.OriginalString, out _))
         {
             throw Failure(nameof(options.Endpoint), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint);
         }
