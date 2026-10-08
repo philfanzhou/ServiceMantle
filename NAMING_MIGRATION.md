@@ -929,3 +929,45 @@ Protection purpose、认证方案名、指标名零变化，随打包 DLL 字符
 （`tests/ServiceMantle.Tests/Audit/ManagementAuditEventTests.cs` 的 InlineData、
 `tests/ServiceMantle.ReleaseTool.Tests/` 中的 `"ServiceMantle.AspNetCore"`）与 sample 历史
 PostgreSQL migration 中的旧实体全名字符串不依赖真实包 ID 与目录对应关系，本次不动。
+
+## 移除传输安全强制与豁免开关（#666、#667、#668、#669）
+
+[#666](https://github.com/philfanzhou/ServiceMantle/issues/666)–[#669](https://github.com/philfanzhou/ServiceMantle/issues/669)：
+传输安全回归部署决策，四个出站/入站能力点不再做任何 scheme 裁决。端点结构校验（绝对 URI、host、
+无 user-info/query/fragment，Consul 另保留根路径）全部保留；scheme 白名单统一放宽为 `http` 与
+`https`（其它 scheme 仍属结构非法）。这是源码与二进制破坏性变更，只在后续新版本交付，不覆盖历史
+版本。
+
+### 移除的公开成员
+
+| 原成员 | 所在包 | 替代 |
+| --- | --- | --- |
+| `OtlpSignalOptions.AllowInsecureLoopbackForTesting` | `ServiceMantle.Diagnostics` | 不再需要：`http://` 端点直接合法 |
+| `WellKnownOtlpErrorCodes.InsecureEndpoint`（`otlp.insecure_endpoint`） | `ServiceMantle.Diagnostics` | 不会再产生该错误码；结构非法统一 `otlp.invalid_endpoint` |
+| `GrafanaLokiOptions.AllowInsecureHttp` | `ServiceMantle.Logging` | 不再需要 |
+| `GrafanaLokiOptions.AllowInsecureLoopbackForTesting` | `ServiceMantle.Logging` | 不再需要 |
+| `GrafanaLokiSettingDefinitions.AllowInsecureHttp`（`loki.allow_insecure_http`） | `ServiceMantle.Logging` | 退休键；存量快照先删除该行再升级 |
+| `GrafanaLokiSettingState.AllowInsecureHttp` | `ServiceMantle.Logging` | 不再需要 |
+| `GrafanaLokiSettingState.Classify(string?, string?, bool, bool)` 四参重载 | `ServiceMantle.Logging` | 三参重载 `Classify(string?, string?, bool)`（无认证旗标保留） |
+| `GrafanaLokiSettingState.TryParseEndpoint(string?, bool, out Uri?)` 带策略重载 | `ServiceMantle.Logging` | 双参重载按 http/https 直接解析 |
+| `ConsulSettingDefinitions.AllowInsecureHttp`（`discovery.allow-insecure-http`） | `ServiceMantle.Discovery` | 退休键；迁移转换示例中该行被丢弃（见 README 与 `docs/contracts/consul-registration-lifecycle.md`） |
+| sample `ReferenceOtlpRegistrationExtensions.AddReferenceOtlp(builder, configuration, environment)` 三参签名 | samples | 双参 `AddReferenceOtlp(builder, configuration)` |
+
+`loki.allow_no_authentication`（`GrafanaLokiSettingDefinitions.AllowNoAuthentication`）保留：认证
+选择与传输限制无关，不在本次范围。
+
+### 行为变更
+
+| 位置 | 原行为 | 新行为 |
+| --- | --- | --- |
+| 管理 cookie `SecurePolicy` | 默认 `Always`，任何放宽使宿主启动抛 `InvalidOperationException`（注册与 effective options 双重校验） | 默认 `SameAsRequest`，任意取值合法，宿主自由覆盖 |
+| 管理 cookie 名 | `__Host-ServiceMantle.Management`（`__Host-` 前缀按浏览器规范强制 Secure，等于把 HTTPS 写进 cookie 名） | `ServiceMantle.Management`；已签发的旧 cookie 会话随新版本失效，重新登录即恢复 |
+| OTLP / Loki / Consul 端点 | HTTPS-only（各自不同豁免矩阵） | `http://` 与 `https://` 一律直接可用，回环与非回环无差异 |
+
+### 字符串契约变化全集
+
+- 配置键：删除 `loki.allow_insecure_http` 与 `discovery.allow-insecure-http` 两个定义；其余键零变化。
+- 错误码：删除 `otlp.insecure_endpoint`；其余诊断码零变化。
+- cookie 名：`__Host-ServiceMantle.Management` → `ServiceMantle.Management`（唯一随本次变化的
+  wire 字符串；认证方案 `ServiceMantle.ManagementCookie`、Data Protection purpose、路由、Header、
+  JSON 字段与指标名均不变）。

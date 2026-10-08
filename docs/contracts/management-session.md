@@ -38,6 +38,12 @@ app.MapServiceMantleManagementSession(
 约。Phase Gate 拒绝、速率限制拒绝、cookie 缺失或不可接受、claim 无效，以及缺少不安全请求
 Header，都不会执行 adapter、不会登录、也不会登出。
 
+管理 cookie 的传输策略默认 `SameAsRequest`：跟随请求 scheme，HTTPS 部署下自动带 `Secure`，HTTP
+部署下会话同样可用；宿主可自由覆盖 `SecurePolicy`，任何取值都不再导致启动失败。传输安全由部署
+侧（反代 TLS 等）负责。cookie 名固定为 `ServiceMantle.Management`，不携带 `__Host-` 前缀——该
+前缀按浏览器规范强制 Secure，等同于把 HTTPS 要求写进 cookie 名。HttpOnly、`SameSite != None`、
+essential、cookie 名/Path/Domain 与 Data Protection 应用名仍受启动校验保护。
+
 ## 登录
 
 ServiceMantle 在 adapter 运行之前最多准入 64 KiB 的原始请求体，并拒绝查询字符串或

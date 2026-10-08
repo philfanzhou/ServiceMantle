@@ -54,16 +54,18 @@ session 捕获一个活动设置快照及其版本。所有 `discovery.*` 定义
 注册重试、清理注销和停止使用同一个 session 和注册 ID。生命周期在最终远程操作落定之后，或在协作
 关闭预算耗尽之后，调用一次 `Dispose()`。处置失败会成为一条安全诊断，且不重试。处置不意味着注销。
 
-## 设置键中立化与显式迁移（#436）
+## 设置键中立化与显式迁移（#436、#668）
 
 Consul adapter 注册的 8 个持久化设置键从 `consul.*` 改为 `discovery.*`。常量成员名、类型名与
 namespace 保持不变，只有键值移动。诊断码（含 `consul.invalid_configuration`）、`X-Consul-Token`
 认证 Header 与 HTTP wire model 本次不变。这是随新版本交付的外部契约变更，不覆盖历史包。
-目录当前注册 9 个键：除下表的 8 个迁移键外，另有 #591 新增的 `discovery.allow-insecure-http`
-（Boolean，默认 `false`，重启生效）。该键从未有过 `consul.*` 别名；旧快照缺失该键时由目录默认值
-物化为 `false`，保持对非回环 HTTP endpoint 的默认拒绝。开启该开关即显式接受 ACL token
-（`X-Consul-Token` 头）与全部注册内容在该链路明文传输；库不依据 DNS 名或私网 IP 形状推断网络可信，
-也不验证网络隔离——配置可信网络与访问控制、在不受信任网络路径上使用 HTTPS 由调用方负责。
+
+目录当前注册 8 个键（下表全部）。#591 曾新增 `discovery.allow-insecure-http`，#668 移除传输
+scheme 闸口时该键退休：`http://` 与 `https://` agent 端点现在直接可用（含 LAN agent，如
+`http://consul.internal:8500`），回环与非回环不再有行为差异。库不依据 DNS 名或私网 IP 形状推断
+网络可信，也不验证网络隔离——配置可信网络与访问控制、在不受信任网络路径上使用 HTTPS 由调用方
+负责。存量快照若存有该退休键，升级前必须先删除该行（loader 对 unknown key 的拒绝是预期边界）；
+迁移转换示例中退休键行被直接丢弃而不是映射。
 
 | 旧键 | 新键 |
 | --- | --- |
@@ -104,7 +106,8 @@ token 使用，保留 1–4096 个非空白可打印 ASCII 字符校验，不宣
 README（英文）中的 `ConsulDiscoverySettingMigration.TryConvert` 内存转换示例是经测试的事实源，
 对应 `tests/ServiceMantle.Discovery.Tests/ConsulDiscoverySettingMigrationTests.cs`：无凭据、合法凭据、
 旧键大小写/空白变体（按 store 的 `Trim()` + 小写规范化识别，含凭据变体的重新保护与规范化后的
-目标键冲突）、非凭据行类型不匹配或未定义（按目录检查这 8 个迁移键）、错误根密钥、损坏密文与已
+目标键冲突）、退休键 `discovery.allow-insecure-http` 行的丢弃、非凭据行类型不匹配或未定义（按目录
+检查这 8 个迁移键）、错误根密钥、损坏密文与已
 取消 token（含空输入集合）各有断言，失败与取消均不产出可提交的部分结果。
 示例只做内存转换与输入检查，不证明消费方数据库提交的原子性、持久性或异常恢复；停机、备份、根
 密钥、事务、版本、审计与回滚均由消费方负责。

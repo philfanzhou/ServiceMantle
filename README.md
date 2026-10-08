@@ -188,10 +188,10 @@ is resolved only for an enabled exporter and passed through the official
 `OtlpExporterOptions.Headers` entry. ServiceMantle exceptions and option diagnostics do not include
 the header value or URI user-info/query components.
 
-Endpoints must be absolute HTTPS URIs. Signal-specific endpoints are passed to the official exporter
-as-is; standard OTLP/HTTP collectors commonly use `/v1/traces` and `/v1/metrics`. The
-`AllowInsecureLoopbackForTesting` switch permits HTTP only for loopback integration tests and must
-not be enabled in deployed configuration. Export timeout is bounded to 1–30 seconds, batch or
+Endpoints must be absolute HTTP(S) URIs with a host and without user information, query strings, or
+fragments; transport security is the deployment's choice. Signal-specific endpoints are passed to
+the official exporter as-is; standard OTLP/HTTP collectors commonly use `/v1/traces` and
+`/v1/metrics`. Export timeout is bounded to 1–30 seconds, batch or
 collection delay to 100 ms–30 seconds, trace queue size to 100–50,000, and trace batch size to
 1–1,000 without exceeding the queue.
 
@@ -217,8 +217,8 @@ var otlpState = serviceMantle.AddOpenTelemetryOtlpExporterFromSettings(
 
 A usable endpoint registers the exporters through the existing explicit entry and its validation
 rules. An empty value registers no exporter, provider, resolver, or background activity at all —
-even when the optional configuration enabled signals. An unusable value (not an absolute HTTPS URI
-without user info, query, or fragment) does the same, and the returned `OtlpSettingState` carries
+even when the optional configuration enabled signals. An unusable value (not an absolute HTTP(S)
+URI without user info, query, or fragment) does the same, and the returned `OtlpSettingState` carries
 a value-free category (`enabled`, `disabled`, `endpoint_invalid`) for the consumer's post-startup
 warning. The strict update validation (`otlp.invalid_endpoint`) is the management rule; the
 startup classification deliberately tolerates values an older release already stored. Not
@@ -2768,17 +2768,15 @@ builder.AddServiceMantleGrafanaLoki(options =>
 });
 ```
 
-Enabled endpoints must use absolute HTTPS URIs without user information, query strings, or
-fragments. An explicit test-only option permits loopback HTTP. A separate explicit option,
-`AllowInsecureHttp`, accepts plain-HTTP endpoints on any host for Loki instances reached over a
-network the consumer controls and trusts, such as a container service name:
+Enabled endpoints must use absolute HTTP(S) URIs with a host and without user information, query
+strings, or fragments. Transport security is the deployment's choice; an internal HTTP Loki
+endpoint works with no extra switch:
 
 ```csharp
 builder.AddServiceMantleGrafanaLoki(options =>
 {
     options.Enabled = true;
     options.Endpoint = new Uri("http://ruoyu-loki:3100");
-    options.AllowInsecureHttp = true;
 });
 ```
 
@@ -2789,10 +2787,8 @@ size is limited to 1-1,000, queue capacity to 100-50,000 events, and flush and s
 periods to 1-30 seconds. Invalid configuration, a missing resolver, or an unavailable authorization
 value fails when the Host starts without including submitted values in the exception.
 
-Enabling `AllowInsecureHttp` is an explicit acceptance that the complete log content and any
-configured `Authorization` header travel in cleartext to that endpoint. ServiceMantle does not
-verify that the endpoint is reachable only over a trusted network and does not treat any hostname
-or address shape as implicitly trusted; use HTTPS whenever the path crosses an untrusted network.
+The caller owns network trust and access control: ServiceMantle does not verify that an HTTP
+endpoint is reachable only over a trusted network.
 
 An explicit `Labels` map attaches fixed stream labels to every emitted Loki stream, for consumers
 migrating existing Grafana queries and alerts that select on labels such as `service`:
@@ -2832,9 +2828,8 @@ combination validation to the global setting catalog:
 
 | Key | Type | Sensitive | Meaning |
 | --- | --- | --- | --- |
-| `loki.uri` | String | no | The Loki base endpoint; HTTPS by default, or explicitly allowed HTTP; no user info, query, or fragment. |
+| `loki.uri` | String | no | The Loki base endpoint; an absolute HTTP(S) URI with no user info, query, or fragment. |
 | `loki.authorization` | String | yes | A non-blank Authorization header value, 1–4096 characters without control characters; absent for explicit no authentication. |
-| `loki.allow_insecure_http` | Boolean | no | Explicitly permits HTTP on any host; defaults to `false`. |
 | `loki.allow_no_authentication` | Boolean | no | Explicitly selects no authentication; defaults to `false`, and requires deleting `loki.authorization` in the same candidate. |
 
 ```csharp
@@ -2844,12 +2839,13 @@ var lokiState = builder.AddServiceMantleGrafanaLokiFromSettings(
     options => options.BatchSize = 200);
 ```
 
-All four settings require restart. The classification owns enablement, the endpoint, the
-HTTP policy, the loopback testing policy (always off for snapshots), and the authorization resolver
-name. The callback controls batching, labels, and timeouts. Authenticated settings register one
-in-memory `FixedRemoteLogAuthorizationResolver` answering `servicemantle-loki-settings`; explicit
+All three settings require restart. The classification owns enablement, the endpoint, and the
+authorization resolver name. The callback controls batching, labels, and timeouts. Authenticated
+settings register one in-memory `FixedRemoteLogAuthorizationResolver` answering
+`servicemantle-loki-settings`; explicit
 no authentication registers and resolves no resolver and sends no Authorization header.
-An empty endpoint/Authorization pair stays disabled even when policy flags are set. Unusable
+An empty endpoint/Authorization pair stays disabled even when the no-authentication flag is set.
+Unusable
 settings return the existing value-free categories (`endpoint_invalid`, `endpoint_missing`,
 `authorization_missing`, `authorization_invalid`); the last category also includes a stored
 credential conflicting with no authentication. Errors never echo endpoints or credentials.
@@ -2864,28 +2860,22 @@ using the normal `ServiceSettingUpdateService` and the caller-owned transaction:
 var changes = new Dictionary<string, string?>
 {
     [GrafanaLokiSettingDefinitions.Endpoint] = "http://loki.internal:3100/prefix",
-    [GrafanaLokiSettingDefinitions.AllowInsecureHttp] = "true",
     [GrafanaLokiSettingDefinitions.AllowNoAuthentication] = "true",
     [GrafanaLokiSettingDefinitions.Authorization] = null // delete, never silently ignore
 };
 // UpdateAsync validates and stages the batch; the caller commits, then restarts.
 ```
 
-HTTP and authentication are independent choices: HTTPS/HTTP can each use authentication or
-explicit no authentication. Existing HTTPS plus Authorization settings with no new keys keep the
-old behavior. Missing or deleted policy keys default to `false`; missing Authorization never
-implicitly selects no authentication. To restore authentication, delete or set the no-authentication
-flag to `false` and supply valid Authorization in the same batch. To disable shipping, delete the
-endpoint and Authorization together; valid policy flags may remain stored.
+Authentication is independent of transport: HTTPS/HTTP can each use authentication or explicit no
+authentication. Missing Authorization never implicitly selects no authentication; to restore
+authentication, delete or set the no-authentication flag to `false` and supply valid Authorization
+in the same batch. To disable shipping, delete the endpoint and Authorization together; the
+no-authentication flag may remain stored.
 
-Before downgrading to an older package that does not recognize the new keys, use the new package
-to delete both policy keys and restore HTTPS plus Authorization (or delete both endpoint and
-Authorization), commit, and restart. The old loader rejects unknown keys, so downgrading while
-leaving the new keys stored is unsupported. The existing raw two-argument classification and
-endpoint-parser APIs retain their strict defaults and binary signatures.
-
-HTTP explicitly accepts plaintext transmission of logs and any Authorization header. The caller
-owns network trust and access control. ServiceMantle does not guarantee confidentiality, network
+`loki.allow_insecure_http` was retired when transport stopped being gated: delete any stored row
+before upgrading (the loader rejects unknown keys), and use `http://` endpoints directly. HTTP
+explicitly accepts plaintext transmission of logs and any Authorization header; the caller owns
+network trust and access control. ServiceMantle does not guarantee confidentiality, network
 integrity, reachability, durable delivery, or reliable message storage. Saving settings does not
 change the current snapshot or running sink; changes take effect after restart.
 
@@ -2927,8 +2917,7 @@ another service fails with a value-free `ConsulConfigurationException`.
 | Setting | Enabled configuration contract |
 | --- | --- |
 | `discovery.enabled` | Boolean, default `false` |
-| `discovery.endpoint` | Root HTTPS agent URI, or HTTP (loopback always, any host only with `discovery.allow-insecure-http`); no credentials, query, fragment or subpath |
-| `discovery.allow-insecure-http` | Boolean, default `false`, requires restart; explicitly accepts non-loopback plain-HTTP agent endpoints |
+| `discovery.endpoint` | Root HTTP(S) agent URI; no credentials, query, fragment or subpath |
 | `discovery.credential` | Optional sensitive string, no default; the provider-defined single credential - for this Consul adapter the ACL token, 1–4096 printable ASCII characters without whitespace |
 | `discovery.service-name` | 1–63 ASCII letters/digits/hyphens, starting and ending with a letter/digit |
 | `discovery.address` | Advertised DNS name or IP address, at most 253 characters |
@@ -2943,14 +2932,13 @@ boundary. Disabled snapshots ignore enabled-only values and return `null` withou
 client factory or constructing an HTTP client. Registration and provider resolution create no client,
 network request, hosted service or background lifecycle task.
 
-`discovery.allow-insecure-http` exists for agents ServiceMantle cannot reach over HTTPS, such as a
-Consul agent on a LAN the consumer controls. Enabling it is an explicit acceptance that the complete
-registration content and the ACL token (the `X-Consul-Token` header) travel in cleartext to that
-agent. ServiceMantle does not infer network trust from any DNS name or private address shape and
-does not verify network isolation; configuring trusted networks and access control, and using HTTPS
-whenever the path crosses an untrusted network, are caller responsibilities. Snapshots persisted
-before this setting existed keep the default refusal of non-loopback HTTP, because the loader
-materializes missing keys from their catalog default.
+Transport is the deployment's choice: `http://` and `https://` agent endpoints are accepted with
+no switch, including LAN agents such as `http://consul.internal:8500`. ServiceMantle does not infer
+network trust from any DNS name or private address shape and does not verify network isolation;
+configuring trusted networks and access control, and using HTTPS whenever the path crosses an
+untrusted network, are caller responsibilities. `discovery.allow-insecure-http` was retired when
+the transport gate was removed: delete any stored row before upgrading (the loader rejects unknown
+keys), and set the `http://` endpoint directly.
 
 ```csharp
 // After successful snapshot activation. Creating a client does not register the service.
@@ -3108,7 +3096,9 @@ final commit stay with the consumer. It returns rows only on success - failures 
 cancellation never produce a partial committable result. Rows are resolved with the store's key
 normalization (trimmed, lowercased invariantly), so case or whitespace variants of a retired key
 still map to their neutral key, still re-protect the credential, and still conflict with an existing
-neutral target key. Rows that resolve to one of the eight catalog keys are type-checked against the
+neutral target key. Rows carrying `discovery.allow-insecure-http` - the transport switch retired
+when the scheme gate was removed - are dropped instead of mapped. Rows that resolve to one of the
+eight catalog keys are type-checked against the
 registry: an undefined or mismatched value type aborts with `migration.type_mismatch`. Cancellation
 is observed even for an empty row set.
 
@@ -3116,6 +3106,14 @@ is observed even for an empty row set.
 internal static class ConsulDiscoverySettingMigration
 {
     internal const string LegacyCredentialKey = "consul.token";
+
+    /// <summary>
+    /// Keys the catalog no longer defines: discovery.allow-insecure-http retired when the
+    /// transport scheme stopped being gated. A snapshot that still carries one fails the loader's
+    /// unknown-key check, so conversion drops the row instead of mapping it.
+    /// </summary>
+    internal static readonly IReadOnlySet<string> RetiredKeys =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "discovery.allow-insecure-http" };
 
     internal static readonly IReadOnlyDictionary<string, string> LegacyKeyMap =
         new Dictionary<string, string>
@@ -3170,9 +3168,15 @@ internal static class ConsulDiscoverySettingMigration
 
             version = row.Version;
 
+            // Retired keys are dropped, not mapped: the new catalog must accept every surviving row.
+            var normalizedKey = NormalizeKey(row.Key);
+            if (RetiredKeys.Contains(normalizedKey))
+            {
+                continue;
+            }
+
             // The store and the loader resolve keys by trimming and lowercasing them; retired-key
             // variants must map, re-protect, and collide with their neutral target key the same way.
-            var normalizedKey = NormalizeKey(row.Key);
             var targetKey = LegacyKeyMap.TryGetValue(normalizedKey, out var mapped) ? mapped : row.Key;
             if (!targetKeys.Add(NormalizeKey(targetKey)))
             {
