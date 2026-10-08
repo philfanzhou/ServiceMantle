@@ -11,9 +11,11 @@ public static class ManagementSessionDefaults
     public const string AuthenticationScheme = "ServiceMantle.ManagementCookie";
 
     /// <summary>
-    /// The fixed host-scoped cookie name. It deliberately carries no service or deployment identity.
+    /// The fixed host-scoped cookie name. It deliberately carries no service or deployment identity
+    /// and no <c>__Host-</c> prefix: that prefix obligates browsers to accept the cookie only with
+    /// the Secure attribute, which would force HTTPS on every deployment.
     /// </summary>
-    public const string CookieName = "__Host-ServiceMantle.Management";
+    public const string CookieName = "ServiceMantle.Management";
 
     /// <summary>
     /// The default absolute ticket lifetime, in hours.
