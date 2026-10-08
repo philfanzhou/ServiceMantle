@@ -60,7 +60,6 @@ public sealed class ReferenceOtlpTests
             "--ReferenceService:Telemetry:Otlp:Traces:Protocol", "HttpProtobuf",
             "--ReferenceService:Telemetry:Otlp:Traces:Endpoint", collector.TracesEndpoint.ToString(),
             "--ReferenceService:Telemetry:AllowNothing", "0",
-            "--ReferenceService:Telemetry:Otlp:AllowInsecureLoopbackForTesting", "true",
             "--ReferenceService:Telemetry:Otlp:Authentication:HeaderName", "Authorization",
             "--ReferenceService:Telemetry:Otlp:Authentication:HeaderValue", SyntheticSecret);
 
@@ -89,8 +88,7 @@ public sealed class ReferenceOtlpTests
             "--" + ReferenceTelemetryDefaults.EnabledKey, "true",
             "--ReferenceService:Telemetry:Otlp:Metrics:Enabled", "true",
             "--ReferenceService:Telemetry:Otlp:Metrics:Protocol", "HttpProtobuf",
-            "--ReferenceService:Telemetry:Otlp:Metrics:Endpoint", collector.MetricsEndpoint.ToString(),
-            "--ReferenceService:Telemetry:Otlp:AllowInsecureLoopbackForTesting", "true");
+            "--ReferenceService:Telemetry:Otlp:Metrics:Endpoint", collector.MetricsEndpoint.ToString());
 
         // The runtime meter the base instrumentation registered is exported without any request;
         // a forced flush is the deterministic observation point.
@@ -104,7 +102,7 @@ public sealed class ReferenceOtlpTests
     }
 
     [Fact]
-    public async Task A_non_development_environment_refuses_the_loopback_http_endpoint()
+    public async Task A_non_development_environment_accepts_the_loopback_http_endpoint()
     {
         await using var collector = await LoopbackCollector.StartAsync();
         var builder = CreateBuilder(
@@ -113,19 +111,24 @@ public sealed class ReferenceOtlpTests
             "--ReferenceService:Telemetry:Otlp:Traces:Enabled", "true",
             "--ReferenceService:Telemetry:Otlp:Traces:Protocol", "HttpProtobuf",
             "--ReferenceService:Telemetry:Otlp:Traces:Endpoint", collector.TracesEndpoint.ToString(),
-            // Ignored outside Development, so the package's own startup validation answers.
-            "--ReferenceService:Telemetry:Otlp:AllowInsecureLoopbackForTesting", "true",
             "--ReferenceService:Telemetry:Otlp:Authentication:HeaderName", "Authorization",
             "--ReferenceService:Telemetry:Otlp:Authentication:HeaderValue", SyntheticSecret);
         await using var app = ReferenceApplication.Build(builder);
+        await app.StartAsync(Token);
 
-        var failure = await Assert.ThrowsAsync<OtlpConfigurationException>(
-            () => app.StartAsync(Token));
+        Assert.True(app.Lifetime.ApplicationStarted.IsCancellationRequested);
 
-        Assert.Equal("otlp.insecure_endpoint", failure.ErrorCode);
-        Assert.False(app.Lifetime.ApplicationStarted.IsCancellationRequested);
-        Assert.Equal(0, collector.RequestCount);
-        Assert.DoesNotContain(SyntheticSecret, failure.ToString(), StringComparison.Ordinal);
+        using var client = new HttpClient { BaseAddress = new Uri(Assert.Single(app.Urls)) };
+        using (var root = await client.GetAsync("/", Token))
+        {
+            Assert.Equal(HttpStatusCode.OK, root.StatusCode);
+        }
+
+        app.Services.GetRequiredService<TracerProvider>().ForceFlush(5000);
+        var captured = await collector.Request.Task.WaitAsync(TimeSpan.FromSeconds(10), Token);
+        Assert.Equal("/v1/traces", captured.Path);
+        Assert.Equal(SyntheticSecret, captured.Authorization);
+        Assert.NotEmpty(captured.Body);
     }
 
     [Theory]
@@ -209,8 +212,7 @@ public sealed class ReferenceOtlpTests
             "--" + ReferenceTelemetryDefaults.EnabledKey, "true",
             "--ReferenceService:Telemetry:Otlp:Traces:Enabled", "true",
             "--ReferenceService:Telemetry:Otlp:Traces:Protocol", "HttpProtobuf",
-            "--ReferenceService:Telemetry:Otlp:Traces:Endpoint", $"http://127.0.0.1:{deadPort}/v1/traces",
-            "--ReferenceService:Telemetry:Otlp:AllowInsecureLoopbackForTesting", "true");
+            "--ReferenceService:Telemetry:Otlp:Traces:Endpoint", $"http://127.0.0.1:{deadPort}/v1/traces");
 
         using var client = new HttpClient { BaseAddress = new Uri(Assert.Single(app.Urls)) };
         using (var root = await client.GetAsync("/", Token))

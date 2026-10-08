@@ -11,8 +11,6 @@ public static class WellKnownOtlpErrorCodes
     public const string EndpointRequired = "otlp.endpoint_required";
     /// <summary>The endpoint violates OTLP URI rules.</summary>
     public const string InvalidEndpoint = "otlp.invalid_endpoint";
-    /// <summary>The endpoint transport is not securely permitted.</summary>
-    public const string InsecureEndpoint = "otlp.insecure_endpoint";
     /// <summary>The exporter timeout is outside the supported range.</summary>
     public const string InvalidExportTimeout = "otlp.invalid_export_timeout";
     /// <summary>The batch delay is outside the supported range.</summary>

@@ -72,7 +72,7 @@ public sealed class OtlpRegistrationTests
     [InlineData("relative-endpoint", WellKnownOtlpErrorCodes.InvalidEndpoint)]
     [InlineData("userinfo", WellKnownOtlpErrorCodes.InvalidEndpoint)]
     [InlineData("query", WellKnownOtlpErrorCodes.InvalidEndpoint)]
-    [InlineData("insecure", WellKnownOtlpErrorCodes.InsecureEndpoint)]
+    [InlineData("unsupported-scheme", WellKnownOtlpErrorCodes.InvalidEndpoint)]
     [InlineData("timeout-low", WellKnownOtlpErrorCodes.InvalidExportTimeout)]
     [InlineData("timeout-high", WellKnownOtlpErrorCodes.InvalidExportTimeout)]
     [InlineData("delay-low", WellKnownOtlpErrorCodes.InvalidBatchDelay)]
@@ -100,7 +100,7 @@ public sealed class OtlpRegistrationTests
                 case "relative-endpoint": traces.Endpoint = new Uri("relative", UriKind.Relative); break;
                 case "userinfo": traces.Endpoint = new Uri(unsafeEndpoint); break;
                 case "query": traces.Endpoint = new Uri("https://collector.example:4317/?token=query-secret"); break;
-                case "insecure": traces.Endpoint = new Uri("http://collector.example:4317/"); break;
+                case "unsupported-scheme": traces.Endpoint = new Uri("ftp://collector.example:4317/"); break;
                 case "timeout-low": traces.ExportTimeout = TimeSpan.FromMilliseconds(999); break;
                 case "timeout-high": traces.ExportTimeout = TimeSpan.FromMilliseconds(30_001); break;
                 case "delay-low": traces.BatchDelay = TimeSpan.FromMilliseconds(99); break;
@@ -128,8 +128,9 @@ public sealed class OtlpRegistrationTests
 
     [Theory]
     [InlineData(OtlpProtocol.Grpc, "https://collector.example:4317/")]
+    [InlineData(OtlpProtocol.Grpc, "http://collector.internal:4317/")]
     [InlineData(OtlpProtocol.HttpProtobuf, "https://collector.example:4318/v1/traces")]
-    [InlineData(OtlpProtocol.HttpProtobuf, "https://collector.example:4318/custom/trace-ingest")]
+    [InlineData(OtlpProtocol.HttpProtobuf, "http://localhost:4318/custom/trace-ingest")]
     public async Task Valid_protocol_endpoint_and_inclusive_numeric_boundaries_start(
         OtlpProtocol protocol,
         string endpoint)
@@ -297,7 +298,6 @@ public sealed class OtlpRegistrationTests
             traces.Enabled = true;
             traces.Protocol = OtlpProtocol.HttpProtobuf;
             traces.Endpoint = new Uri(collector.BaseUri, "/v1/traces");
-            traces.AllowInsecureLoopbackForTesting = true;
             traces.AuthenticationHeaderName = "primary";
             traces.BatchDelay = TimeSpan.FromMilliseconds(100);
             traces.MaxExportBatchSize = 1;
@@ -333,7 +333,6 @@ public sealed class OtlpRegistrationTests
             traces.Enabled = true;
             traces.Protocol = OtlpProtocol.Grpc;
             traces.Endpoint = collector.BaseUri;
-            traces.AllowInsecureLoopbackForTesting = true;
             traces.BatchDelay = TimeSpan.FromMilliseconds(100);
             traces.MaxExportBatchSize = 1;
         });
@@ -369,7 +368,6 @@ public sealed class OtlpRegistrationTests
             metrics.Enabled = true;
             metrics.Protocol = OtlpProtocol.HttpProtobuf;
             metrics.Endpoint = new Uri(collector.BaseUri, "/v1/metrics");
-            metrics.AllowInsecureLoopbackForTesting = true;
             metrics.BatchDelay = TimeSpan.FromMilliseconds(100);
             metrics.ExportTimeout = TimeSpan.FromSeconds(1);
         });
@@ -405,7 +403,6 @@ public sealed class OtlpRegistrationTests
             traces.Enabled = true;
             traces.Protocol = OtlpProtocol.HttpProtobuf;
             traces.Endpoint = new Uri($"http://127.0.0.1:{unavailablePort}/v1/traces");
-            traces.AllowInsecureLoopbackForTesting = true;
             traces.ExportTimeout = TimeSpan.FromSeconds(1);
             traces.BatchDelay = TimeSpan.FromMilliseconds(100);
             traces.MaxExportBatchSize = 1;

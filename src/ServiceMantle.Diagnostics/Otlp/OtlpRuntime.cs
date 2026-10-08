@@ -19,7 +19,6 @@ internal sealed record OtlpSignalRegistration(
     Uri? Endpoint,
     bool EndpointRejected,
     string? AuthenticationHeaderName,
-    bool AllowInsecureLoopbackForTesting,
     TimeSpan ExportTimeout,
     TimeSpan BatchDelay,
     int MaxQueueSize,
@@ -40,7 +39,6 @@ internal sealed record OtlpRegistration(
         options.Endpoint,
         options.EndpointContainedUnsafeComponents,
         options.AuthenticationHeaderName,
-        options.AllowInsecureLoopbackForTesting,
         options.ExportTimeout,
         options.BatchDelay,
         options.MaxQueueSize,
@@ -53,7 +51,6 @@ internal sealed record OtlpRegistration(
         options.Endpoint,
         options.EndpointContainedUnsafeComponents,
         options.AuthenticationHeaderName,
-        options.AllowInsecureLoopbackForTesting,
         options.ExportTimeout,
         options.BatchDelay,
         MaxQueueSize: 0,
@@ -186,7 +183,7 @@ internal sealed class OtlpRuntime
                 WellKnownOtlpErrorCodes.EndpointRequired);
         }
 
-        ValidateEndpoint(registration, endpoint, fieldPrefix);
+        ValidateEndpoint(endpoint, fieldPrefix);
         var exportTimeout = Milliseconds(
             registration.ExportTimeout,
             MinimumExportTimeoutMilliseconds,
@@ -287,13 +284,14 @@ internal sealed class OtlpRuntime
     }
 
     private static void ValidateEndpoint(
-        OtlpSignalRegistration registration,
         Uri endpoint,
         string fieldPrefix)
     {
         try
         {
             if (!endpoint.IsAbsoluteUri ||
+                !string.Equals(endpoint.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
                 string.IsNullOrEmpty(endpoint.Host) ||
                 !string.IsNullOrEmpty(endpoint.UserInfo) ||
                 !string.IsNullOrEmpty(endpoint.Query) ||
@@ -303,19 +301,6 @@ internal sealed class OtlpRuntime
                     $"{fieldPrefix}.endpoint",
                     WellKnownOtlpErrorCodes.InvalidEndpoint);
             }
-
-            if (!string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            {
-                if (!string.Equals(endpoint.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
-                    !registration.AllowInsecureLoopbackForTesting ||
-                    !endpoint.IsLoopback)
-                {
-                    throw Failure(
-                        $"{fieldPrefix}.endpoint",
-                        WellKnownOtlpErrorCodes.InsecureEndpoint);
-                }
-            }
-
         }
         catch (OtlpConfigurationException)
         {

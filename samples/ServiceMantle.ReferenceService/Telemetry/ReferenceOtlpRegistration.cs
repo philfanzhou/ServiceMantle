@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using ServiceMantle.Web;
 using ServiceMantle.Diagnostics;
 using ServiceMantle.Diagnostics.Export.Otlp;
@@ -19,7 +18,7 @@ namespace ServiceMantle.ReferenceService.Telemetry;
 /// <para>
 /// The sample only parses its own keys. <c>Protocol</c> accepts exactly <c>Grpc</c> or
 /// <c>HttpProtobuf</c> (case sensitive) and defaults to <c>Grpc</c>; <c>Endpoint</c> must be an
-/// absolute URI when present. Everything else - HTTPS enforcement, timeouts, batch bounds, header
+/// absolute URI when present. Everything else - endpoint URI rules, timeouts, batch bounds, header
 /// legality - stays with the public package's own startup validation, and the sample exposes no
 /// timeout or batch configuration of its own.
 /// </para>
@@ -28,11 +27,6 @@ namespace ServiceMantle.ReferenceService.Telemetry;
 /// sample-owned resolver answers only the lookup name <c>reference-otlp</c>, and the enabled
 /// signals carry that name; the header value is a secret and never reaches a log, an exception
 /// message, or a <c>ToString</c> of the sample's own making.
-/// </para>
-/// <para>
-/// <c>AllowInsecureLoopbackForTesting</c> is honored only in the Development environment; every
-/// other environment ignores it, leaving the loopback HTTP endpoint to the package's
-/// <c>otlp.insecure_endpoint</c> rejection.
 /// </para>
 /// </remarks>
 public static class ReferenceOtlpRegistrationExtensions
@@ -46,15 +40,12 @@ public static class ReferenceOtlpRegistrationExtensions
     /// <summary>Adds the OTLP exporters for the signals the configuration explicitly enabled.</summary>
     /// <param name="mantle">The ServiceMantle builder, after the base instrumentation.</param>
     /// <param name="configuration">The configuration read before the host is built.</param>
-    /// <param name="environment">The host environment that decides the loopback testing switch.</param>
     public static ServiceMantleBuilder AddReferenceOtlp(
         this ServiceMantleBuilder mantle,
-        IConfiguration configuration,
-        IHostEnvironment environment)
+        IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(mantle);
         ArgumentNullException.ThrowIfNull(configuration);
-        ArgumentNullException.ThrowIfNull(environment);
 
         var traces = ReadSignal(configuration, "Traces");
         var metrics = ReadSignal(configuration, "Metrics");
@@ -75,12 +66,6 @@ public static class ReferenceOtlpRegistrationExtensions
                 $"{Section}:Authentication:HeaderName' and '{Section}:Authentication:HeaderValue'.");
         }
 
-        // The loopback switch is a Development-only test affordance; every other environment
-        // ignores it and the package rejects insecure endpoints itself.
-        var allowLoopback = environment.IsDevelopment() &&
-            bool.TryParse(configuration[$"{Section}:AllowInsecureLoopbackForTesting"], out var loopback) &&
-            loopback;
-
         if (hasHeaderName && hasHeaderValue)
         {
             mantle.Services.AddSingleton<IRemoteTelemetryAuthenticationResolver>(
@@ -89,8 +74,8 @@ public static class ReferenceOtlpRegistrationExtensions
 
         mantle.AddOpenTelemetryOtlpExporter(options =>
         {
-            Apply(options.Traces, traces, hasHeaderName, allowLoopback);
-            Apply(options.Metrics, metrics, hasHeaderName, allowLoopback);
+            Apply(options.Traces, traces, hasHeaderName);
+            Apply(options.Metrics, metrics, hasHeaderName);
         });
         return mantle;
     }
@@ -140,8 +125,7 @@ public static class ReferenceOtlpRegistrationExtensions
     private static void Apply(
         OtlpSignalOptions options,
         (OtlpProtocol Protocol, Uri? Endpoint)? input,
-        bool authenticated,
-        bool allowLoopback)
+        bool authenticated)
     {
         if (input is null)
         {
@@ -151,7 +135,6 @@ public static class ReferenceOtlpRegistrationExtensions
         options.Enabled = true;
         options.Protocol = input.Value.Protocol;
         options.Endpoint = input.Value.Endpoint;
-        options.AllowInsecureLoopbackForTesting = allowLoopback;
         if (authenticated)
         {
             options.AuthenticationHeaderName = AuthenticationName;

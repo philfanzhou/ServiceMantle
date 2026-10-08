@@ -68,14 +68,15 @@ public sealed class OtlpSettingState
     }
 
     /// <summary>
-    /// The one endpoint rule the classification and the OTLP exporter share: an absolute HTTPS URI
-    /// with a host and without user info, query, or fragment.
+    /// The one endpoint rule the classification and the OTLP exporter share: an absolute HTTP(S)
+    /// URI with a host and without user info, query, or fragment.
     /// </summary>
     public static bool TryParseEndpoint(string? value, out Uri? endpoint)
     {
         endpoint = null;
         if (string.IsNullOrWhiteSpace(value) ||
             !Uri.TryCreate(value.Trim(), UriKind.Absolute, out var parsed) ||
+            parsed.Scheme != Uri.UriSchemeHttp &&
             parsed.Scheme != Uri.UriSchemeHttps ||
             string.IsNullOrEmpty(parsed.Host) ||
             !string.IsNullOrEmpty(parsed.UserInfo) ||
