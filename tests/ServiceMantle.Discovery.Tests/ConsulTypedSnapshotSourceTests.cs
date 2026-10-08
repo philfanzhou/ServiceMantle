@@ -333,7 +333,7 @@ public sealed class ConsulTypedSnapshotSourceTests
     public async Task An_invalid_typed_endpoint_is_rejected_without_leaking_the_secret()
     {
         var raw = ConsulFixture.Enabled();
-        raw[Endpoint] = "http://agent.example:8500";
+        raw[Endpoint] = "ftp://agent.example:8500";
         var typed = new CountingAccessor { Inner = await ActivateAsync(raw, composite: false) };
         var (provider, factory) = Build(services =>
         {
