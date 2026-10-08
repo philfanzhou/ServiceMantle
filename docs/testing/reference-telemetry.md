@@ -101,23 +101,22 @@ PostgreSQL 启动 gate 下开启**：抓取由 gate 注册的管理会话授权�
 - `Traces:Enabled` / `Traces:Protocol` / `Traces:Endpoint`，`Metrics:Enabled` / `Metrics:Protocol` /
   `Metrics:Endpoint`（Protocol 只接受 `Grpc` 或 `HttpProtobuf`，区分大小写，缺省 `Grpc`）；
 - `Authentication:HeaderName` / `Authentication:HeaderValue`（值是秘密，两者必须同时存在或同时
-  缺失）；
-- `AllowInsecureLoopbackForTesting`（仅 Development 生效，其他环境忽略）。
+  缺失）。
 
 两个信号的 `Enabled` 都不为 `true` 时不调用 `AddOpenTelemetryOtlpExporter`，也不注册解析器，
 容器中没有 `ServiceMantle.Diagnostics.Export.Otlp` 命名空间的服务。样例只做解析：无法识别的
 `Protocol`、非绝对 URI 的 `Endpoint`、只有一半的认证键都在 `CreateBuilder` 失败且不回显值；缺
-失的 `Endpoint` 传 `null`，由包在启动时报 `otlp.endpoint_required`；HTTPS、超时与批量边界全部交
-给包的启动校验，样例不暴露也不改动批量配置。认证齐全时注册样例内解析器（只认查找名
-`reference-otlp`），头名与头值的合法性归包。OTLP 与基础遥测开关相互独立：基础遥测关闭时启用
+失的 `Endpoint` 传 `null`，由包在启动时报 `otlp.endpoint_required`；端点 URI 规则（`http`/`https`）、
+超时与批量边界全部交给包的启动校验，样例不暴露也不改动批量配置。认证齐全时注册样例内解析器（只认
+查找名 `reference-otlp`），头名与头值的合法性归包。OTLP 与基础遥测开关相互独立：基础遥测关闭时启用
 OTLP 合法，只是没有数据可导出。
 
 | 配置 | 环境 | 结果 |
 | --- | --- | --- |
 | 两个 `Enabled` 都不为 true | 任意 | 无 OTLP 注册、无解析器，宿主正常启动 |
-| Traces 开、HttpProtobuf、回环端点、回环开关、完整认证 | Development | 启动成功；请求后 `ForceFlush`，collector 收到 `POST /v1/traces`（`application/x-protobuf`、配置的 `Authorization`、非空体） |
+| Traces 开、HttpProtobuf、回环端点、完整认证 | Development | 启动成功；请求后 `ForceFlush`，collector 收到 `POST /v1/traces`（`application/x-protobuf`、配置的 `Authorization`、非空体） |
 | Metrics 开、HttpProtobuf、回环端点、基础遥测开 | Development | `MeterProvider.ForceFlush` 后收到 `POST /v1/metrics` |
-| 同上 Traces 配置 | Production | `StartAsync` 以 `OtlpConfigurationException`（`otlp.insecure_endpoint`）失败，`ApplicationStarted` 未触发 |
+| 同上 Traces 配置 | Production | 启动成功；HTTP 回环端点与 Development 行为一致 |
 | `Protocol = http` 等无法识别值 | 任意 | `CreateBuilder` 抛 `InvalidOperationException`，只点名对应 `Protocol` 键 |
 | `Endpoint = not a uri` | 任意 | `CreateBuilder` 抛 `InvalidOperationException`，只点名对应 `Endpoint` 键 |
 | 缺 `Endpoint` | 任意 | 启动失败 `otlp.endpoint_required` |
@@ -126,8 +125,8 @@ OTLP 合法，只是没有数据可导出。
 | 启动前 token 已取消 | Development | `StartAsync` 抛取消，`ApplicationStarted` 未触发，解析器未被调用 |
 
 不保证：导出成功、送达、顺序或无丢失（包与上游 SDK 的既有非保证）；collector 不可达时的重
-试；上游 exporter 自身日志的脱敏；非 Development 环境下的任何测试便利。调用方责任：生产环境提
-供 HTTPS collector 与认证头，不要在部署配置中设置回环测试开关。
+试；上游 exporter 自身日志的脱敏。调用方责任：生产环境的传输安全（HTTPS collector 或可信网络）
+与认证头。
 
 `ReferenceOtlpTests` 验收本节矩阵（回环 collector 沿用 OTLP 包测试的写法），不需要容器，CI 常规
 测试即可；它加入 `ReferenceTelemetryCollection` 串行集合。

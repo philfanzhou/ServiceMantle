@@ -24,8 +24,8 @@ public static class ServiceMantleGrafanaLokiHostApplicationBuilderExtensions
     /// <param name="snapshot">The activated setting snapshot.</param>
     /// <param name="configure">
     /// An optional action over the remaining sink options (batching, labels, timeouts). The
-    /// classification owns <c>Enabled</c>, <c>Endpoint</c>, <c>AuthorizationHeaderResolverName</c>,
-    /// <c>AllowInsecureHttp</c>, and <c>AllowInsecureLoopbackForTesting</c>.
+    /// classification owns <c>Enabled</c>, <c>Endpoint</c>, and
+    /// <c>AuthorizationHeaderResolverName</c>.
     /// </param>
     /// <returns>
     /// The classified state. A usable pair enables the sink under the existing explicit
@@ -82,8 +82,6 @@ public static class ServiceMantleGrafanaLokiHostApplicationBuilderExtensions
         builder.AddServiceMantleGrafanaLoki(options =>
         {
             configure?.Invoke(options);
-            options.AllowInsecureHttp = state.AllowInsecureHttp;
-            options.AllowInsecureLoopbackForTesting = false;
             options.Endpoint = state.Endpoint;
             options.AuthorizationHeaderResolverName = state.Authorization is null
                 ? null : SettingDrivenAuthorizationResolverName;

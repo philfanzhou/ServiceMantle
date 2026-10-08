@@ -40,19 +40,17 @@ internal sealed class ConsulSnapshotBinding
             }
         }
 
-        // This is the single scheme/loopback relaxation point: the composite validator and the
-        // consumer boundary share it. The explicit switch only widens HTTP acceptance from
-        // loopback to any host; it never relaxes the absolute-URI, root-path, no-user-info,
-        // no-query, and no-fragment rules. Snapshots persisted before the switch existed are
-        // materialized with its default `false`, so they keep the default-refusal semantics.
-        var allowInsecureHttp = Required(
-            values, ConsulSettingDefinitions.AllowInsecureHttp, ServiceSettingValueType.Boolean).GetBoolean();
+        // This is the single scheme gate: the composite validator and the consumer boundary share
+        // it. It accepts exactly http and https as the transport scheme and never relaxes the
+        // absolute-URI, root-path, no-user-info, no-query, and no-fragment rules. Snapshots
+        // persisted before the retired allow-insecure-http switch was removed are migrated by
+        // deleting that key; the switch itself no longer takes part in validation.
         var endpointText = Text(values, ConsulSettingDefinitions.Endpoint);
         if (endpointText.Length > 2048 || endpointText.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)) ||
             !Uri.TryCreate(endpointText, UriKind.Absolute, out var endpoint) ||
             !string.IsNullOrEmpty(endpoint.UserInfo) || !string.IsNullOrEmpty(endpoint.Query) ||
             !string.IsNullOrEmpty(endpoint.Fragment) || endpoint.AbsolutePath != "/" ||
-            (endpoint.Scheme != "https" && !(endpoint.Scheme == "http" && (allowInsecureHttp || endpoint.IsLoopback))))
+            (endpoint.Scheme != "https" && endpoint.Scheme != "http"))
         {
             throw Invalid();
         }

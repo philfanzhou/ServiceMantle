@@ -75,12 +75,6 @@ internal sealed class ManagementCookieStartupValidator(
                 "The ServiceMantle management cookie must remain HttpOnly.");
         }
 
-        if (options.SecurePolicy != CookieSecurePolicy.Always)
-        {
-            throw new InvalidOperationException(
-                "The ServiceMantle management cookie must always require secure transport.");
-        }
-
         if (options.SameSite == SameSiteMode.None)
         {
             throw new InvalidOperationException(

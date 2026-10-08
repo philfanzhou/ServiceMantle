@@ -33,13 +33,11 @@ public sealed class GrafanaLokiSettingState
     private GrafanaLokiSettingState(
         GrafanaLokiSettingStatus status,
         Uri? endpoint,
-        string? authorization,
-        bool allowInsecureHttp = false)
+        string? authorization)
     {
         Status = status;
         Endpoint = endpoint;
         Authorization = authorization;
-        AllowInsecureHttp = allowInsecureHttp;
     }
 
     /// <summary>Gets the classified status.</summary>
@@ -53,9 +51,6 @@ public sealed class GrafanaLokiSettingState
     /// <see cref="Status"/> is <see cref="GrafanaLokiSettingStatus.Enabled"/>. Never rendered.
     /// </summary>
     public string? Authorization { get; }
-
-    /// <summary>Gets the explicit HTTP transport policy for registration.</summary>
-    public bool AllowInsecureHttp { get; }
 
     /// <summary>
     /// Gets a value indicating whether stored values exist but cannot be used, so the consumer
@@ -101,10 +96,8 @@ public sealed class GrafanaLokiSettingState
             authorizationText = authorizationValue.GetString();
         }
 
-        snapshot.Values.TryGetValue(GrafanaLokiSettingDefinitions.AllowInsecureHttp, out var httpValue);
         snapshot.Values.TryGetValue(GrafanaLokiSettingDefinitions.AllowNoAuthentication, out var noAuthenticationValue);
         return Classify(endpointText, authorizationText,
-            GrafanaLokiSettingDefinitions.BooleanOrFalse(httpValue),
             GrafanaLokiSettingDefinitions.BooleanOrFalse(noAuthenticationValue));
     }
 
@@ -113,28 +106,27 @@ public sealed class GrafanaLokiSettingState
     /// <param name="authorization">The stored Authorization value, or null.</param>
     /// <returns>The classified state.</returns>
     public static GrafanaLokiSettingState Classify(string? endpoint, string? authorization) =>
-        Classify(endpoint, authorization, false, false);
+        Classify(endpoint, authorization, false);
 
-    /// <summary>Classifies raw settings with explicit HTTP and no-authentication policies.</summary>
+    /// <summary>Classifies raw settings with an explicit no-authentication policy.</summary>
     /// <param name="endpoint">The stored endpoint text, or null.</param>
     /// <param name="authorization">The stored Authorization value, or null.</param>
-    /// <param name="allowInsecureHttp">Whether HTTP transport is explicitly permitted.</param>
     /// <param name="allowNoAuthentication">Whether no authentication is explicitly selected.</param>
     /// <returns>The classified, value-free state.</returns>
     public static GrafanaLokiSettingState Classify(
-        string? endpoint, string? authorization, bool allowInsecureHttp, bool allowNoAuthentication) =>
-        Evaluate(endpoint, authorization, allowInsecureHttp, allowNoAuthentication, strict: false).State;
+        string? endpoint, string? authorization, bool allowNoAuthentication) =>
+        Evaluate(endpoint, authorization, allowNoAuthentication, strict: false).State;
 
     // One policy evaluation drives both strict complete-candidate updates and tolerant startup.
     // Startup preserves the historical treatment of blank strings as missing; management rejects
     // explicitly stored blanks. No-authentication never silently discards a stored credential.
     internal static (GrafanaLokiSettingState State, IReadOnlyList<ServiceSettingValidationError> Errors) Evaluate(
-        string? endpoint, string? authorization, bool allowInsecureHttp, bool allowNoAuthentication, bool strict)
+        string? endpoint, string? authorization, bool allowNoAuthentication, bool strict)
     {
         var hasEndpoint = strict ? endpoint is not null : !string.IsNullOrWhiteSpace(endpoint);
         var hasAuthorization = strict || allowNoAuthentication
             ? authorization is not null : !string.IsNullOrWhiteSpace(authorization);
-        var endpointValid = TryParseEndpoint(endpoint, allowInsecureHttp, out var parsedEndpoint);
+        var endpointValid = TryParseEndpoint(endpoint, out var parsedEndpoint);
         var authorizationInvalid = hasAuthorization &&
             (allowNoAuthentication || !GrafanaLokiSettingDefinitions.IsUsableAuthorization(authorization));
         var errors = new List<ServiceSettingValidationError>();
@@ -155,25 +147,20 @@ public sealed class GrafanaLokiSettingState
             : GrafanaLokiSettingStatus.Enabled;
         return (new GrafanaLokiSettingState(status,
             status == GrafanaLokiSettingStatus.Enabled ? parsedEndpoint : null,
-            status == GrafanaLokiSettingStatus.Enabled && !allowNoAuthentication ? authorization : null,
-            allowInsecureHttp), errors);
+            status == GrafanaLokiSettingStatus.Enabled && !allowNoAuthentication ? authorization : null), errors);
     }
 
     /// <summary>
-    /// The one endpoint rule the classification and the Grafana Loki sink share: an allowed absolute HTTP(S)
-    /// URI with a host and without user info, query, or fragment.
+    /// The one endpoint rule the classification and the Grafana Loki sink share: an absolute
+    /// HTTP(S) URI with a host and without user info, query, or fragment.
     /// </summary>
-    public static bool TryParseEndpoint(string? value, out Uri? endpoint) =>
-        TryParseEndpoint(value, false, out endpoint);
-
-    /// <summary>Parses a structurally safe endpoint under the explicit HTTP policy.</summary>
-    public static bool TryParseEndpoint(string? value, bool allowInsecureHttp, out Uri? endpoint)
+    public static bool TryParseEndpoint(string? value, out Uri? endpoint)
     {
         endpoint = null;
         if (string.IsNullOrWhiteSpace(value) ||
             !Uri.TryCreate(value.Trim(), UriKind.Absolute, out var parsed) ||
-            (parsed.Scheme != Uri.UriSchemeHttps &&
-                !(allowInsecureHttp && parsed.Scheme == Uri.UriSchemeHttp)) ||
+            parsed.Scheme != Uri.UriSchemeHttp &&
+            parsed.Scheme != Uri.UriSchemeHttps ||
             string.IsNullOrEmpty(parsed.Host) ||
             !string.IsNullOrEmpty(parsed.UserInfo) ||
             !string.IsNullOrEmpty(parsed.Query) ||

@@ -329,7 +329,7 @@ public sealed class ReferenceManagementSessionTests : IAsyncLifetime
             .Get(ManagementSessionDefaults.AuthenticationScheme);
 
         Assert.True(options.Cookie.HttpOnly);
-        Assert.Equal(CookieSecurePolicy.Always, options.Cookie.SecurePolicy);
+        Assert.Equal(CookieSecurePolicy.SameAsRequest, options.Cookie.SecurePolicy);
         Assert.Equal(SameSiteMode.Strict, options.Cookie.SameSite);
     }
 

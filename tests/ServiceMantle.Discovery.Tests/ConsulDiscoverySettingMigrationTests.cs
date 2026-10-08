@@ -9,13 +9,22 @@ namespace ServiceMantle.Discovery.Tests;
 /// <summary>
 /// In-memory conversion example for the retired <c>consul.*</c> setting keys. This listing is the
 /// tested source of truth for the copies in README.md and docs/contracts/consul-registration-lifecycle.md.
-/// It maps rows key by key, resolves keys with the store's normalization, type-checks the eight
-/// migration keys against the catalog, and re-protects the credential envelope; database reads and
-/// the final commit stay with the consumer.
+/// It maps rows key by key, resolves keys with the store's normalization, drops the retired
+/// transport switch row instead of mapping it, type-checks the eight migration keys against the
+/// catalog, and re-protects the credential envelope; database reads and the final commit stay with
+/// the consumer.
 /// </summary>
 internal static class ConsulDiscoverySettingMigration
 {
     internal const string LegacyCredentialKey = "consul.token";
+
+    /// <summary>
+    /// Keys the catalog no longer defines: <c>discovery.allow-insecure-http</c> retired when the
+    /// transport scheme stopped being gated. A snapshot that still carries one fails the loader's
+    /// unknown-key check, so conversion drops the row instead of mapping it.
+    /// </summary>
+    internal static readonly IReadOnlySet<string> RetiredKeys =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "discovery.allow-insecure-http" };
 
     internal static readonly IReadOnlyDictionary<string, string> LegacyKeyMap =
         new Dictionary<string, string>
@@ -70,9 +79,15 @@ internal static class ConsulDiscoverySettingMigration
 
             version = row.Version;
 
+            // Retired keys are dropped, not mapped: the new catalog must accept every surviving row.
+            var normalizedKey = NormalizeKey(row.Key);
+            if (RetiredKeys.Contains(normalizedKey))
+            {
+                continue;
+            }
+
             // The store and the loader resolve keys by trimming and lowercasing them; retired-key
             // variants must map, re-protect, and collide with their neutral target key the same way.
-            var normalizedKey = NormalizeKey(row.Key);
             var targetKey = LegacyKeyMap.TryGetValue(normalizedKey, out var mapped) ? mapped : row.Key;
             if (!targetKeys.Add(NormalizeKey(targetKey)))
             {
@@ -142,7 +157,6 @@ public sealed class ConsulDiscoverySettingMigrationTests
     {
         { ConsulSettingDefinitions.Enabled, ServiceSettingValueType.Boolean, "false", false },
         { ConsulSettingDefinitions.Endpoint, ServiceSettingValueType.String, null, false },
-        { ConsulSettingDefinitions.AllowInsecureHttp, ServiceSettingValueType.Boolean, "false", false },
         { ConsulSettingDefinitions.Token, ServiceSettingValueType.String, null, true },
         { ConsulSettingDefinitions.ServiceName, ServiceSettingValueType.String, null, false },
         { ConsulSettingDefinitions.Address, ServiceSettingValueType.String, null, false },
@@ -166,13 +180,16 @@ public sealed class ConsulDiscoverySettingMigrationTests
     }
 
     [Fact]
-    public void Catalog_registers_no_legacy_key_aliases()
+    public void Catalog_registers_no_legacy_key_aliases_or_retired_keys()
     {
         using var fixture = new ConsulFixture();
-        // The catalog is the eight #436 migration keys plus exactly one newer key,
-        // discovery.allow-insecure-http (#591), which never had a consul.* alias.
-        Assert.Equal(ConsulDiscoverySettingMigration.LegacyKeyMap.Count + 1, fixture.Registry.Definitions.Count);
-        Assert.True(fixture.Registry.TryGetDefinition(ConsulSettingDefinitions.AllowInsecureHttp, out _));
+        // The catalog is exactly the eight #436 migration keys; the transport switch
+        // discovery.allow-insecure-http (#591) was retired when the scheme gate was removed.
+        Assert.Equal(ConsulDiscoverySettingMigration.LegacyKeyMap.Count, fixture.Registry.Definitions.Count);
+        foreach (var retiredKey in ConsulDiscoverySettingMigration.RetiredKeys)
+        {
+            Assert.False(fixture.Registry.TryGetDefinition(retiredKey, out _));
+        }
         foreach (var legacyKey in ConsulDiscoverySettingMigration.LegacyKeyMap.Keys)
         {
             Assert.False(fixture.Registry.TryGetDefinition(legacyKey, out _));
@@ -221,6 +238,46 @@ public sealed class ConsulDiscoverySettingMigrationTests
         new("consul.Health-Path", version, ServiceSettingValueType.String, "/health/ready"),
         new(" consul.HEALTH-SCHEME ", version, ServiceSettingValueType.String, "http")
     ];
+
+    [Fact]
+    public async Task A_snapshot_with_the_retired_transport_switch_fails_as_unknown_before_migration()
+    {
+        using var fixture = new ConsulFixture();
+        var rows = new List<PersistedServiceSettingValue>(NeutralRows(1))
+        {
+            new("discovery.allow-insecure-http", 1, ServiceSettingValueType.Boolean, "true")
+        };
+        fixture.SnapshotSource.Read = new(ConsulFixture.Service, 1, rows);
+        var result = await fixture.Loader.RefreshAsync(TestContext.Current.CancellationToken);
+        Assert.False(result.Succeeded);
+        Assert.Equal(WellKnownServiceSettingSnapshotErrorCodes.UnknownKey,
+            Assert.Single(result.Errors).ErrorCode);
+        Assert.False(fixture.Accessor.TryGetCurrent(out _));
+        Assert.Equal(ConsulConfigurationError.SnapshotUnavailable,
+            Assert.Throws<ConsulConfigurationException>(() => fixture.Provider.CreateClient()).Error);
+        Assert.Equal(0, fixture.ClientFactory.Resolutions);
+    }
+
+    [Fact]
+    public async Task Conversion_drops_the_retired_transport_switch_row_and_activates()
+    {
+        using var fixture = new ConsulFixture();
+        var rows = new List<PersistedServiceSettingValue>(NeutralRows(1))
+        {
+            new(" DISCOVERY.ALLOW-INSECURE-HTTP ", 1, ServiceSettingValueType.Boolean, "true")
+        };
+        Assert.True(ConsulDiscoverySettingMigration.TryConvert(
+            ConsulFixture.Service, ConsulFixture.RootKey, fixture.Registry, 2, rows,
+            out var migrated, out var errorCode, TestContext.Current.CancellationToken));
+        Assert.Null(errorCode);
+        Assert.Equal(NeutralRows(1).Count, migrated!.Count);
+        Assert.DoesNotContain(migrated, row => row.Key.Contains("allow-insecure", StringComparison.OrdinalIgnoreCase));
+        fixture.SnapshotSource.Read = new(ConsulFixture.Service, 2, migrated);
+        var result = await fixture.Loader.RefreshAsync(TestContext.Current.CancellationToken);
+        Assert.True(result.Succeeded, result.ToString());
+        using var client = fixture.Provider.CreateClient();
+        Assert.Equal(2, client!.SnapshotVersion);
+    }
 
     [Fact]
     public async Task A_complete_legacy_snapshot_fails_as_unknown_before_first_activation()

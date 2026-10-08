@@ -16,7 +16,9 @@ public sealed class OtlpSettingTests
     [InlineData(null, null, "disabled", false)]
     [InlineData("https://otlp.example.test", null, "enabled", true)]
     [InlineData("https://otlp.example.test:4317", null, "enabled", true)]
-    [InlineData("http://otlp.example.test", null, "endpoint_invalid", false)]
+    [InlineData("http://otlp.example.test", null, "enabled", true)]
+    [InlineData("http://127.0.0.1:4317", null, "enabled", true)]
+    [InlineData("ftp://otlp.example.test", null, "endpoint_invalid", false)]
     [InlineData("https://user@otlp.example.test", null, "endpoint_invalid", false)]
     [InlineData("https://otlp.example.test?q=1", null, "endpoint_invalid", false)]
     [InlineData("otlp.example.test", null, "endpoint_invalid", false)]
@@ -48,17 +50,22 @@ public sealed class OtlpSettingTests
             [new OtlpSettingDefinitions()]);
 
         var empty = registry.Validate(new Dictionary<string, string?>());
-        var usable = registry.Validate(new Dictionary<string, string?>
+        var usableHttps = registry.Validate(new Dictionary<string, string?>
         {
             [OtlpSettingDefinitions.Endpoint] = "https://otlp.example.test"
         });
-        var unusable = registry.Validate(new Dictionary<string, string?>
+        var usableHttp = registry.Validate(new Dictionary<string, string?>
         {
             [OtlpSettingDefinitions.Endpoint] = "http://otlp.example.test"
         });
+        var unusable = registry.Validate(new Dictionary<string, string?>
+        {
+            [OtlpSettingDefinitions.Endpoint] = "ftp://otlp.example.test"
+        });
 
         Assert.True(empty.IsValid);
-        Assert.True(usable.IsValid);
+        Assert.True(usableHttps.IsValid);
+        Assert.True(usableHttp.IsValid);
         Assert.False(unusable.IsValid);
         Assert.Contains(unusable.Errors, error =>
             error.Key == OtlpSettingDefinitions.Endpoint &&
@@ -100,7 +107,7 @@ public sealed class OtlpSettingTests
 
     [Theory]
     [InlineData(null)]
-    [InlineData("http://otlp.example.test")]
+    [InlineData("ftp://otlp.example.test")]
     public async Task Empty_or_unusable_snapshot_registers_no_exporter_machinery(string? endpoint)
     {
         var (builder, serviceMantle) = CreateHostBuilder();

@@ -7,7 +7,7 @@ namespace ServiceMantle.Diagnostics.Export.Otlp;
 /// </summary>
 /// <remarks>
 /// The combination validation is the strict management-update rule: a stored
-/// <c>opentelemetry.otlp_endpoint</c> must be empty or an absolute HTTPS URI without user info,
+/// <c>opentelemetry.otlp_endpoint</c> must be empty or an absolute HTTP(S) URI without user info,
 /// query, or fragment. The startup classification (<see cref="OtlpSettingState"/>) is deliberately
 /// more tolerant: a value an older release already stored keeps the exporter off with a fixed
 /// warning category instead of failing the start. Errors never contain the endpoint value.
@@ -16,7 +16,7 @@ public sealed class OtlpSettingDefinitions
     : IServiceSettingDefinitionProvider, IServiceSettingCompositeValidator
 {
     /// <summary>
-    /// The OTLP exporter endpoint; an absolute HTTPS URI without user info, query, or fragment.
+    /// The OTLP exporter endpoint; an absolute HTTP(S) URI without user info, query, or fragment.
     /// </summary>
     public const string Endpoint = "opentelemetry.otlp_endpoint";
 

@@ -29,9 +29,9 @@ public sealed class ManagementCookieAuthenticationTests
             .Get(ManagementSessionDefaults.AuthenticationScheme);
 
         Assert.Equal("ServiceMantle.ManagementCookie", ManagementSessionDefaults.AuthenticationScheme);
-        Assert.Equal("__Host-ServiceMantle.Management", options.Cookie.Name);
+        Assert.Equal("ServiceMantle.Management", options.Cookie.Name);
         Assert.True(options.Cookie.HttpOnly);
-        Assert.Equal(CookieSecurePolicy.Always, options.Cookie.SecurePolicy);
+        Assert.Equal(CookieSecurePolicy.SameAsRequest, options.Cookie.SecurePolicy);
         Assert.Equal(SameSiteMode.Strict, options.Cookie.SameSite);
         Assert.True(options.Cookie.IsEssential);
         Assert.Null(options.Cookie.Domain);
@@ -47,8 +47,6 @@ public sealed class ManagementCookieAuthenticationTests
     public static TheoryData<Action<ManagementCookieOptions>> UnsafeSettings => new()
     {
         options => options.HttpOnly = false,
-        options => options.SecurePolicy = CookieSecurePolicy.None,
-        options => options.SecurePolicy = CookieSecurePolicy.SameAsRequest,
         options => options.SameSite = SameSiteMode.None,
         options => options.IsEssential = false,
         options => options.ExpireTimeSpan = TimeSpan.Zero,
@@ -72,6 +70,27 @@ public sealed class ManagementCookieAuthenticationTests
             host.StartAsync(TestContext.Current.CancellationToken));
 
         Assert.DoesNotContain("catalog", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(CookieSecurePolicy.None)]
+    [InlineData(CookieSecurePolicy.SameAsRequest)]
+    [InlineData(CookieSecurePolicy.Always)]
+    public async Task SecurePolicy_overrides_never_fail_the_host_start(
+        CookieSecurePolicy policy)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services
+            .AddServiceMantle(ServiceId.Parse("catalog"), InstanceId.Parse("catalog-01"))
+            .AddManagementCookieAuthentication(options => options.SecurePolicy = policy);
+
+        using var host = builder.Build();
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+
+        var options = host.Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+            .Get(ManagementSessionDefaults.AuthenticationScheme);
+        Assert.Equal(policy, options.Cookie.SecurePolicy);
     }
 
     [Fact]

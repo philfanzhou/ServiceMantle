@@ -22,11 +22,10 @@ public sealed class GrafanaLokiSettingPolicyTests
     private static ServiceSettingDefinitionRegistry Registry(bool strict = true) => new(
         [new GrafanaLokiSettingDefinitions()], strict ? [new GrafanaLokiSettingDefinitions()] : []);
 
-    private static Dictionary<string, string?> Values(string? endpoint, string? authorization, bool http, bool noAuth)
+    private static Dictionary<string, string?> Values(string? endpoint, string? authorization, bool noAuth)
     {
         var values = new Dictionary<string, string?>
         {
-            [GrafanaLokiSettingDefinitions.AllowInsecureHttp] = http ? "TRUE" : "false",
             [GrafanaLokiSettingDefinitions.AllowNoAuthentication] = noAuth ? "TRUE" : "false"
         };
         if (endpoint is not null) values.Add(GrafanaLokiSettingDefinitions.Endpoint, endpoint);
@@ -36,27 +35,26 @@ public sealed class GrafanaLokiSettingPolicyTests
 
     public static IEnumerable<object?[]> PolicyCases()
     {
-        foreach (var http in new[] { false, true })
         foreach (var noAuth in new[] { false, true })
         {
-            yield return [null, null, http, noAuth, Disabled, true, null];
-            yield return [null, Authorization, http, noAuth, EndpointMissing, false, "setting.required"];
+            yield return [null, null, noAuth, Disabled, true, null];
+            yield return [null, Authorization, noAuth, EndpointMissing, false, "setting.required"];
             foreach (var invalid in new[] { "relative", "https:///", "ftp://logs.example.test", "https://user:secret@logs.example.test", "https://logs.example.test?secret=query", "https://logs.example.test#secret", "http://user:secret@logs.example.test", "http://logs.example.test?secret=query", "http://logs.example.test#secret" })
-                yield return [invalid, noAuth ? null : Authorization, http, noAuth, EndpointInvalid, false, "loki.invalid_endpoint"];
-            yield return ["http://127.0.0.1:3100", noAuth ? null : Authorization, http, noAuth,
-                http ? Enabled : EndpointInvalid, http, http ? null : "loki.invalid_endpoint"];
-            yield return [Endpoint, null, http, noAuth, noAuth ? Enabled : AuthorizationMissing,
+                yield return [invalid, noAuth ? null : Authorization, noAuth, EndpointInvalid, false, "loki.invalid_endpoint"];
+            yield return ["http://127.0.0.1:3100", noAuth ? null : Authorization, noAuth, Enabled, true, null];
+            yield return ["http://logs.example.test/prefix", noAuth ? null : Authorization, noAuth, Enabled, true, null];
+            yield return [Endpoint, null, noAuth, noAuth ? Enabled : AuthorizationMissing,
                 noAuth, noAuth ? null : "setting.required"];
-            yield return [Endpoint, Authorization, http, noAuth, noAuth ? AuthorizationInvalid : Enabled,
+            yield return [Endpoint, Authorization, noAuth, noAuth ? AuthorizationInvalid : Enabled,
                 !noAuth, noAuth ? "loki.authorization_value_invalid" : null];
             foreach (var invalid in new[] { "", " ", "bad\rvalue", "bad\nvalue", "bad\0value", new string('x', 4097) })
-                yield return [Endpoint, invalid, http, noAuth,
+                yield return [Endpoint, invalid, noAuth,
                     !noAuth && string.IsNullOrWhiteSpace(invalid) ? AuthorizationMissing : AuthorizationInvalid,
                     false, "loki.authorization_value_invalid"];
             if (!noAuth)
             {
-                yield return [Endpoint, "x", http, noAuth, Enabled, true, null];
-                yield return [Endpoint, new string('x', 4096), http, noAuth, Enabled, true, null];
+                yield return [Endpoint, "x", noAuth, Enabled, true, null];
+                yield return [Endpoint, new string('x', 4096), noAuth, Enabled, true, null];
             }
         }
     }
@@ -64,10 +62,10 @@ public sealed class GrafanaLokiSettingPolicyTests
     [Theory]
     [MemberData(nameof(PolicyCases))]
     public async Task Complete_candidates_typed_snapshots_and_registration_follow_one_policy(
-        string? endpoint, string? authorization, bool http, bool noAuth,
+        string? endpoint, string? authorization, bool noAuth,
         GrafanaLokiSettingStatus expected, bool valid, string? code)
     {
-        var values = Values(endpoint, authorization, http, noAuth);
+        var values = Values(endpoint, authorization, noAuth);
         var validation = Registry().Validate(values);
         Assert.Equal(valid, validation.IsValid);
         if (code is not null) Assert.Contains(validation.Errors, error => error.ErrorCode == code);
@@ -81,19 +79,15 @@ public sealed class GrafanaLokiSettingPolicyTests
         {
             options.Enabled = true;
             options.Endpoint = new Uri("http://127.0.0.1:1234");
-            options.AllowInsecureHttp = true;
-            options.AllowInsecureLoopbackForTesting = true;
             options.AuthorizationHeaderResolverName = "callback-resolver";
         });
         Assert.Equal(expected, state.Status);
-        Assert.Equal(expected, GrafanaLokiSettingState.Classify(endpoint, authorization, http, noAuth).Status);
+        Assert.Equal(expected, GrafanaLokiSettingState.Classify(endpoint, authorization, noAuth).Status);
         AssertSafe(state.ToString(), endpoint, authorization);
         var registration = Assert.Single(builder.Services, x => x.ServiceType == typeof(GrafanaLokiRegistration))
             .ImplementationInstance as GrafanaLokiRegistration;
         Assert.NotNull(registration);
         Assert.Equal(expected == Enabled, registration.Options.Enabled);
-        Assert.Equal(http, registration.Options.AllowInsecureHttp);
-        Assert.False(registration.Options.AllowInsecureLoopbackForTesting);
         Assert.Equal(expected == Enabled && !noAuth
             ? ServiceMantleGrafanaLokiHostApplicationBuilderExtensions.SettingDrivenAuthorizationResolverName : null,
             registration.Options.AuthorizationHeaderResolverName);
@@ -113,38 +107,33 @@ public sealed class GrafanaLokiSettingPolicyTests
     public async Task New_definitions_default_false_and_bad_persisted_types_preserve_the_current_snapshot()
     {
         var definitions = new GrafanaLokiSettingDefinitions().GetDefinitions().ToArray();
-        foreach (var key in new[] { GrafanaLokiSettingDefinitions.AllowInsecureHttp, GrafanaLokiSettingDefinitions.AllowNoAuthentication })
-        {
-            var definition = Assert.Single(definitions, item => item.Key == key);
-            Assert.Equal(ServiceSettingValueType.Boolean, definition.ValueType);
-            Assert.Equal("false", definition.DefaultValue);
-            Assert.False(definition.IsSensitive);
-            Assert.True(definition.RequiresRestart);
-            var invalid = Registry().Validate(new Dictionary<string, string?> { [key] = "not-a-boolean-secret" });
-            Assert.Contains(invalid.Errors, error => error.Key == key && error.ErrorCode == "setting.invalid_boolean");
-            Assert.All(invalid.Errors, error => Assert.DoesNotContain("not-a-boolean-secret", error.ToString()));
-        }
+        var definition = Assert.Single(definitions, item => item.Key == GrafanaLokiSettingDefinitions.AllowNoAuthentication);
+        Assert.Equal(ServiceSettingValueType.Boolean, definition.ValueType);
+        Assert.Equal("false", definition.DefaultValue);
+        Assert.False(definition.IsSensitive);
+        Assert.True(definition.RequiresRestart);
+        var invalid = Registry().Validate(new Dictionary<string, string?> { [GrafanaLokiSettingDefinitions.AllowNoAuthentication] = "not-a-boolean-secret" });
+        Assert.Contains(invalid.Errors, error => error.Key == GrafanaLokiSettingDefinitions.AllowNoAuthentication && error.ErrorCode == "setting.invalid_boolean");
+        Assert.All(invalid.Errors, error => Assert.DoesNotContain("not-a-boolean-secret", error.ToString()));
         var old = await LoadAsync(new Dictionary<string, string?>
         {
             [GrafanaLokiSettingDefinitions.Endpoint] = Endpoint,
             [GrafanaLokiSettingDefinitions.Authorization] = Authorization
         });
-        Assert.False(old.Values[GrafanaLokiSettingDefinitions.AllowInsecureHttp].GetBoolean());
         Assert.False(old.Values[GrafanaLokiSettingDefinitions.AllowNoAuthentication].GetBoolean());
-        Assert.True(old.Values[GrafanaLokiSettingDefinitions.AllowInsecureHttp].IsDefault);
+        Assert.True(old.Values[GrafanaLokiSettingDefinitions.AllowNoAuthentication].IsDefault);
         Assert.Equal(Enabled, GrafanaLokiSettingState.Classify(old).Status);
-        Assert.False(GrafanaLokiSettingState.TryParseEndpoint("http://127.0.0.1", out _));
-        Assert.Equal(EndpointInvalid, GrafanaLokiSettingState.Classify("http://127.0.0.1", Authorization).Status);
+        Assert.True(GrafanaLokiSettingState.TryParseEndpoint("http://127.0.0.1", out _));
+        Assert.Equal(Enabled, GrafanaLokiSettingState.Classify("http://127.0.0.1", Authorization).Status);
 
         var source = new MutableSource(new ServiceSettingSnapshotRead(Identity, 0, []));
         var accessor = new ServiceSettingCurrentSnapshotAccessor();
         using var loader = new ServiceSettingSnapshotLoader(Identity, source, Registry(false), accessor);
         Assert.True((await loader.RefreshAsync(TestContext.Current.CancellationToken)).Succeeded);
         Assert.True(accessor.TryGetCurrent(out var before));
-        foreach (var key in new[] { GrafanaLokiSettingDefinitions.AllowInsecureHttp, GrafanaLokiSettingDefinitions.AllowNoAuthentication })
         foreach (var type in new[] { ServiceSettingValueType.String, ServiceSettingValueType.Number })
         {
-            source.Read = new(Identity, 1, [new(key, 1, type, "true")]);
+            source.Read = new(Identity, 1, [new(GrafanaLokiSettingDefinitions.AllowNoAuthentication, 1, type, "true")]);
             var result = await loader.RefreshAsync(TestContext.Current.CancellationToken);
             Assert.False(result.Succeeded);
             Assert.Contains(result.Errors, x => x.ErrorCode == WellKnownServiceSettingSnapshotErrorCodes.ValueTypeMismatch);
@@ -158,7 +147,7 @@ public sealed class GrafanaLokiSettingPolicyTests
     [InlineData(true, true)]
     [InlineData(false, false)]
     [InlineData(false, true)]
-    public async Task Management_commit_loader_and_actual_requests_cover_all_transport_authentication_combinations(bool http, bool noAuth)
+    public async Task Management_commit_loader_and_actual_requests_cover_both_transports_and_authentication_choices(bool http, bool noAuth)
     {
         await using var server = await LocalServer.StartAsync();
         var endpoint = http ? new Uri(server.Address, "prefix").ToString() : Endpoint;
@@ -166,14 +155,13 @@ public sealed class GrafanaLokiSettingPolicyTests
         var key = new CountingRootKey(noAuth);
         var service = new ServiceSettingUpdateService(Identity, Registry(), store, key);
         var oldSnapshot = await LoadStoreAsync(store, key);
-        var result = await service.UpdateAsync(Command(0, Values(endpoint, noAuth ? null : Authorization, http, noAuth)), TestContext.Current.CancellationToken);
+        var result = await service.UpdateAsync(Command(0, Values(endpoint, noAuth ? null : Authorization, noAuth)), TestContext.Current.CancellationToken);
         Assert.True(result.Succeeded);
         Assert.Equal(1, result.Version);
         Assert.Equal(0, store.Committed.Version);
         Assert.Equal(1, store.ApplyCount);
         Assert.NotNull(store.Staged);
         Assert.True(store.Staged.RestartRequired);
-        Assert.Equal(http ? "true" : "false", store.Staged.Values[GrafanaLokiSettingDefinitions.AllowInsecureHttp]);
         Assert.Equal(noAuth ? "true" : "false", store.Staged.Values[GrafanaLokiSettingDefinitions.AllowNoAuthentication]);
         if (!noAuth) Assert.StartsWith("sm:v1:", store.Staged.Values[GrafanaLokiSettingDefinitions.Authorization]);
         Assert.All(store.Audits, audit =>
@@ -198,9 +186,6 @@ public sealed class GrafanaLokiSettingPolicyTests
         {
             options.BatchSize = 1;
             options.FlushPeriod = TimeSpan.FromSeconds(1);
-            // Classification restores these after the callback.
-            options.AllowInsecureHttp = !http;
-            options.AllowInsecureLoopbackForTesting = true;
             options.AuthorizationHeaderResolverName = "callback-resolver";
         }
         var state = builder.AddServiceMantleGrafanaLokiFromSettings(snapshot, Configure);
@@ -279,12 +264,10 @@ public sealed class GrafanaLokiSettingPolicyTests
         Assert.True((await service.UpdateAsync(Command(2, new Dictionary<string, string?>
         {
             [GrafanaLokiSettingDefinitions.AllowNoAuthentication] = null,
-            [GrafanaLokiSettingDefinitions.AllowInsecureHttp] = null,
             [GrafanaLokiSettingDefinitions.Authorization] = Authorization
         }), TestContext.Current.CancellationToken)).Succeeded);
         store.Commit();
         Assert.DoesNotContain(GrafanaLokiSettingDefinitions.AllowNoAuthentication, store.Committed.Values.Keys);
-        Assert.DoesNotContain(GrafanaLokiSettingDefinitions.AllowInsecureHttp, store.Committed.Values.Keys);
         Assert.Equal(Authorization, GrafanaLokiSettingState.Classify(await LoadStoreAsync(store, key)).Authorization);
         var conflict = await service.UpdateAsync(Command(1, seed), TestContext.Current.CancellationToken);
         Assert.Equal(ServiceSettingUpdateStatus.VersionConflict, conflict.Status);
@@ -301,9 +284,9 @@ public sealed class GrafanaLokiSettingPolicyTests
     [InlineData("batch")]
     public async Task Different_valid_snapshots_or_batch_configuration_conflict_at_start(string difference)
     {
-        var first = await LoadAsync(Values(Endpoint, Authorization, false, false));
+        var first = await LoadAsync(Values(Endpoint, Authorization, false));
         var second = await LoadAsync(Values(difference == "endpoint" ? "https://other.example.test" : Endpoint,
-            difference == "authentication" ? null : Authorization, false, difference == "authentication"));
+            difference == "authentication" ? null : Authorization, difference == "authentication"));
         var builder = Host.CreateApplicationBuilder();
         builder.AddServiceMantleSerilog();
         builder.Services.AddSingleton<ILokiHttpMessageHandlerFactory>(new CapturingFactory());

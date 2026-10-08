@@ -55,12 +55,11 @@ public sealed class ConsulClientTests
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(false, false)]
-    public async Task Insecure_http_switch_sends_register_and_deregister_over_plain_http(bool register, bool withToken)
+    public async Task Http_agent_endpoints_send_register_and_deregister_over_plain_http(bool register, bool withToken)
     {
         using var fixture = new ConsulFixture();
         var raw = ConsulFixture.Enabled();
         raw[ConsulSettingDefinitions.Endpoint] = "http://consul.internal:8500/";
-        raw[ConsulSettingDefinitions.AllowInsecureHttp] = "true";
         if (!withToken) { raw.Remove(ConsulSettingDefinitions.Token); }
         await fixture.ActivateAsync(raw);
         var handler = new Handler();

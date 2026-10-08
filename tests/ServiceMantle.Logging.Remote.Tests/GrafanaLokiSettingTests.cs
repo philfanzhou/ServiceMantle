@@ -29,7 +29,8 @@ public sealed class GrafanaLokiSettingTests
         };
         yield return new object[]
         {
-            "http://logs.example.test", SecretAuthorization, EndpointInvalid, "endpoint_invalid", null, null
+            "http://logs.example.test", SecretAuthorization, Enabled, "enabled",
+            "http://logs.example.test/", null
         };
         yield return new object[]
         {
@@ -89,7 +90,8 @@ public sealed class GrafanaLokiSettingTests
     [Theory]
     [InlineData("https://logs.example.test", true)]
     [InlineData("https://logs.example.test/prefix", true)]
-    [InlineData("http://logs.example.test", false)]
+    [InlineData("http://logs.example.test", true)]
+    [InlineData("ftp://logs.example.test", false)]
     [InlineData("https://user@logs.example.test", false)]
     [InlineData("https://logs.example.test?q=1", false)]
     [InlineData("https://logs.example.test#f", false)]
@@ -137,7 +139,7 @@ public sealed class GrafanaLokiSettingTests
 
         var invalidEndpoint = registry.Validate(new Dictionary<string, string?>
         {
-            [GrafanaLokiSettingDefinitions.Endpoint] = "http://logs.example.test",
+            [GrafanaLokiSettingDefinitions.Endpoint] = "ftp://logs.example.test",
             [GrafanaLokiSettingDefinitions.Authorization] = SecretAuthorization
         });
         Assert.False(invalidEndpoint.IsValid);
@@ -229,7 +231,7 @@ public sealed class GrafanaLokiSettingTests
 
     [Theory]
     [InlineData(null, null, Disabled)]
-    [InlineData("http://logs.example.test", SecretAuthorization, EndpointInvalid)]
+    [InlineData("ftp://logs.example.test", SecretAuthorization, EndpointInvalid)]
     [InlineData("https://logs.example.test", null, AuthorizationMissing)]
     public async Task Empty_or_unusable_snapshot_keeps_the_sink_disabled_without_a_resolver(
         string? endpoint,

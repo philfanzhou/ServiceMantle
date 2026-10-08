@@ -79,13 +79,13 @@ public sealed class GrafanaLokiTests
     {
         { options => options.Endpoint = null, WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
         { options => options.Endpoint = new Uri("relative", UriKind.Relative), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
-        { options => options.Endpoint = new Uri("http://logs.example.test"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
+        { options => options.Endpoint = new Uri("ftp://logs.example.test"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
         { options => options.Endpoint = new Uri("https://user:pass@logs.example.test"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
         { options => options.Endpoint = new Uri("https://logs.example.test?token=value"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
         { options => options.Endpoint = new Uri("https://logs.example.test#secret"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
-        { options => { options.AllowInsecureHttp = true; options.Endpoint = new Uri("http://user:pass@ruoyu-loki:3100"); }, WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
-        { options => { options.AllowInsecureHttp = true; options.Endpoint = new Uri("http://ruoyu-loki:3100?token=value"); }, WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
-        { options => { options.AllowInsecureHttp = true; options.Endpoint = new Uri("http://ruoyu-loki:3100#secret"); }, WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
+        { options => options.Endpoint = new Uri("http://user:pass@ruoyu-loki:3100"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
+        { options => options.Endpoint = new Uri("http://ruoyu-loki:3100?token=value"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
+        { options => options.Endpoint = new Uri("http://ruoyu-loki:3100#secret"), WellKnownGrafanaLokiErrorCodes.InvalidEndpoint },
         { options => options.AuthorizationHeaderResolverName = " ", WellKnownGrafanaLokiErrorCodes.InvalidAuthorizationResolverName },
         { options => options.AuthorizationHeaderResolverName = "invalid/name", WellKnownGrafanaLokiErrorCodes.InvalidAuthorizationResolverName },
         { options => options.Labels = new Dictionary<string, string> { ["level"] = "fixed-label-secret" }, WellKnownGrafanaLokiErrorCodes.InvalidLabels },
@@ -159,74 +159,35 @@ public sealed class GrafanaLokiTests
     }
 
     [Fact]
-    public async Task Insecure_http_requires_explicit_loopback_test_option()
+    public async Task Http_endpoints_start_without_any_transport_switch()
     {
-        var rejectedBuilder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
-        rejectedBuilder.AddServiceMantleGrafanaLoki(options =>
+        foreach (var endpoint in new[] { "http://127.0.0.1:3100", "http://localhost:3100/prefix", "http://ruoyu-loki:3100" })
         {
-            Enable(options);
-            options.Endpoint = new Uri("http://127.0.0.1:3100");
-        });
-        using (var rejected = rejectedBuilder.Build())
-        {
-            var exception = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
-                rejected.StartAsync(TestContext.Current.CancellationToken));
-            Assert.Equal(WellKnownGrafanaLokiErrorCodes.InvalidEndpoint, exception.ErrorCode);
+            var builder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
+            builder.AddServiceMantleGrafanaLoki(options =>
+            {
+                Enable(options);
+                options.Endpoint = new Uri(endpoint);
+            });
+            using var host = builder.Build();
+            await host.StartAsync(TestContext.Current.CancellationToken);
+            await host.StopAsync(TestContext.Current.CancellationToken);
         }
-
-        var acceptedBuilder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
-        acceptedBuilder.AddServiceMantleGrafanaLoki(options =>
-        {
-            Enable(options);
-            options.Endpoint = new Uri("http://localhost:3100/prefix");
-            options.AllowInsecureLoopbackForTesting = true;
-        });
-        using var accepted = acceptedBuilder.Build();
-        await accepted.StartAsync(TestContext.Current.CancellationToken);
-        await accepted.StopAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
-    public async Task Insecure_http_on_non_loopback_hosts_requires_the_explicit_AllowInsecureHttp_switch()
+    public async Task Http_delivery_to_a_non_loopback_host_needs_no_switch()
     {
-        var rejectedBuilder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
-        rejectedBuilder.AddServiceMantleGrafanaLoki(options =>
-        {
-            Enable(options);
-            options.Endpoint = new Uri("http://ruoyu-loki:3100");
-        });
-        using (var rejected = rejectedBuilder.Build())
-        {
-            var exception = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
-                rejected.StartAsync(TestContext.Current.CancellationToken));
-            Assert.Equal(WellKnownGrafanaLokiErrorCodes.InvalidEndpoint, exception.ErrorCode);
-        }
-
-        var loopbackOnlyBuilder = CreateBuilder(new RecordingHandler(), new RecordingResolver(AuthorizationHeader));
-        loopbackOnlyBuilder.AddServiceMantleGrafanaLoki(options =>
-        {
-            Enable(options);
-            options.Endpoint = new Uri("http://ruoyu-loki:3100");
-            options.AllowInsecureLoopbackForTesting = true;
-        });
-        using (var loopbackOnly = loopbackOnlyBuilder.Build())
-        {
-            var exception = await Assert.ThrowsAsync<SerilogConfigurationException>(() =>
-                loopbackOnly.StartAsync(TestContext.Current.CancellationToken));
-            Assert.Equal(WellKnownGrafanaLokiErrorCodes.InvalidEndpoint, exception.ErrorCode);
-        }
-
         var handler = new RecordingHandler();
-        var acceptedBuilder = CreateBuilder(handler, new RecordingResolver(AuthorizationHeader));
-        acceptedBuilder.AddServiceMantleGrafanaLoki(options =>
+        var builder = CreateBuilder(handler, new RecordingResolver(AuthorizationHeader));
+        builder.AddServiceMantleGrafanaLoki(options =>
         {
             Enable(options);
             options.Endpoint = new Uri("http://ruoyu-loki:3100");
-            options.AllowInsecureHttp = true;
             options.BatchSize = 1;
             options.FlushPeriod = TimeSpan.FromSeconds(1);
         });
-        using var accepted = acceptedBuilder.Build();
+        using var accepted = builder.Build();
         await accepted.StartAsync(TestContext.Current.CancellationToken);
         accepted.Services.GetRequiredService<ILogger<GrafanaLokiTests>>()
             .LogInformation("container network event");
@@ -244,7 +205,7 @@ public sealed class GrafanaLokiTests
     }
 
     [Fact]
-    public async Task AllowInsecureHttp_delivers_authorized_events_to_a_local_http_server()
+    public async Task Http_delivery_delivers_authorized_events_to_a_local_http_server()
     {
         await using var server = await LocalLokiServer.StartAsync(TestContext.Current.CancellationToken);
         var builder = Host.CreateApplicationBuilder();
@@ -255,7 +216,6 @@ public sealed class GrafanaLokiTests
         {
             Enable(options);
             options.Endpoint = new Uri(server.BaseAddress, "gateway");
-            options.AllowInsecureHttp = true;
             options.BatchSize = 1;
             options.FlushPeriod = TimeSpan.FromSeconds(1);
         });
@@ -292,7 +252,6 @@ public sealed class GrafanaLokiTests
         {
             Enable(options);
             options.Endpoint = new Uri(server.BaseAddress, "gateway");
-            options.AllowInsecureLoopbackForTesting = true;
             options.BatchSize = 1;
             options.FlushPeriod = TimeSpan.FromSeconds(1);
             options.Labels = new Dictionary<string, string> { ["service"] = "Ruoyu.Admin" };
@@ -338,7 +297,6 @@ public sealed class GrafanaLokiTests
         {
             Enable(options);
             options.Endpoint = new Uri(server.BaseAddress, "gateway");
-            options.AllowInsecureLoopbackForTesting = true;
             options.BatchSize = 1;
             options.FlushPeriod = TimeSpan.FromSeconds(1);
         });
@@ -464,7 +422,6 @@ public sealed class GrafanaLokiTests
         {
             Enable(options);
             options.Endpoint = new Uri(server.BaseAddress, "gateway");
-            options.AllowInsecureLoopbackForTesting = true;
             options.BatchSize = 1;
             options.FlushPeriod = TimeSpan.FromSeconds(1);
         });
@@ -522,7 +479,6 @@ public sealed class GrafanaLokiTests
         {
             options.Enabled = true;
             options.Endpoint = new Uri(server.BaseAddress, "gateway");
-            options.AllowInsecureHttp = true;
             options.BatchSize = 1;
             options.FlushPeriod = TimeSpan.FromSeconds(1);
         });
@@ -615,7 +571,6 @@ public sealed class GrafanaLokiTests
         {
             Enable(options);
             options.Endpoint = new Uri(server.BaseAddress, "gateway");
-            options.AllowInsecureLoopbackForTesting = true;
             options.BatchSize = 2;
             options.FlushPeriod = TimeSpan.FromSeconds(1);
         });

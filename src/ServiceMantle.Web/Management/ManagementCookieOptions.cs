@@ -7,8 +7,9 @@ namespace ServiceMantle.Web.Management;
 /// Configures the security and lifetime of the ServiceMantle management session cookie.
 /// </summary>
 /// <remarks>
-/// Unsafe values are rejected when the host starts. The cookie name and authentication scheme are
-/// fixed by <see cref="ManagementSessionDefaults"/> and cannot be configured here.
+/// The cookie name and authentication scheme are fixed by <see cref="ManagementSessionDefaults"/>
+/// and cannot be configured here. Transport security follows the request scheme by default and is
+/// the deployment's decision; the remaining unsafe values are rejected when the host starts.
 /// </remarks>
 public sealed class ManagementCookieOptions
 {
@@ -18,9 +19,10 @@ public sealed class ManagementCookieOptions
     public bool HttpOnly { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets the secure transport policy.
+    /// Gets or sets the secure transport policy. The default follows the request scheme, so the
+    /// management session works over both plain HTTP and HTTPS deployments.
     /// </summary>
-    public CookieSecurePolicy SecurePolicy { get; set; } = CookieSecurePolicy.Always;
+    public CookieSecurePolicy SecurePolicy { get; set; } = CookieSecurePolicy.SameAsRequest;
 
     /// <summary>
     /// Gets or sets the cross-site cookie policy.

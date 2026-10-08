@@ -43,11 +43,6 @@ public abstract class OtlpSignalOptions
     /// </summary>
     public string? AuthenticationHeaderName { get; set; }
 
-    /// <summary>
-    /// Gets or sets whether an HTTP endpoint is permitted for explicit loopback-only tests.
-    /// </summary>
-    public bool AllowInsecureLoopbackForTesting { get; set; }
-
     /// <summary>Gets or sets the exporter timeout. The supported range is 1–30 seconds.</summary>
     public TimeSpan ExportTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
