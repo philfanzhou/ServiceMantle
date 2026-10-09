@@ -16,7 +16,9 @@ namespace ServiceMantle.Database.Sqlite;
 /// and encrypted connection strings fail closed. Observation uses a reconstructed read-only,
 /// private-cache, non-pooled connection and never probes writability by default. Clean WAL headers are rejected before SQLite opens a connection. Explicit opt-in WAL
 /// recovery validates ordinary target/sidecar metadata and read-write access, then performs one
-/// checkpoint using an owned read-write, private-cache, non-pooled connection. Preparation initializes a
+/// checkpoint using an owned read-write, private-cache, non-pooled connection; the same opt-in
+/// admits a sidecar-free clean WAL target through the identical eligibility validation and
+/// checkpoint sequence. Preparation initializes a
 /// unique same-directory temporary database and publishes it atomically without replacement.
 /// External replacement, network filesystem semantics, process termination, and cross-process
 /// exclusion are outside this contract.
@@ -73,7 +75,8 @@ public sealed class SqliteDatabaseTargetPreparationProvider :
     /// <summary>
     /// Observes a validated local SQLite file without creating the file, parent directories,
     /// temporary probes, journals, WAL files, or shared-memory files by default. Explicit recovery
-    /// may checkpoint safe existing WAL targets once; its committed changes are not rolled back.
+    /// may checkpoint existing WAL targets once (safe sidecars, or a clean sidecar-free WAL header
+    /// when opted in); its committed changes are not rolled back.
     /// </summary>
     public async ValueTask<DatabaseTargetObservation> ObserveAsync(
         BootstrapDatabaseConfiguration target,
@@ -378,6 +381,30 @@ public sealed class SqliteDatabaseTargetPreparationProvider :
             };
         }
 
+        // Explicit opt-in also covers the clean-WAL form: a validated existing target whose header
+        // reports WAL read/write versions without any sidecar. Admission runs the same eligibility
+        // validation and the same one-checkpoint recovery pipeline as sidecar recovery.
+        if (recoveryOptions.Enabled)
+        {
+            var cleanWal = await databaseAccess.InspectCleanWalAsync(canonicalPath, cancellationToken)
+                .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (cleanWal)
+            {
+                var eligible = fileSystem.CanRecoverCleanWal(canonicalPath);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (eligible)
+                {
+                    return await RecoverAndObserveAsync(canonicalPath, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                return DatabaseTargetObservation.TargetUnreachable(
+                    WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict,
+                    targetExists: true);
+            }
+        }
+
         var status = await databaseAccess.InspectAsync(canonicalPath, cancellationToken)
             .ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
@@ -518,6 +545,14 @@ internal interface ISqliteDatabaseAccess
         string canonicalPath,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Classifies the target header without opening SQLite. Returns true only for a valid SQLite
+    /// file whose read and write format versions are both 2 (a clean WAL database); any read
+    /// failure or other shape returns false so the caller keeps the default fail-closed path.
+    /// </summary>
+    ValueTask<bool> InspectCleanWalAsync(string canonicalPath, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(false);
+
     ValueTask<SqliteDatabaseInspectionStatus> InspectRecoveredAsync(string canonicalPath, CancellationToken cancellationToken) =>
         InspectAsync(canonicalPath, cancellationToken);
     ValueTask InitializeAsync(string temporaryPath, CancellationToken cancellationToken);
@@ -530,6 +565,25 @@ internal enum SqliteRecoveryCheckpoint { Opened, Checkpointed, ResourcesReleased
 
 internal enum SqliteInspectionCheckpoint { HeaderRead, HeaderReleased, SchemaCompleted, ResourcesReleased, Completed }
 
+/// <summary>
+/// Internal header classification shared by the default preflight and the explicit clean-WAL
+/// opt-in; it never changes the public observation enum or persisted codes.
+/// </summary>
+internal enum SqliteHeaderPreflight
+{
+    /// <summary>An empty file or rollback-journal versions (1/1) that default observation accepts.</summary>
+    Legacy,
+
+    /// <summary>A valid SQLite file with WAL read/write versions (2/2) and no sidecars.</summary>
+    CleanWal,
+
+    /// <summary>A valid SQLite file with any other read/write version pair.</summary>
+    Unrecognized,
+
+    /// <summary>A short file or a header without the SQLite magic.</summary>
+    NotSqlite
+}
+
 internal sealed class SqliteDatabaseAccess(
     Func<SqliteRecoveryCheckpoint, System.Data.ConnectionState, CancellationToken, ValueTask>? checkpoint = null,
     Func<SqliteInspectionCheckpoint, CancellationToken, ValueTask>? inspectionCheckpoint = null,
@@ -541,6 +595,22 @@ internal sealed class SqliteDatabaseAccess(
     public ValueTask<SqliteDatabaseInspectionStatus> InspectRecoveredAsync(string canonicalPath, CancellationToken cancellationToken) =>
         InspectConnectionAsync(canonicalPath, immutable: true, cancellationToken);
 
+    public async ValueTask<bool> InspectCleanWalAsync(string canonicalPath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var preflight = await ReadHeaderAsync(canonicalPath, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return preflight == SqliteHeaderPreflight.CleanWal;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Header bytes are only a classification hint; an unreadable header keeps the
+            // caller on the default fail-closed observation path.
+            return false;
+        }
+    }
+
     private async ValueTask<SqliteDatabaseInspectionStatus> InspectConnectionAsync(
         string canonicalPath, bool immutable, CancellationToken cancellationToken)
     {
@@ -549,9 +619,10 @@ internal sealed class SqliteDatabaseAccess(
         {
             if (!immutable)
             {
-                var header = await ReadHeaderAsync(canonicalPath, cancellationToken).ConfigureAwait(false);
+                var preflight = await ReadHeaderAsync(canonicalPath, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
-                if (header is not null) return header.Value;
+                if (preflight == SqliteHeaderPreflight.NotSqlite) return SqliteDatabaseInspectionStatus.ConnectionFailed;
+                if (preflight != SqliteHeaderPreflight.Legacy) return SqliteDatabaseInspectionStatus.TargetConflict;
             }
             await using var connection = new SqliteConnection(BuildConnectionString(
                 immutable ? new Uri(canonicalPath).AbsoluteUri + "?immutable=1" : canonicalPath,
@@ -599,7 +670,7 @@ internal sealed class SqliteDatabaseAccess(
         }
     }
 
-    private async ValueTask<SqliteDatabaseInspectionStatus?> ReadHeaderAsync(string path, CancellationToken token)
+    private async ValueTask<SqliteHeaderPreflight> ReadHeaderAsync(string path, CancellationToken token)
     {
         var header = new byte[100];
         var length = 0;
@@ -619,11 +690,12 @@ internal sealed class SqliteDatabaseAccess(
             }
             finally { token.ThrowIfCancellationRequested(); }
         }
-        if (length == 0) return null; // SQLite accepts an existing empty database.
+        if (length == 0) return SqliteHeaderPreflight.Legacy; // SQLite accepts an existing empty database.
         if (length != 100 || !header.AsSpan(0, 16).SequenceEqual("SQLite format 3\0"u8))
-            return SqliteDatabaseInspectionStatus.ConnectionFailed;
-        if (header[18] != 1 || header[19] != 1) return SqliteDatabaseInspectionStatus.TargetConflict;
-        return null;
+            return SqliteHeaderPreflight.NotSqlite;
+        if (header[18] == 1 && header[19] == 1) return SqliteHeaderPreflight.Legacy;
+        if (header[18] == 2 && header[19] == 2) return SqliteHeaderPreflight.CleanWal;
+        return SqliteHeaderPreflight.Unrecognized;
     }
 
     public async ValueTask InitializeAsync(

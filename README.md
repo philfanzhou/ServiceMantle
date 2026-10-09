@@ -1943,8 +1943,9 @@ Default observation reads at most 100 header bytes before opening SQLite. Clean 
 and unknown read/write format versions fail closed as the existing `TargetConflict`, including
 Prepare-existing and a competing publish winner; Bootstrap reports `database.connection_failed`.
 No journal/WAL/SHM is created. Empty databases and rollback 1/1 retain their behavior. Explicit
-checkpoint recovery keeps its dedicated immutable observation path; enabling it without sidecars
-does not make a clean WAL target connectable. External replacement remains outside the guarantee.
+checkpoint recovery keeps its dedicated immutable observation path; with the explicit opt-in below,
+the same single switch also admits a sidecar-free clean WAL target through one validated checkpoint
+attempt. External replacement remains outside the guarantee.
 
 ### SQLite Bootstrap validation
 
@@ -2000,23 +2001,31 @@ returned by the filesystem; a missing leaf keeps the caller's spelling. If regul
 count cannot be established reliably, the provider fails with
 `database_target_preparation.capability_not_supported`.
 
-#### Optional WAL crash recovery
+#### Optional WAL crash recovery and clean-WAL intake
 
 The no-argument provider retains its read-only, fail-closed behavior. To opt into one checkpoint
 attempt, construct `new SqliteDatabaseTargetPreparationProvider(new SqliteTargetRecoveryOptions(
 enabled: true, recoveryTimeout: TimeSpan.FromSeconds(30)))` and register that same instance as
 `IDatabaseTargetPreparationProvider` and, for single-instance gate orchestration,
 `IDatabaseDeploymentCapabilityProvider`. Recovery is provider-specific; the core gate options
-remain unchanged. Bootstrap validation continues to use its default read-only observer.
+remain unchanged. Bootstrap validation keeps its default read-only observer and does not carry the
+opt-in.
 
-Recovery requires a stable ordinary existing target with safe ordinary WAL/SHM sidecars, a single
+The opt-in covers two shapes of an existing local WAL target. With safe WAL/SHM sidecars it is the
+crash-recovery path. Without any sidecar, a header-validated clean WAL database (read/write
+versions `2/2`) is admitted: `enabled` is the caller's informed declaration that the target is not
+concurrently held by another process and that the single checkpoint attempt may write to it.
+
+Recovery requires a stable ordinary existing target — safe ordinary WAL/SHM sidecars when present,
+or a clean WAL header without sidecars — plus a single
 hard link per file and read/write access. Journals, directories, symbolic/reparse links, hard links,
 case aliases, missing targets and uncertain metadata never qualify. The provider reconstructs an
 owned `ReadWrite` (never create), private-cache, non-pooled connection, runs only
 `PRAGMA wal_checkpoint(TRUNCATE)` once, reads its busy result and releases all resources. It never
 explicitly deletes, renames or replaces target/sidecar files, and issues no application writes.
-SQLite's own replay/checkpoint/close may change files. Busy checkpoints fail closed; recovery is
-not a repair tool for corrupt databases or concurrent writers.
+SQLite's own replay/checkpoint/close may change files; during the admission window the directory
+may transiently contain `-wal`/`-shm` entries, which is not hidden from concurrent observers. Busy
+checkpoints fail closed; recovery is not a repair tool for corrupt databases or concurrent writers.
 
 After successful checkpoint and release, the provider revalidates the target and requires all
 sidecars to be absent, then performs one immutable read-only schema observation so WAL mode does
@@ -2029,6 +2038,10 @@ Caller cancellation retains its token and sanitized diagnostics, including cance
 resource release. An internal budget expiry returns `database_target_preparation.timeout`; SQLite
 busy waits have whole-second granularity. A committed checkpoint is not rolled back by later
 failure or cancellation. Disable recovery by returning to the default provider registration.
+
+Known behavior evolution for existing consumers of `enabled: true`: a sidecar-free clean WAL target
+that previous versions refused as `database_target_preparation.target_conflict` is now admitted by
+the pipeline above. Consumers that do not opt in keep byte-for-byte default refusal.
 
 #### Resolving a relative data source against an explicit base directory
 
