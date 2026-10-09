@@ -14,7 +14,7 @@ ServiceMantle 现在由目录和 namespace 表达一个类型属于哪个模块�
    属 Serilog 适配包），框架扩展入口除外（见第 2 条）。普通类型不带产品前缀，因为 namespace
    已经表达了产品与能力。本条按 [#570](https://github.com/philfanzhou/ServiceMantle/issues/570)
    固定的能力命名空间政策修订；本文此前条目按当时「项目根 namespace 加功能子目录」的规则交付，
-   历史映射保持原样，#570 各迁移切片的映射随后续切片在本文件增补。
+   历史映射保持原样，#570 各迁移任务的映射随后续任务在本文件增补。
 2. 扩展入口保留它们的框架 namespace（`Microsoft.Extensions.DependencyInjection`、
    `Microsoft.Extensions.Hosting`、`Microsoft.AspNetCore.*`），并且类名与方法名都保留产品前缀——
    `AddServiceMantle*`、`UseServiceMantle*`、`MapServiceMantle*`、`WithServiceMantle*`。这些
@@ -361,7 +361,7 @@ ADR 0007 判定为 A 类的 `ConsulLifecycleOptions` 迁入核心包，成为 pr
 
 ## 核心契约上移（#572）
 
-[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：与
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间改动之一：与
 ASP.NET Core 无关、签名只依赖核心包既有类型的两个公开接口，从 `ServiceMantle.AspNetCore` 包
 上移进核心包。这是源码与二进制破坏性变更，只在后续新版本交付，不覆盖历史版本；旧公开类型与
 旧文件位置不留兼容壳。
@@ -379,7 +379,7 @@ ASP.NET Core 无关、签名只依赖核心包既有类型的两个公开接口�
 
 ## Consul 能力命名空间迁移（#574）
 
-[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间改动之一：
 `ServiceMantle.Consul` 包的自有 namespace 迁往能力 namespace。包 ID、程序集名
 `ServiceMantle.Consul`、依赖与运行时行为不变；`discovery.*` 设置键、诊断码、HTTP 路径与
 Header、wire 字段、`InternalsVisibleTo` 全部零变化。这是源码与二进制破坏性变更，只在后续
@@ -432,7 +432,7 @@ Header、wire 字段、`InternalsVisibleTo` 全部零变化。这是源码与二
 
 ## Serilog 能力命名空间迁移（#575）
 
-[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间改动之一：
 `ServiceMantle.Serilog` 包的自有 namespace 迁往能力 namespace 的适配包子空间。包 ID、程序集名
 `ServiceMantle.Serilog`、依赖与运行时行为不变；`serilog.*` / `loki.*` 错误码取值、配置节名、
 `InternalsVisibleTo` 全部零变化。这是源码与二进制破坏性变更，只在后续新版本交付，不覆盖历史版本。
@@ -498,7 +498,7 @@ namespace 同步（如 `ServiceMantle.Logging.Pipeline.SerilogOptions`）。目�
 
 ## EF Core 持久化能力命名空间迁移（#577）
 
-[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间改动之一：
 `ServiceMantle.Persistence.EntityFrameworkCore` 包的自有 namespace 迁往
 `ServiceMantle.Persistence.Relational` 及其子空间。包 ID、程序集名
 `ServiceMantle.Persistence.EntityFrameworkCore`、依赖与运行时行为不变；数据库表列名、迁移锁键
@@ -566,7 +566,7 @@ namespace 同步（如 `ServiceMantle.Logging.Pipeline.SerilogOptions`）。目�
 
 ## AspNetCore 能力命名空间迁移（#573）
 
-[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间改动之一：
 `ServiceMantle.AspNetCore` 包的自有 namespace 迁往 `ServiceMantle.Web` 及其子空间（子空间名不变，
 仅包自有前缀替换）。包 ID、程序集名 `ServiceMantle.AspNetCore`、依赖与运行时行为不变；日志分类
 `ServiceMantle.Http.CorrelationId|ProblemDetails|RateLimiting`、认证方案
@@ -602,8 +602,8 @@ namespace 同步（如 `ServiceMantle.Logging.Pipeline.SerilogOptions`）。目�
 保持，`<RootNamespace>` 改为 `ServiceMantle.Web`。`ServiceMantle.AspNetCore.Health` 下
 `ServiceMantleHealthEndpointRouteBuilderExtensions.cs` 属框架 namespace，位置与类名均不动。#572 上移
 核心包的两个契约（`ServiceMantle.Installation.IServiceStartupPhaseResolver`、
-`ServiceMantle.Health.IServiceHealthSnapshotSource`）不在本切片范围；其包内默认实现
-`DefaultServiceStartupPhaseResolver` 的完整类型名随本切片变为
+`ServiceMantle.Health.IServiceHealthSnapshotSource`）不在本次改动范围；其包内默认实现
+`DefaultServiceStartupPhaseResolver` 的完整类型名随本次改动变为
 `ServiceMantle.Web.DefaultServiceStartupPhaseResolver`。
 
 ### 公开 API 映射
@@ -759,12 +759,12 @@ namespace 同步（如 `ServiceMantle.Logging.Pipeline.SerilogOptions`）。目�
   诊断在此继续有效。
 - `eng/tests/consumers` 的 `aspnetcore`、`composed` 项目随新 namespace 更新 using，并继续同时 using
   所需框架 namespace（暴露 CS0104）；`opentelemetry`、`provider-neutral` 项目保持不 using 任何适配包
-  自有 namespace 的既有约束（`provider-neutral` 的约束注释随本切片改述为不以 `ServiceMantle.Web`
+  自有 namespace 的既有约束（`provider-neutral` 的约束注释随本次改动改述为不以 `ServiceMantle.Web`
   点名 #572 上移契约）。
 
 ## OpenTelemetry 能力命名空间迁移（#576）
 
-[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间切片之一：
+[#570](https://github.com/philfanzhou/ServiceMantle/issues/570) 能力命名空间改动之一：
 `ServiceMantle.OpenTelemetry` 包的自有 namespace 迁往 `ServiceMantle.Diagnostics` 能力 namespace 的
 适配包子空间。包 ID、程序集名 `ServiceMantle.OpenTelemetry`、依赖（含 OpenTelemetry SDK 依赖）与
 运行时行为不变；OTLP 配置节名 `ServiceMantle.Otlp.Traces` / `ServiceMantle.Otlp.Metrics`、meter 名
@@ -844,7 +844,7 @@ options 时的唯一区分；`Otlp*` / `Prometheus*` 前缀诚实暴露协议契
   装配名断言与 `ReferenceServiceTests` 的 csproj 路径为装配/路径契约，不变。
 - `eng/tests/consumers` 的 `composed` 项目三个 using 随新 namespace 更新并继续同时 using 所需框架
   namespace；`opentelemetry` 项目保持不 using 任何适配包自有 namespace 的既有约束，其约束注释随
-  本切片改述为新 namespace 名（`ServiceMantle.Diagnostics.Instrumentation` /
+  本次改动改述为新 namespace 名（`ServiceMantle.Diagnostics.Instrumentation` /
   `.Export.Otlp`）；`provider-neutral` 项目仅持有包引用，包 ID 不变，无需改动。
 
 ## 包 ID、程序集与目录对齐能力命名（#585）
@@ -899,9 +899,11 @@ ID 换成新 ID，`using` 不变；实现差异从类型名前缀（`Consul*`、
 `composed`、`provider-neutral` 两个消费项目目录与项目名不动，其 `Consumer.csproj` 的
 `PackageReference` 换新 ID。
 
-### InternalsVisibleTo 变化全集（11 处 / 6 文件）
+<a id="internalsvisibleto-变化全集11-处--6-文件"></a>
 
-这是本次唯一允许变化的字符串契约，按「IVT 特性全集」为口径，含两类：适配包程序集更名引发的
+### InternalsVisibleTo 变化完整清单（11 处 / 6 文件）
+
+这是本次唯一允许变化的字符串契约，检查范围包括全部 InternalsVisibleTo 特性，含两类：适配包程序集更名引发的
 （核心包指向适配包）与测试程序集更名引发的（适配包指向测试）。
 
 | 文件 | 原值 | 新值 |
@@ -924,7 +926,7 @@ ID 换成新 ID，`using` 不变；实现差异从类型名前缀（`Consul*`、
 
 ### 字符串契约不变声明
 
-除上述 IVT 特性全集外，诊断码、日志分类、配置键、HTTP 路由与 Header、JSON 字段、Data
+除上述 IVT 特性完整清单外，诊断码、日志分类、配置键、HTTP 路由与 Header、JSON 字段、Data
 Protection purpose、认证方案名、指标名零变化，随打包 DLL 字符串比对机械验证。测试夹具数据
 （`tests/ServiceMantle.Tests/Audit/ManagementAuditEventTests.cs` 的 InlineData、
 `tests/ServiceMantle.ReleaseTool.Tests/` 中的 `"ServiceMantle.AspNetCore"`）与 sample 历史
@@ -946,11 +948,11 @@ PostgreSQL migration 中的旧实体全名字符串不依赖真实包 ID 与目�
 | `WellKnownOtlpErrorCodes.InsecureEndpoint`（`otlp.insecure_endpoint`） | `ServiceMantle.Diagnostics` | 不会再产生该错误码；结构非法统一 `otlp.invalid_endpoint` |
 | `GrafanaLokiOptions.AllowInsecureHttp` | `ServiceMantle.Logging` | 不再需要 |
 | `GrafanaLokiOptions.AllowInsecureLoopbackForTesting` | `ServiceMantle.Logging` | 不再需要 |
-| `GrafanaLokiSettingDefinitions.AllowInsecureHttp`（`loki.allow_insecure_http`） | `ServiceMantle.Logging` | 退休键；存量快照先删除该行再升级 |
+| `GrafanaLokiSettingDefinitions.AllowInsecureHttp`（`loki.allow_insecure_http`） | `ServiceMantle.Logging` | 已移除的键；存量快照先删除该行再升级 |
 | `GrafanaLokiSettingState.AllowInsecureHttp` | `ServiceMantle.Logging` | 不再需要 |
 | `GrafanaLokiSettingState.Classify(string?, string?, bool, bool)` 四参重载 | `ServiceMantle.Logging` | 三参重载 `Classify(string?, string?, bool)`（无认证旗标保留） |
 | `GrafanaLokiSettingState.TryParseEndpoint(string?, bool, out Uri?)` 带策略重载 | `ServiceMantle.Logging` | 双参重载按 http/https 直接解析 |
-| `ConsulSettingDefinitions.AllowInsecureHttp`（`discovery.allow-insecure-http`） | `ServiceMantle.Discovery` | 退休键；迁移转换示例中该行被丢弃（见 README 与 `docs/contracts/consul-registration-lifecycle.md`） |
+| `ConsulSettingDefinitions.AllowInsecureHttp`（`discovery.allow-insecure-http`） | `ServiceMantle.Discovery` | 已移除的键；迁移转换示例中该行被丢弃（见 README 与 `docs/contracts/consul-registration-lifecycle.md`） |
 | sample `ReferenceOtlpRegistrationExtensions.AddReferenceOtlp(builder, configuration, environment)` 三参签名 | samples | 双参 `AddReferenceOtlp(builder, configuration)` |
 
 `loki.allow_no_authentication`（`GrafanaLokiSettingDefinitions.AllowNoAuthentication`）保留：认证
@@ -964,7 +966,9 @@ PostgreSQL migration 中的旧实体全名字符串不依赖真实包 ID 与目�
 | 管理 cookie 名 | `__Host-ServiceMantle.Management`（`__Host-` 前缀按浏览器规范强制 Secure，等于把 HTTPS 写进 cookie 名） | `ServiceMantle.Management`；已签发的旧 cookie 会话随新版本失效，重新登录即恢复 |
 | OTLP / Loki / Consul 端点 | HTTPS-only（各自不同豁免矩阵） | `http://` 与 `https://` 一律直接可用，回环与非回环无差异 |
 
-### 字符串契约变化全集
+<a id="字符串契约变化全集"></a>
+
+### 字符串契约变化完整清单
 
 - 配置键：删除 `loki.allow_insecure_http` 与 `discovery.allow-insecure-http` 两个定义；其余键零变化。
 - 错误码：删除 `otlp.insecure_endpoint`；其余诊断码零变化。

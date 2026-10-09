@@ -1,15 +1,17 @@
-# 参考服务 Consul 注册接线
+<a id="参考服务-consul-注册接线"></a>
+
+# 参考服务 Consul 注册集成
 
 跟踪 [#159](https://github.com/philfanzhou/ServiceMantle/issues/159)。本文描述参考示例把阶段
-Readiness 接到可选 Consul 注册生命周期的接线。Consul 能力自身的状态规则、重试矩阵与取消语义
+Readiness 接到可选 Consul 注册生命周期的集成。Consul 能力自身的状态规则、重试矩阵与取消语义
 以 [consul-registration-lifecycle.md](../contracts/consul-registration-lifecycle.md) 为唯一来源，
-本文不复制它们，只记录样例接线可观察的结果与调用方责任。
+本文不复制它们，只记录样例集成可观察的结果与调用方责任。
 
 ## 开关与身份
 
 | 配置键 | 缺省 | 说明 |
 | --- | --- | --- |
-| `ReferenceService:Consul:Enabled` | `false` | 只有解析为 `true` 才接线，`Build` 之前固定。 |
+| `ReferenceService:Consul:Enabled` | `false` | 只有解析为 `true` 才注册 Consul 能力，`Build` 之前固定。 |
 | `ReferenceService:InstanceId` | `reference-local` | 可选实例身份，`InstanceId.Parse` 校验；非法值启动失败且消息只含配置键。多实例部署必须为每个实例提供不同值。 |
 | `ReferenceService:Consul:AdvertisedAddress` | 无 | 可选实例级宣告地址，仅在开关开启时读取。必须与 `AdvertisedPort` 成对出现。 |
 | `ReferenceService:Consul:AdvertisedPort` | 无 | 可选实例级宣告端口（整数，`NumberStyles.None` + 不变文化解析），仅在开关开启时读取。必须与 `AdvertisedAddress` 成对出现。 |
@@ -36,7 +38,9 @@ Readiness 接到可选 Consul 注册生命周期的接线。Consul 能力自身�
 `ReferenceService:InstanceId` 与各自的宣告地址端口（调用方责任）；宣告地址的可达性与正确性不
 在样例保证范围内。
 
-## 接线顺序
+<a id="接线顺序"></a>
+
+## 注册与启动顺序
 
 1. gate 分支内、`AddServiceMantleSettingSnapshots` 之后：注册
    `ReferenceSettingSnapshotActivation`（hosted service）与 `AddServiceMantleConsul()`（默认
@@ -52,7 +56,9 @@ Readiness 接到可选 Consul 注册生命周期的接线。Consul 能力自身�
    不另建判定；健康路径沿用定义默认值 `discovery.health-path=/health/ready`、
    `discovery.health-scheme=http`。
 
-## 结果矩阵（样例接线可观察）
+<a id="结果矩阵样例接线可观察"></a>
+
+## 结果矩阵（样例集成可观察）
 
 | 事件 | 注册/快照 | factory `Create` 与远程调用 | 宿主 |
 | --- | --- | --- | --- |
@@ -72,7 +78,7 @@ Readiness 接到可选 Consul 注册生命周期的接线。Consul 能力自身�
 
 开关开启期间写入的 `discovery.*` 行在关闭开关后成为未知键：设置查询与更新返回
 `configuration.snapshot_unknown_key`，快照激活失败。**关闭开关前必须先删除这些行**（调用方
-责任）。不选择「无条件注册定义」，因为那会改变所有 gate 路径的公开设置目录。回滚本接线同理：
+责任）。不选择「无条件注册定义」，因为那会改变所有 gate 路径的公开设置目录。回滚本次集成同理：
 回滚前按 `consul-registration-lifecycle.md` 的停机步骤删除 `discovery.*` 行。
 
 ## 非保证与调用方责任
@@ -95,13 +101,13 @@ D1 关闭路径零 Consul 类型与 3 键目录、D2 配置校验（consul 无 g
 配置错误（只配一项、端口非整数 → 消息只含键名；端口 `0` → 共享层
 `ConsulConfigurationException`）、G4 开关关闭时宣告键不读取。
 `ReferenceConsulTests.cs`（真实 PostgreSQL + 记录型 `IConsulClientFactory`）：D3 禁用零客户端、
-D4 组合校验与密文落库、D5 激活失败只含错误码、D6 就绪门控注册与实例 ID、D7 失去/恢复就绪、
+D4 组合校验与将密文保存到数据库、D5 激活失败只含错误码、D6 仅在就绪时注册与实例 ID、D7 失去/恢复就绪、
 D8 重试无重叠、D9 停止注销与 session 处置、D10 不热重载、D11 token canary、G1 同一数据库两
 实例各自宣告 Id/Address/Port/HealthUri、G2 缺省回退服务级值、G4 开关关闭不受宣告键影响。
 `ReferenceConsulCrossInstanceTests.cs`（真实 PostgreSQL + 真实 Consul dev agent 容器 + 双真实
 进程，[#176](https://github.com/philfanzhou/ServiceMantle/issues/176)）：禁用与未 Ready 期间
 agent catalog 恒空；agent 停机期间注册被拒、两宿主存活并在恢复后恰好各注册一次；双实例以各自
 实例 ID 注册、ServiceAddress/Port 为实例级宣告、agent 健康检查回连两进程真实 `/health/ready`
-且 passing；失去 Ready 注销、恢复后同 ID 重注册；SIGTERM 停止按实例注销（POSIX 门控）；ACL
+且 passing；失去 Ready 注销、恢复后同 ID 重注册；SIGTERM 停止按实例注销（仅在 POSIX 平台运行）；ACL
 token canary 不进入任一进程控制台输出（本部署形态未启用 Prometheus/phase metrics，无指标面可
 断言）。进程侧基架改动：`ReferenceServiceProcess` 支持显式 `--urls` 绑定与非回环监听地址解析。

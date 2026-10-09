@@ -12,7 +12,7 @@ schema 对象：每个数据库用户恰好拥有一个同名的 schema。Oracle
 锁模型，它们的保证存在实质差异。把这些选择留给 provider 实现，会让目标存在性、权限、
 锁丢失和 CI 强制变成有条件的行为，而不是契约。
 
-本决策固定一种受支持的形态，并对其他所有形态失败关闭。它不新增产品代码，也不改变
+本决策固定一种受支持的形态，并拒绝其他所有形态。它不新增产品代码，也不改变
 目标准备或迁移锁 SPI。
 
 ## 决策
@@ -41,7 +41,7 @@ schema 对象：每个数据库用户恰好拥有一个同名的 schema。Oracle
 - 此外，每个**以目标身份**打开的会话（Bootstrap 验证、观察、目标复核与迁移锁获取）必须在
   同一会话上证明目标身份成立：`USER_USERS` 恰好一行，`USERNAME` 等于规范化目标用户名，且
   `COMMON = 'NO'`、`ORACLE_MAINTAINED = 'N'`。非 `NO`/`N` 的任何取值（含 `YES`、`Y`、NULL 或
-  未知值）都失败关闭。名称语法不是证据：`COMMON_USER_PREFIX` 可以是非默认或空值，无 `C##`
+  未知值）都被拒绝。名称语法不是证据：`COMMON_USER_PREFIX` 可以是非默认或空值，无 `C##`
   前缀的名字不能证明是本地用户；`SYSTEM` 等 Oracle 维护身份也不能只靠用户名排除。管理身份
   会话不做此检查——管理员本身可以合法是 Oracle 维护用户（如 CI 的 SYSTEM）。身份分类证据
   无法获得时（权限拒绝、无行、多行、名称不符）按既有失败映射关闭，不假定本地。
@@ -142,7 +142,7 @@ PDB 用户与 common 用户。
 无法提供这三项直接权限的托管或受限环境，不受准备支持，会以
 `database_target_preparation.permission_denied` 失败；绝不会被当作已准备好。
 管理员和目标还都需要通常可用的调用 `DBMS_UTILITY.IS_CLUSTER_DATABASE` 的能力；
-ServiceMantle 既不授予也不修复该包访问权限，若其被吊销，则以上述错误码失败关闭。
+ServiceMantle 既不授予也不修复该包访问权限，若其被吊销，则以上述错误码拒绝操作。
 Oracle 的
 [CREATE USER 参考](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/CREATE-USER.html)
 说明 `CREATE USER` 是必需的，且新用户的权限域为空；其
@@ -251,7 +251,7 @@ manifest 为 `linux/amd64`，与 `ubuntu-24.04` 匹配。该镜像提供 Oracle
    提供遮蔽后的目标/管理连接字符串。缺少变量、连接失败、发现的真实测试为零、任何
    skip 或任何测试失败，都会使 job 失败。
 6. 让已注册的包通过 ReleaseTool 的 build、test、pack 和 verify。Oracle 环境不可用
-   会使 `test` 失败；它绝不会把 Oracle 测试从发布门禁中移除。
+   会使 `test` 失败；它绝不会把 Oracle 测试从必需发布检查中移除。
 
 本地运行可以省略该 opt-in 变量并跳过 Oracle 容器测试。CI 和发布验证不可以。该镜像
 未来的可用性没有保证：镜像被删除、许可变更或 registry 故障都会刻意使必需的 job
@@ -263,7 +263,7 @@ issue #66 必须覆盖：
 
 - 有效的描述符元数据（`Oracle`、`ServerSchema`、19c+）、provider 注册、大小写
   规范化、不支持的标识符/认证拒绝，以及针对 RAC、云、root、application container
-  和非 CDB 会话的失败关闭运行时探测；
+  和非 CDB 会话的运行时探测（发现不支持形态时拒绝操作）；
 - 可连接目标、`CREATE SESSION` 拒绝、锁定/过期账户、有歧义的 `ORA-01017`、错误
   service、取消，以及安全诊断；
 - 缺失用户创建、现有用户保护、错误所有者/凭据冲突、并发同凭据创建、
@@ -280,7 +280,7 @@ issue #66 必须覆盖：
   `AlreadyExists` 目标存活；
 - 针对相同的成功、失败、取消、安全和确定性双执行者竞争路径（包括上述认领竞争）的
   真实 `FREEPDB1` 测试。#66 被 #115 和 #189 阻塞，以便使用共享的 hard-fail 框架和
-  标准的准备注册接缝。
+  标准的数据库准备 provider 注册入口。
 
 issue #67 必须覆盖：
 

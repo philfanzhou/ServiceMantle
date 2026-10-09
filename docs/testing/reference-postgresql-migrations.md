@@ -8,7 +8,9 @@ context，其迁移是针对 SQLite 自己的存储类型编写的。`ReferenceP
 不会产出一个 PostgreSQL schema——它产出的会是一个用 PostgreSQL 语法拼写的 SQLite schema，
 或者直接失败。因此 PostgreSQL 目标拥有自己的 context、自己的迁移和自己的模型快照。
 
-## 这个切片交付什么，不交付什么
+<a id="这个切片交付什么不交付什么"></a>
+
+## 本次任务交付什么，不交付什么
 
 此处交付：
 
@@ -27,18 +29,18 @@ context，其迁移是针对 SQLite 自己的存储类型编写的。`ReferenceP
   其执行是仅涉及 schema 的。
 
 **此处不交付，且本文档中的任何内容都不隐含：**示例的 host 不会在 PostgreSQL 上启动。没有
-注册，没有启动协调器，没有目标准备，没有授权门，也没有安装状态。这个切片不会初始化任何安装、
+注册，没有启动协调器，没有目标准备，没有授权门，也没有安装状态。本次任务不会初始化任何安装、
 完成 Setup 或写入任何行。此 executor 报告为兼容的 schema 只是一个 schema 观察，仅此而已——
 它绝不是某个服务安装为 `Completed` 或 `Ready` 的证据。host 启动、目标准备授权、安装状态
 初始化和失败恢复仍是未完成的工作。
 
-由于没有 host 接线，下面的一切都是通过 executor 的公开 API 直接调用它来演练的。
+由于没有 host 注册与配置，下面的一切都是通过 executor 的公开 API 直接调用它来演练的。
 
 ## 安装表交付的精确边界
 
 `20260912000000_AddReferencePostgreSqlInstallation` 建立的是一张**空**表，仅此而已。创建
 安装表不等于建立安装事实：初始安装行、Setup Code 的签发与消费、阶段 source 与启动激活都属于
-后续切片。安装表的九列（`service_id`、`status`、`created_at_utc`、`completed_at_utc`、
+后续任务。安装表的九列（`service_id`、`status`、`created_at_utc`、`completed_at_utc`、
 `version`、`setup_code_generation`、`setup_code_digest`、`setup_code_issued_at_utc`、
 `setup_code_expires_at_utc`）、主键与 `setup_code_generation` 的默认值 `0` 由公开持久化包的
 映射决定，测试断言迁移后的物理 schema 与该运行时模型一致，且
@@ -58,7 +60,7 @@ context 以过期 version 保存同一行时，第二个保存得到 EF 并发�
 主键、十二个 `ck_service_audit_logs_*` 检查约束、六个 `ix_service_audit_logs_*` 索引）的每个
 facet 都由公开持久化包的映射决定。迁移不插入任何 `service_settings` 行——版本 0 表示「从未保
 存」，这是公开 store 的语义——也不写任何审计行。注册 `IServiceSettingStore`、root-key source、
-设置快照、查询或更新 endpoint、审计 writer 与操作员解析属于后续切片（#518、#519）。
+设置快照、查询或更新 endpoint、审计 writer 与操作员解析属于后续任务（#518、#519）。
 
 检查器的兼容矩阵不因此扩张：`CurrentVersionCompatible` 仍只检查 `reference_workspaces` 与
 `service_installations` 的列可读性。历史完整但 `service_settings` 或 `service_audit_logs` 被外

@@ -8,7 +8,9 @@
 标记把「本端点只在这些启动阶段可达」声明为 endpoint 自己的元数据，判定继续留在 phase gate
 这一个汇合点上；消费方不需要（也不应该）在 pipeline 之前另建短路分支。
 
-## 最小接线
+<a id="最小接线"></a>
+
+## 最小注册示例
 
 ```csharp
 var app = builder.Build();

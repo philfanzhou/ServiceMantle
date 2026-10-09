@@ -4,7 +4,7 @@
 
 - `tests/ServiceMantle.ReferenceService.Tests/ReferenceSettingQueryTests.cs` 验收样例的两个只读
   设置查询 endpoint（`GET /management/v1/settings/definitions` 与 `GET /management/v1/settings`）
-  的真实接线。契约本体见
+  的实际注册与调用。契约本体见
   [`docs/contracts/management-setting-queries.md`](../contracts/management-setting-queries.md)。
 - `tests/ServiceMantle.ReferenceService.Tests/ReferenceSettingUpdateTests.cs` 验收样例的事务批量
   更新 endpoint（`POST /management/v1/settings`）及其消费方提交边界

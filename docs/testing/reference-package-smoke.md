@@ -1,11 +1,11 @@
 # 参考服务发行产物冒烟
 
 跟踪 [#113](https://github.com/philfanzhou/ServiceMantle/issues/113)。本文描述从实际打包产物（而非项目
-引用）还原、构建并运行参考服务的门控验收：验证核心包集合、依赖隔离与发行可消费性。
+引用）还原、构建并运行参考服务的验收：验证核心包集合、依赖隔离与发布的包能否被应用引用、构建并运行。
 
 ## 运行方式
 
-整个测试类由 `RUN_SERVICEMANTLE_PACKAGING_TESTS=true` 门控，沿用真实数据库测试的
+整个测试类仅在 `RUN_SERVICEMANTLE_PACKAGING_TESTS=true` 时运行，沿用真实数据库测试的
 「要求而不可用即失败」策略：变量设置后任何步骤失败都判测试失败；变量未设置时全部跳过。
 该变量已注册在 `eng/packages.json` 的参考服务测试条目中，CI 的注册测试步骤会实际运行整个
 冒烟（该条目启用 `--fail-skips`，跳过即失败）。
@@ -46,7 +46,7 @@ PostgreSQL 冒烟需要 Docker（Testcontainers，与 `RUN_SERVICEMANTLE_POSTGRE
 
 - 冒烟验证「能从产物还原、构建、运行安装主路径」；不重复数据库压力套件，不验证真实 Consul agent
   与 OTLP 导出（分别属于 #176 与遥测任务的交付物）。
-- 「未安装 P1 包」的构建变体不存在：样例源无条件编译 P1 接线（编译期依赖），本任务验证的是
+- 「未安装 P1 包」的构建变体不存在：样例源无条件编译 P1 能力集成（编译期依赖），本任务验证的是
   「禁用」路径（运行时开关关闭）。
 - CI 的注册测试步骤运行该冒烟（约增加 1–2 分钟）；发行管线的 pack/verify 与六个消费项目由
   `ci.yml` 的 build-test-pack 与 `eng/tests/package-consumption.sh` 独立覆盖。

@@ -15,7 +15,9 @@
 | 1 | 1 | 0 | 管理 Cookie 认证和健康路由 |
 | 1 | 1 | 1 | 全部三项能力 |
 
-## 可执行的本地接线
+<a id="可执行的本地接线"></a>
+
+## 可执行的本地集成示例
 
 本示例使用 `ServiceMantle.Web` 和 `ServiceMantle.Logging`。修改三个布尔值即可运行
 表格中的每一行。固定的 Ready 状态源和临时（ephemeral）Data Protection provider 只是本地

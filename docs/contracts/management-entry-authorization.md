@@ -54,7 +54,7 @@ endpoint adapter、凭据检查、provider、文件写入、数据库阶段、co
 受信任来源校验、TLS、代理配置，也不能防御被攻陷的同源脚本。放宽 SameSite 或允许跨源自定义 Header
 的消费方自行承担由此产生的策略责任。
 
-请求取消在每个 adapter 边界上具有优先权。原始的 `RequestAborted` token 会被透传，携带该 token 的
+请求取消在每个 adapter 边界上具有优先权。原始的 `RequestAborted` token 会被原样传递，携带该 token 的
 `OperationCanceledException` 不会被转换为固定的 HTTP 错误。endpoint 自身拥有的超时，或实现中与之
 无关的取消，属于内部不可用响应。同步或不协作的消费方组件无法被强制终止；对其不承诺硬性的墙钟
 时间上界。
@@ -164,7 +164,7 @@ restart 闩锁在管理器确认文件已发布时立即设置，早于考虑后
 
 ## Setup 状态与完成（#96）
 
-`GET` 和 `HEAD {v1}/setup` 只从当前安装权威透露 `{"status":"pending"}` 或
+`GET` 和 `HEAD {v1}/setup` 只从当前安装存储透露 `{"status":"pending"}` 或
 `{"status":"completed"}`。它们不暴露 Setup Code 的生成、摘要、签发/过期时间、操作员、contributor
 或已存储的安装值。Bootstrap phase 会被 Gate 拒绝；Completed 保持可读以获得稳定的终态结果。`HEAD`
 没有 body。
@@ -198,7 +198,7 @@ staging 之后输掉竞争，或者任何校验、staging、保存、提交、�
 
 ## 登录、登出与当前会话（#97）
 
-`POST {v1}/session/login` 是匿名的但受 phase 门控。ServiceMantle 不定义通用的凭据 DTO。所需的
+`POST {v1}/session/login` 是匿名的但须先通过 phase 准入检查。ServiceMantle 不定义通用的凭据 DTO。所需的
 endpoint 专用登录 adapter 接收 `HttpContext` 和原始请求 token，在 64 KiB 原始 body 上限下解析一个
 消费方支持的表示形式，仅将其存入消费方受信任的 scoped 凭据 accessor，并调用
 `ManagementIdentityProviderInvoker`。公开的核心 provider SPI 继续不接受任意凭据对象。adapter 不得
@@ -244,7 +244,7 @@ Issues #94、#95、#96 和 #97 各自只拥有上表中属于自己的行、自�
 - 状态观察在其一次一致性采样之后不会冻结 phase、Bootstrap、migration、数据库或 restart 状态。
 - Bootstrap 凭据消费与 Bootstrap 文件发布不是一个原子事务；先消费的失败需要显式的本地恢复。
 - 安装提交无法回滚不合规 contributor 已执行的外部副作用。
-- Cookie 登出不提供服务端撤销权威，也无法使已复制的 ticket 失效。既有的过期和 Data Protection
+- Cookie 登出不提供统一的服务端票据撤销机制，也无法使已复制的 ticket 失效。既有的过期和 Data Protection
   边界保持不变。
 - 固定的不安全请求 Header 不是全局的 CSRF、CORS、TLS、代理、防火墙或 DDoS 策略。
 - ServiceMantle 的凭据负保证覆盖其解析器、固定响应、投影和诊断。它不覆盖消费方 adapter、第三方

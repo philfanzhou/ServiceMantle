@@ -1,7 +1,7 @@
 # 参考服务 PostgreSQL 一次性首次安装（Setup）
 
 跟踪 [#175](https://github.com/philfanzhou/ServiceMantle/issues/175)。本文描述参考示例在
-PostgreSQL 启动 gate 之上的一组安装接线：启动签发、控制台交付、轮换命令，与
+PostgreSQL 启动 gate 之上的一组安装能力集成：启动签发、控制台交付、轮换命令，与
 `POST /management/v1/setup` 的一次性事务化完成。它组合既有组件——staging contributor
 （[reference-postgresql-setup-staging.md](reference-postgresql-setup-staging.md)）、
 `EfCoreServiceSetupCodeStore`、`ServiceSetupOrchestrator`、`EfCoreManagementAuditWriter`——
@@ -9,13 +9,13 @@ PostgreSQL 启动 gate 之上的一组安装接线：启动签发、控制台交
 
 ## 开关与成员
 
-全部接线只在 PostgreSQL gate 打开时注册。gate 关闭时没有 Setup 路由、没有签发器、没有
+全部安装能力只在 PostgreSQL gate 打开时注册。gate 关闭时没有 Setup 路由、没有签发器、没有
 `ReferenceSetupCodeOutput`，控制台没有任何横幅，SQLite 与骨架路径逐字不变。
 
 | 成员 | 行为 |
 | --- | --- |
 | `ReferenceSetupCodeIssuer`（hosted service，注册在 gate 之后） | 仅当 gate 结果为 `Ready` 且阶段为 `PendingSetup` 时，用短生命周期 context 调一次 `CreateAsync`（默认 30 分钟有效期）。其他阶段不访问 store。 |
-| `ReferenceSetupCodeOutput`（可替换单例） | 控制台接缝：默认包裹 `Console.Out`/`Console.Error`，测试注入记录器。明文只经过它，从不经过 `ILogger`。 |
+| `ReferenceSetupCodeOutput`（可替换单例） | 可替换的控制台输出接口：默认包裹 `Console.Out`/`Console.Error`，测试注入记录器。明文只经过它，从不经过 `ILogger`。 |
 | `ReferencePostgreSqlSetupExecutor`（internal static） | `MapServiceMantleSetup` 的执行器：六步序列 + 单事务提交。 |
 | `ReferenceSetupCodeRotation`（`--rotate-setup-code`） | `Program.cs` 在构建 Web 宿主之前识别的运维命令。 |
 

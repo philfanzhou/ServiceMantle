@@ -8,7 +8,9 @@
 本文档描述固定的投影、有界输入、唯一的失败应答，以及明确不覆盖的内容。周边基线在
 [受保护的 management API v1 契约](management-api-v1.md) 中描述。
 
-## 接线
+<a id="接线"></a>
+
+## 注册示例
 
 ```csharp
 builder.Services

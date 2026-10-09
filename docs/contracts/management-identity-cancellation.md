@@ -8,11 +8,11 @@
 
 1. **入口。** `provider` 参数检查之后、调用 provider 之前观察取消；已经取消的调用方不会触发任何
    provider 调用。
-2. **完成。** provider 调用正常落定之后（`Authenticated` / `Unauthenticated` / `Failed` / `null`）
+2. **完成。** provider 调用正常返回之后（`Authenticated` / `Unauthenticated` / `Failed` / `null`）
    观察取消，再决定交付三态结果、还是把 null 归一为
    `WellKnownManagementIdentityErrorCodes.ProviderFailed`。
 3. **异常。** provider 抛出的任何异常（普通异常、他人 token 的 `OperationCanceledException`、
-   同步抛出或异步落定）与调用方取消同时到达时，调用方取消优先。
+   同步抛出或异步调用结束）与调用方取消同时到达时，调用方取消优先。
 
 在任一检查点上观察到调用方取消时，调用以一个**新建**的 `OperationCanceledException` 结束：其
 `CancellationToken` 是调用方自己的 token，`InnerException` 为 null，`Message` 使用固定英文文字，
@@ -22,7 +22,7 @@
 | --- | --- | --- |
 | Authenticated / Unauthenticated / Failed（含合法 provider code） | 是 | 安全 `OperationCanceledException`，调用方的 token |
 | null | 是 | 安全 `OperationCanceledException`，调用方的 token |
-| 普通异常（同步或异步落定） | 是 | 安全 `OperationCanceledException`，不保留原异常 |
+| 普通异常（同步或异步调用结束） | 是 | 安全 `OperationCanceledException`，不保留原异常 |
 | 他人 token 的 `OperationCanceledException` | 是 | 安全 `OperationCanceledException`，调用方的 token |
 | 上述任意情况 | 否 | 三态结果原样交付；null、普通异常、内部取消归一为 `ProviderFailed` |
 
@@ -58,5 +58,5 @@ error code 保持原样；provider 内部取消不会被冒充成调用方取消
   的内部取消（含合成 inner）共 8 类完成在取消后全部替换为携带 caller token 的安全 OCE。
 - 未取消对照：三态、`Identity` 同一性、合法 provider code 与 `ProviderFailed` 归一保持。
 - 原始异常对象不复用：provider 抛出的 OCE 实例不出现在最终异常或其 `InnerException` 中。
-- provider 至多一次调用、收到原 token、异步落定路径；两个独立并发调用只取消一个。
+- provider 至多一次调用、收到原 token、异步调用结束路径；两个独立并发调用只取消一个。
 - 既有 `ManagementIdentityProviderTests` 覆盖三态区分与未取消的异常归一，继续通过。

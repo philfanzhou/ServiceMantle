@@ -15,7 +15,7 @@
 
 文件格式、权限、发布、胜者重读、失败与清理只有一个定义：
 [根密钥文件来源契约](root-key-file-source.md)。组合器不复制这些规则，也不修权限或覆盖坏文件。
-文件来源构造和解析的固定无 inner `InvalidOperationException` 原样透传。
+文件来源构造和解析的固定无 inner `InvalidOperationException` 原样向调用方传播。
 `ToString()` 精确为 `RootKeySource(Lazy=True)`，不插值注入值、路径或解析结果。
 
 ## 显式组合

@@ -22,7 +22,7 @@ services.AddServiceMantleEfCoreHealthSnapshotSource<CatalogDbContext>(
   （后者由 `AddStartupDatabaseGate` 自动注册，无需额外动作）。
 - 错误码前缀默认取 `ServiceId` 的归一化值，或经 `errorCodePrefix` 显式传入；前缀必须满足
   快照契约的 safe code 字符集，且保证完整错误码不超过 128 字符。
-- 失败分类接缝 `IServiceDatabaseProbeFailureClassifier`（核心包 `ServiceMantle.Health`）由调用方
+- 可替换的失败分类接口 `IServiceDatabaseProbeFailureClassifier`（核心包 `ServiceMantle.Health`）由调用方
   提供；PostgreSQL 实现是 `ServiceMantle.Database.PostgreSql` 的
   `PostgreSqlDatabaseProbeFailureClassifier`。核心包与持久化包不引用 Npgsql。
 
@@ -39,8 +39,8 @@ services.AddServiceMantleEfCoreHealthSnapshotSource<CatalogDbContext>(
 | --- | --- |
 | 回执 `NotStarted`/`Running` | `(PendingSetup, 回执状态, Unreachable, {前缀}.startup_incomplete)`，数据库访问次数为 0 |
 | 回执 `Failed` | `(PendingSetup, Failed, Unreachable, {前缀}.startup_failed)`，数据库访问次数为 0 |
-| 分类接缝判定连接类失败 | `(Completed, Succeeded, Unreachable, {前缀}.database_unreachable)` |
-| 分类接缝判定 schema 不可读 | `(Completed, Failed, Reachable, {前缀}.schema_unavailable)` |
+| 失败分类接口判定连接类失败 | `(Completed, Succeeded, Unreachable, {前缀}.database_unreachable)` |
+| 失败分类接口判定 schema 不可读 | `(Completed, Failed, Reachable, {前缀}.schema_unavailable)` |
 | 无法分类的异常 | 原样向上传播，由健康端点按既有规则输出安全错误码（fail closed） |
 | 调用方取消 / 探测预算超时 | `OperationCanceledException` 携带收到的 token 原样传播，绝不报告为 `Unreachable` |
 
@@ -60,7 +60,7 @@ PostgreSQL 分类实现按 SQLSTATE 区分：类 08（连接异常）、53（资
 - `MappedSchema` 只证明映射的表与列当前可读，不证明约束、索引、触发器或数据正确。
 - 不约束数据库挂起时的探测耗时；由健康端点的探测预算通过 token 约束。
 - 不支持多个 `DbContext` 的组合判定（消费方自行组合多个实例或自行实现）。
-- 不提供 MySQL/SQL Server 等其他 provider 的 SQLSTATE 分类；未注册分类接缝时无法分类的失败
+- 不提供 MySQL/SQL Server 等其他 provider 的 SQLSTATE 分类；未注册失败分类接口时无法分类的失败
   一律传播。
 - 快照是单进程的一次采样，不是跨实例一致性保证。
 

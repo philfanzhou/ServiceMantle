@@ -10,7 +10,7 @@
 启动经过以下取消检查点：
 
 1. **入口。** 已经取消的调用方不读取设置快照、不解析 client factory，直接以安全取消结束。
-2. **CreateClient 完成。** `ConsulClientProvider.CreateClient()` 同步落定之后——无论它返回会话、
+2. **CreateClient 完成。** `ConsulClientProvider.CreateClient()` 同步调用结束之后——无论它返回会话、
    返回 null（禁用），还是抛出有限配置分类异常——都观察取消。
 
 在检查点上观察到调用方取消时，启动以一个 `OperationCanceledException` 结束：其 `CancellationToken`
@@ -23,11 +23,11 @@
 | 抛 `InvalidConfiguration`（快照身份/schema 无效） | 是 | 安全 OCE |
 | 抛 `ClientCreationFailed`（factory 返回 null / 抛异常） | 是 | 安全 OCE |
 | 返回会话 | 是 | 会话被处置恰好一次，然后安全 OCE |
-| 上述任意情况 | 否 | 既有行为不变：会话接线、Disabled、原分类异常 |
+| 上述任意情况 | 否 | 既有行为不变：会话交给生命周期、Disabled、原分类异常 |
 
 启动入口 provider 与 factory 是同步依赖，accessor/factory 自身抛出的普通异常或他人 token 的
 `OperationCanceledException` 已被 provider 归一为有限 `ConsulConfigurationException`（不含内部值
-与 inner）；启动检查点在其落定后裁决，不保留原 message、inner 或 provider code。
+与 inner）；启动检查点在调用结束后裁决，不保留原 message、inner 或 provider code。
 
 ## 资源处置
 
@@ -39,7 +39,7 @@ sampler、owner loop 或任何注册调用，`CreateClient` 保持无 token 的�
 ## 不承诺的内容
 
 - **检查点之后的窗口。** 完成检查点与返回之间到达的取消不会被捕获；已开始的启动不会被撤回。
-- **不强行中断。** 同步 accessor/factory/Dispose 不可强制取消，本层只在它们落定后的有限检查点
+- **不强行中断。** 同步 accessor/factory/Dispose 不可强制取消，本层只在这些同步调用结束后的有限检查点
   决定结果，不设启动硬性时间上界。
 - **并发。** 同一 lifecycle 的并发 Start/Stop 或多次 Start 不在支持面内；仅保证两个独立生命周期的
   取消互不影响。
@@ -48,7 +48,7 @@ sampler、owner loop 或任何注册调用，`CreateClient` 保持无 token 的�
 ## 如何被覆盖
 
 `ConsulStartupCancellationTests`（Consul 测试工程，自有 accessor/factory doubles，复用既有 fixture
-物化真实快照与 scripted client seam）：
+物化真实快照与可按测试脚本响应的 client 替身）：
 
 - 预取消入口：不读快照、不解析 factory、无采样调用。
 - 完成矩阵 7 类（禁用快照 / 无快照 / accessor 普通失败 / accessor 内部取消 / factory null /

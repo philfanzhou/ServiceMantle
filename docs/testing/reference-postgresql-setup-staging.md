@@ -9,13 +9,15 @@
 两者都接收调用方自己的 `ReferencePostgreSqlDbContext`。两者都不保存、不开启事务、不提交、
 不回滚、不释放任何东西。
 
-## 这个切片交付什么，不交付什么
+<a id="这个切片交付什么不交付什么"></a>
+
+## 本次任务交付什么，不交付什么
 
 此处交付：一个 contributor 和一个 staging scope，可以与真实的 `ServiceSetupOrchestrator`
 组合，针对真实的 PostgreSQL 数据库使用。
 
 **此处不交付，且下面的任何内容都不隐含：**host 启用、初始配置、HTTP、新表或迁移、任何 DI
-自动接线，以及任何锁。Setup Code、安装状态、审计与实际宿主/HTTP 激活由
+自动注册与配置，以及任何锁。Setup Code、安装状态、审计与实际宿主/HTTP 激活由
 [reference-postgresql-setup.md](reference-postgresql-setup.md)（#175）交付。staging 一个工作区
 不是一个 `Completed` 的安装。示例的 host 不会在启动期间运行此 contributor，运行它也不会使
 正在运行的示例变为 `Ready`。

@@ -12,7 +12,7 @@
 
 1. **`IDatabaseMigrationExecutor`** - 消费服务的扩展点
    - `InspectAsync()` - 观察当前数据库状态（Empty、CurrentVersionCompatible、PendingMigration、VersionTooNew、InspectionFailed）。它是只读的；读取什么、拒绝什么由消费服务自己决定
-   - `ExecuteAsync()` - 运行消费服务自己的迁移工作流。编排器**每次编排至多调用它一次**，且只有在持权检查返回 `Empty` 或 `PendingMigration` 时才调用。`CurrentVersionCompatible` 的目标会完全跳过它，因此对已经是最新版本的数据库，编排成功而未调用 executor 是正常结果
+   - `ExecuteAsync()` - 运行消费服务自己的迁移工作流。编排器**每次编排至多调用它一次**，且只有在持有迁移锁期间的检查返回 `Empty` 或 `PendingMigration` 时才调用。`CurrentVersionCompatible` 的目标会完全跳过它，因此对已经是最新版本的数据库，编排成功而未调用 executor 是正常结果
 
 2. **`IDatabaseMigrationLock`** - 已获取的锁租约
    - 扩展 `IAsyncDisposable` 以获得 RAII 语义
@@ -31,7 +31,7 @@
      未注册的能力仍返回 `migration.lock_not_supported`。
 
 5. **`DatabaseMigrationOrchestrator`** - 编排引擎
-   - 实现下文描述的持权流程
+   - 实现下文描述的迁移锁获取、持有与释放流程
    - 产生带安全错误码的 `MigrationExecutionResult`
 
 6. **`MigrationExecutionResult`** - 安全的不可变结果
@@ -93,7 +93,7 @@ MultiInstance、enableTargetPreparation=true、显式创建许可、30秒lockWai
 声明，不隐含 bootstrap/preparation/lock。单实例只接受显式 InitialCatalog 和单 TCP endpoint，
 DataSource主机trim/小写，缺省端口1433；连接被强制为规范tcp endpoint，非池化、不enlist。
 命名实例、np/lpc等非TCP、LocalDB、AttachDBFilename、UserInstance、FailoverPartner、空库或
-不明确endpoint纯解析失败关闭，零 I/O；核心返回LockNotSupported且executor=0。
+不明确endpoint在纯解析阶段被拒绝，零 I/O；核心返回LockNotSupported且executor=0。
 合法输入只在一个owned连接上执行固定只读 `SELECT DB_NAME()`，以服务器返回的canonical库名
 Ordinal编码，既合并CI服务器同一库拼写，也保留CS服务器不同库，不能用库自身collation猜测
 实例目录名字规则。provider/domain、host、port、库名按UTF-8长度分隔摘要；凭据不参与身份。
@@ -132,23 +132,23 @@ SingleAndMultiInstance仅用于部署验证，不代表内置single-instance身�
 
 ## 编排流程
 
-**持权流程为：**
+**迁移锁获取、持有与释放的流程为：**
 
 1. **参数校验** - 立即检查取消
 2. **锁解析** - 查找并获取 provider 特定的锁
-   - 未注册锁 provider 时失败关闭（安全边界）
-   - 超时或取消时失败关闭
-3. **持权检查** - 在锁内重新检查状态，同时监视 `LeaseLost`
+   - 未注册锁 provider 时不执行迁移（安全边界）
+   - 超时或取消时不执行迁移
+3. **持有迁移锁期间的检查** - 在锁内重新检查状态，同时监视 `LeaseLost`
 4. **决策树**：
    - 若 `CurrentVersionCompatible` → 跳过执行，返回成功
-   - 若 `VersionTooNew` → 失败关闭，不执行
-   - 若 `InspectionFailed` → 失败关闭，不执行
+   - 若 `VersionTooNew` → 返回失败，不执行迁移
+   - 若 `InspectionFailed` → 返回失败，不执行迁移
    - 若 `Empty` 或 `PendingMigration` → 调用 executor 一次，且只在此分支调用
-5. **持权复查** - 在同一受监视租约下检查执行后的状态
+5. **持有同一迁移锁期间的复查** - 在同一受监视租约下检查执行后的状态
    - 只有最终状态为 `CurrentVersionCompatible` 才算成功
 6. **锁释放** - 始终在 finally 块中，错误被抑制
 
-因此 `ExecuteAsync` 每次编排至多被调用一次；当目标已兼容或观察失败关闭时完全不调用。
+因此 `ExecuteAsync` 每次编排至多被调用一次；当目标已兼容或状态检查返回失败时完全不调用。
 它在任何全局意义上都不是「恰好一次」：对一个仍需要迁移的目标重复编排会再次调用它。
 
 每次 executor 调用都收到一个链接了调用方取消与 `LeaseLost` 的 token。编排器在每个阶段前后都先
@@ -161,16 +161,16 @@ SingleAndMultiInstance仅用于部署验证，不代表内置single-instance身�
 `DatabaseMigrationOrchestrator` 暴露两个重载，二者都不会退化为对方。
 
 - **`(serviceId, bootstrap, lockAcquireTimeout, cancellationToken)`** 始终要求真实的分布式租约。
-  缺少锁 provider 不是继续执行的理由：它以 `migration.lock_not_supported` 失败关闭。
+  缺少锁 provider 不是继续执行的理由：它以 `migration.lock_not_supported` 拒绝迁移。
   该重载绝不查阅部署声明。
 - **`(serviceId, bootstrap, deploymentMode, lockAcquireTimeout, cancellationToken)`** 先用声明的
   能力校验消费方提供的 `DatabaseDeploymentMode`。`MultiInstance` 执行的正是上述流程，包含真实
   租约。`SingleInstance` 则解析 provider 的规范目标标识，并**在本进程内**串行化同一
   provider/目标的调用；它不构造任何 `IDatabaseMigrationLock`。`Unspecified`、未定义的模式、
   没有声明能力的 provider，或只声明 `SingleInstance` 能力却要求 `MultiInstance`，都以
-  `migration.lock_not_supported` 失败关闭。该重载要求使用接收
+  `migration.lock_not_supported` 拒绝迁移。该重载要求使用接收
   `DatabaseDeploymentCapabilityRegistry` 的三参数构造函数；与两参数构造函数一起使用时同样
-  失败关闭。
+  拒绝迁移。
 
 锁 provider 缺失绝不会自动回退到 `SingleInstance`。模式是消费方的决定，不能从已注册的
 provider 或连接字符串推断——见 `README.md` 中的
@@ -229,10 +229,10 @@ provider 或连接字符串推断——见 `README.md` 中的
 
 **`ServiceMantle.Tests.Migration`：**
 - `DatabaseMigrationOrchestratorTests` - 核心编排逻辑，覆盖：
-  - 当前版本跳过、空库/待迁移执行、版本过新失败关闭
+  - 当前版本跳过、空库/待迁移执行、版本过新拒绝迁移
   - 初始检查失败、执行失败、最终状态校验失败
   - 开始前取消与执行中取消（两者都使租约恰好释放一次）
-  - 锁超时、锁不支持与空租约的失败关闭路径
+  - 锁超时、锁不支持与空租约的拒绝迁移路径
   - 每条成功与失败路径的租约释放计数（通过 `FakeMigrationLockProvider.LeaseDisposeCount`）
   - 共享内存状态的双实例场景（只有一个实例执行）
   - 初始检查、执行与最终检查期间的租约丢失
@@ -293,7 +293,7 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 
 ### 真实 Oracle 测试（固定 FREEPDB1，需要共享 Oracle 环境）
 
-`OracleMigrationLockRealDatabaseTests` 使用在 `eng/packages.json` 中登记的硬失败环境。它证明
+`OracleMigrationLockRealDatabaseTests` 使用在 `eng/packages.json` 中登记的必需测试环境（不可用或跳过测试即判为失败）。它证明
 同服务互斥、不同服务独立、释放/重获取与非池化连接清理、有界超时、调用方取消、直接的包权限
 拒绝、获取前终止、初始检查/执行/最终检查期间的确定性终止，以及双编排器持锁复查且恰好一次真实
 状态更新。CI 与 ReleaseTool 要求该环境，在变量缺失、跳过、发现零个测试、容器或连接失败时失败，
@@ -310,7 +310,7 @@ SERVICEMANTLE_POSTGRES_IMAGE=postgres:16 RUN_SERVICEMANTLE_POSTGRES_TESTS=true d
 单次调用最多一次 `PRAGMA wal_checkpoint(TRUNCATE)`，使用 ReadWrite（不创建）、Private、非池化连接；
 读 busy 结果并完整释放资源后重新检查目标与 sidecar，再做一次 immutable 只读 schema 观察，避免
 WAL 模式的普通只读连接重新生成 sidecar。库不自行删除、移动、替换文件，也不写应用数据；SQLite
-合法 replay/checkpoint/close 的修改不承诺字节不变。忙锁或剩余 sidecar 失败关闭，内部预算到期映射
+合法 replay/checkpoint/close 的修改不承诺字节不变。忙锁或剩余 sidecar 导致恢复失败，内部预算到期映射
 Timeout，SQLite busy 等待以整秒计；调用方取消保留原 token，清理期间取消也不能返回成功。
 
 immutable 短暂观察只用于成功 checkpoint、全部关闭且 sidecar 已消失之后，不接纳调用方 URI/VFS；
@@ -341,7 +341,7 @@ immutable 短暂观察只用于成功 checkpoint、全部关闭且 sidecar 已�
 
 - SQLite 的迁移锁 provider。SQLite 在本仓库中**没有跨进程迁移锁**。它只通过显式的
   `SingleInstance` 部署模式参与，该模式在一个进程内串行化迁移，不构成多实例支持的主张；
-  对 SQLite 要求 `MultiInstance` 会以 `migration.lock_not_supported` 失败关闭
+  对 SQLite 要求 `MultiInstance` 会以 `migration.lock_not_supported` 拒绝迁移
 - 数据库创建或目标准备（见 `README.md` 中独立的「Database target preparation」一节，它是独立于
   本迁移编排工作加入的）
 - 配置表或审计表
@@ -431,8 +431,8 @@ logger.LogInformation(
 ## 证据构件用法（遗留库接管）
 
 接管判断本身仍归消费方 executor（见上文「集成示例」）。库提供的是四件证据与原语构件，
-按 [ADR 0008](docs/decisions/0008-schema-evidence-components.md) 拆分交付，语义模型的权威
-位置在 [docs/contracts/schema-evidence-models.md](docs/contracts/schema-evidence-models.md)：
+按 [ADR 0008](docs/decisions/0008-schema-evidence-components.md) 拆分交付，语义模型以
+[docs/contracts/schema-evidence-models.md](docs/contracts/schema-evidence-models.md) 为准：
 
 | 构件 | 包 | 职责 |
 | --- | --- | --- |
@@ -575,7 +575,7 @@ inner；provider 内部 OCE 在 caller 未取消时仍是有限失败。步骤�
 单实例纯解析只接受单 TCP server/port 与显式数据库；非法、多个host或非TCP返回空身份且零 I/O，
 由核心映射 LockNotSupported（executor=0）。合法输入仅开一个自己拥有的非池化/non-enlisted连接，
 只读查询 `SELECT @@lower_case_table_names, DATABASE(), LOWER(DATABASE())`；规则0保留server名字，
-1/2使用server lower名字，未知规则/空名字失败关闭，不凭CLR或未知collation猜测。
+1/2使用server lower名字，未知规则/空名字导致身份解析失败，不凭CLR或未知collation猜测。
 UTF-8长度分隔的provider/domain、trim小写主机、端口与server规范库名构成SHA-256身份，凭据不进入身份。
 打开/读取/完整释放后的正常和异常完成均观察caller取消；失败统一安全无inner InvalidOperationException，
 核心返回LockFailed，acquisition预算超时为LockTimeout，caller取消原token优先。没有DDL、写入、
@@ -589,7 +589,7 @@ DNS/代理/server别名不解析，单实例不承诺进程外互斥；数据库
 单实例纯解析只接受单 TCP server/port 与显式数据库；非法、多个host或非TCP返回空身份且零 I/O，
 由核心映射 LockNotSupported（executor=0）。合法输入仅开一个自己拥有的非池化/non-enlisted连接，
 只读查询 `SELECT @@lower_case_table_names, DATABASE(), LOWER(DATABASE())`；规则0保留server名字，
-1/2使用server lower名字，未知规则/空名字失败关闭，不凭CLR或未知collation猜测。
+1/2使用server lower名字，未知规则/空名字导致身份解析失败，不凭CLR或未知collation猜测。
 UTF-8长度分隔的provider/domain、trim小写主机、端口与server规范库名构成SHA-256身份，凭据不进入身份。
 打开/读取/完整释放后的正常和异常完成均观察caller取消；失败统一安全无inner InvalidOperationException，
 核心返回LockFailed，acquisition预算超时为LockTimeout，caller取消原token优先。没有DDL、写入、

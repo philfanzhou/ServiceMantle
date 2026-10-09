@@ -36,22 +36,22 @@ scope 异步释放完成**，才在完成检查点上按固定优先级裁决：
 
 ## 不承诺的内容
 
-- **检查点之前与之后的窗口。** 完成检查点裁决的是“scope 已落定”时刻已观察到的到期；检查点之后
+- **检查点之前与之后的窗口。** 完成检查点裁决的是“scope 释放已结束”时刻已观察到的到期；检查点之后
   到达的取消或到期不改变已交付的结果，也不撤回已发布的期望。
 - **不强行中断。** 忽略 token 的 source、scope 或 DI 释放不会被强制中断，本层不设硬性墙钟上界，
-  不通过抛弃不协作任务制造时间界限；生命周期仍可等待依赖落定。
+  不通过抛弃不协作任务制造时间界限；生命周期仍可等待依赖调用结束。
 - **不泄漏内容。** `readiness_timeout` 只表示预算耗尽这一事实，不推断 source 的健康内容或异常细节。
 - **无新协议。** 不新增定时、缓存、心跳或热更新语义；诊断码集合与采样频率配置不变。
 
 ## 如何被覆盖
 
 `ConsulReadinessCompletionTests`（Consul 测试工程，自有 `CompletingDecisionSource` double，复用
-既有 fake clock、fixture 与 scripted client seam）：
+既有 fake clock、fixture 与可按测试脚本响应的 client 替身）：
 
 - 决策调用内耗尽预算后返回 Ready：0 次注册、`NotReady` 状态、恰一条 `readiness_timeout`。
-- 决策先返回 Ready、scope 异步释放再耗尽预算：同样拒绝，覆盖“释放路径”seam。
+- 决策先返回 Ready、scope 异步释放再耗尽预算：同样拒绝，覆盖 scope 释放路径。
 - scope 创建期间（包装的 scope factory 内推进时钟）与 source 解析期间（scoped 注册委托内推进时钟）
-  耗尽预算后返回 Ready：同样拒绝，覆盖“创建/解析”seam。
+  耗尽预算后返回 Ready：同样拒绝，覆盖 scope 创建与 source 解析路径。
 - 有限矩阵：Ready / NotReady / null / 普通异常 / 内部取消伴随到期，全部 `readiness_timeout` 且
   诊断不含合成秘密 canary；每次采样恰一条终结诊断。
 - 未到期对照：正常 Ready 注册、正常 NotReady 无诊断无操作、释放失败与普通失败仍是

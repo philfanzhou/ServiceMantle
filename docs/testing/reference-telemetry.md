@@ -1,7 +1,7 @@
 # 参考服务基础遥测验收
 
 `ReferenceTelemetryTests` 通过示例自己的 `ReferenceApplication.CreateBuilder` / `Build`
-接缝，在一个真实的回环 Kestrel 宿主上验收参考示例可选启用的基础 instrumentation。这个组合
+构建入口，在一个真实的回环 Kestrel 宿主上验收参考示例可选启用的基础 instrumentation。这个组合
 没有测试替身：开关、provider、resource 和生命周期都来自示例实际运行的代码。
 
 ## 接入了什么
@@ -32,11 +32,11 @@ OpenTelemetry resource 是被复用的，而不是新建的：它就是 `AddServ
 ## 阶段指标（#521）
 
 `ReferenceService:Telemetry:PhaseMetrics:Enabled` 是第二个显式布尔开关，默认 `false`，与基础遥测
-开关互相独立，且**只能在 PostgreSQL 启动 gate 下开启**：权威阶段来自 gate 的安装行，没有 gate
+开关互相独立，且**只能在 PostgreSQL 启动 gate 下开启**：阶段以 gate 读取的安装行为准，没有 gate
 时 `CreateBuilder` 在任何注册与副作用之前抛出 `InvalidOperationException`，消息只点名两个配置键。
 
 打开时注册宿主拥有的 `ServiceMetrics` 发布器（`servicemantle.service.info` 与 one-hot 的
-`servicemantle.installation.phase`），并把权威 source 注册为自身单例、`IServiceHealthSnapshotSource`
+`servicemantle.installation.phase`），并把唯一健康快照来源注册为自身单例、`IServiceHealthSnapshotSource`
 解析为透明装饰器 `ReferencePhaseMetricsSnapshotSource`——phase gate 与健康 endpoint 的每次读取都
 经过它，发布只是副作用。样例中没有其他代码调用 `SetPhase` / `SetUnknown`。
 
@@ -164,10 +164,10 @@ OTLP 合法，只是没有数据可导出。
 - resource 允许列表覆盖三个既有的非秘密身份字段。它**不是**对每个 span 和指标属性的脱敏或
   低基数保证。示例不收集、转换或添加任何 Header、body、query 或连接字段，但由库自身产生的
   instrumentation 属性归库所有。
-- 秘密值的否定断言覆盖的是：一个与调用路径无关的合成配置值不会出现在这套接线的 resource、
+- 秘密值的否定断言覆盖的是：一个与调用路径无关的合成配置值不会出现在这组集成配置的 resource、
   它自己的诊断和测试捕获的输出中。它不承诺嵌入任意 URL 或第三方属性中的秘密会被清除。
 - 这里的内容不承诺采样率、吞吐量数字、特定的运行时计数器值、成功的导出，或突发终止时的强制
-  释放。dispose 检查覆盖的是这套接线实际拥有的资源，在正常停止和 dispose 的情况下。
+  释放。dispose 检查覆盖的是这组集成配置实际拥有的资源，在正常停止和 dispose 的情况下。
 - 调用方的取消与内部失败保持区分。不承诺强制停止一个不合作的第三方 instrumentation。
 - 基础 instrumentation 不创建任何远程导出目标。
 

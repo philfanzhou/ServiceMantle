@@ -51,8 +51,9 @@ session 捕获一个活动设置快照及其版本。所有 `discovery.*` 定义
 不会被监视、重新绑定或调和。endpoint、token、注册、disabled 标志或健康 URL 的变更只有在消费方
 自行重启进程后才生效。生命周期不会再次调用 `CreateClient()`。
 
-注册重试、清理注销和停止使用同一个 session 和注册 ID。生命周期在最终远程操作落定之后，或在协作
-关闭预算耗尽之后，调用一次 `Dispose()`。处置失败会成为一条安全诊断，且不重试。处置不意味着注销。
+注册重试、清理注销和停止使用同一个 session 和注册 ID。生命周期在最终远程操作结束之后，或在协作
+关闭预算耗尽之后，调用一次 `Dispose()`。操作结束包括正常返回或抛出异常。处置失败会成为一条
+安全诊断，且不重试。处置不意味着注销。
 
 ## 设置键中立化与显式迁移（#436、#668）
 
@@ -61,11 +62,11 @@ namespace 保持不变，只有键值移动。诊断码（含 `consul.invalid_co
 认证 Header 与 HTTP wire model 本次不变。这是随新版本交付的外部契约变更，不覆盖历史包。
 
 目录当前注册 8 个键（下表全部）。#591 曾新增 `discovery.allow-insecure-http`，#668 移除传输
-scheme 闸口时该键退休：`http://` 与 `https://` agent 端点现在直接可用（含 LAN agent，如
+协议限制时也移除了该键：`http://` 与 `https://` agent 端点现在直接可用（含 LAN agent，如
 `http://consul.internal:8500`），回环与非回环不再有行为差异。库不依据 DNS 名或私网 IP 形状推断
 网络可信，也不验证网络隔离——配置可信网络与访问控制、在不受信任网络路径上使用 HTTPS 由调用方
-负责。存量快照若存有该退休键，升级前必须先删除该行（loader 对 unknown key 的拒绝是预期边界）；
-迁移转换示例中退休键行被直接丢弃而不是映射。
+负责。存量快照若存有该已移除的键，升级前必须先删除该行（loader 对 unknown key 的拒绝是预期边界）；
+迁移转换示例中已移除的键行被直接丢弃而不是映射。
 
 | 旧键 | 新键 |
 | --- | --- |
@@ -106,7 +107,7 @@ token 使用，保留 1–4096 个非空白可打印 ASCII 字符校验，不宣
 README（英文）中的 `ConsulDiscoverySettingMigration.TryConvert` 内存转换示例是经测试的事实源，
 对应 `tests/ServiceMantle.Discovery.Tests/ConsulDiscoverySettingMigrationTests.cs`：无凭据、合法凭据、
 旧键大小写/空白变体（按 store 的 `Trim()` + 小写规范化识别，含凭据变体的重新保护与规范化后的
-目标键冲突）、退休键 `discovery.allow-insecure-http` 行的丢弃、非凭据行类型不匹配或未定义（按目录
+目标键冲突）、已移除的键 `discovery.allow-insecure-http` 行的丢弃、非凭据行类型不匹配或未定义（按目录
 检查这 8 个迁移键）、错误根密钥、损坏密文与已
 取消 token（含空输入集合）各有断言，失败与取消均不产出可提交的部分结果。
 示例只做内存转换与输入检查，不证明消费方数据库提交的原子性、持久性或异常恢复；停机、备份、根
@@ -154,8 +155,8 @@ services.AddServiceMantleConsul(
 ## 专用快照来源（#557）
 
 非泛型入口在注册 discovery 目录的同时固定解析全局 `IServiceSettingCurrentSnapshotAccessor`。当
-消费方只希望向 Consul 提供由自有权威快照派生的 `discovery.*` 快照（例如 SignaCore 的 43 个产品键
-权威快照）时，可改用显式的类型化注册入口：
+消费方只希望向 Consul 提供由消费方自身作为设置唯一依据的快照派生的 `discovery.*` 快照（例如
+SignaCore 的 43 个产品键快照）时，可改用显式的类型化注册入口：
 
 ```csharp
 IServiceCollection AddServiceMantleConsul<TSnapshotAccessor>(
@@ -170,7 +171,7 @@ IServiceCollection AddServiceMantleConsul<TSnapshotAccessor>(
 1. **非泛型三个入口行为不变**（目录/validator 注册、全局 accessor、默认 timing/advertisement）。
    泛型入口**不向全局注入** `IServiceSettingDefinitionProvider` 或
    `IServiceSettingCompositeValidator`，不改全局 accessor/store/loader/query/update 的任何
-   descriptor；全局设置目录与权威保持消费方原状。
+   descriptor；全局设置目录与唯一设置来源保持消费方原状。
 2. **调用方责任**：自行注册 `TSnapshotAccessor` 单例并在 Host.Start 前激活完整的同 service-id
    快照。库不为其创建存储、不解析产品 `IConfiguration`、不迁移键、不代替其校验或加密；快照的
    线程安全、敏感值标记与投影来源的可信性均由调用方负责。
@@ -246,9 +247,9 @@ readiness 失败在固定的轮询间隔后再次采样，不使用传输退避�
 替换 client。
 
 关闭总预算和 Consul 操作预算运行在同一条时间线上，但结束的东西不同。关闭预算在停止开始时、owner
-循环被唤醒之前启动，它约束清理注销：一个已在途的操作落定所花的时间会从清理的剩余时间中扣除，
+循环被唤醒之前启动，它约束清理注销：等待一个已在途操作结束所花的时间会从清理的剩余时间中扣除，
 且清理重试延迟会被剩余预算截断，而不是用全新的预算重新开始。它不会缩短已在途的操作，该操作自身
-的取消期限仍是 Consul 操作预算；一个已经运行了该预算一部分的操作会在其余时间内落定，这比完整
+的取消期限仍是 Consul 操作预算；一个已经运行了该预算一部分的操作会在其余时间内结束，这比完整
 预算是更紧的上界。因此，对于协作的 client 和决策来源，一次停止的结果上界是
 `max(OperationBudget, ShutdownBudget)`，而不是仅关闭预算：合法组合 `OperationBudget = 30 s` 与
 `ShutdownBudget = 1 s` 可能花费约 30 秒。该模型是协作
@@ -274,7 +275,7 @@ readiness 失败在固定的轮询间隔后再次采样，不使用传输退避�
 | 注销 `Backoff` | 未 Ready | 延迟完成时开始一次注销；进入 `Deregistering` |
 | 注销 `Backoff` | Ready | 取消延迟；为同一 ID 开始注册；进入 `Registering` |
 
-readiness 采样器是失败关闭的。来源异常、内部取消的调用、内部超时、null 决策或无效/未定义决策都
+readiness 采样器遇到失败时将实例视为未就绪。来源异常、内部取消的调用、内部超时、null 决策或无效/未定义决策都
 是一个未 Ready 事件。调用方对 `StartAsync` 或 `StopAsync` 的取消不会被转换为该事件；它保留其原始
 token。
 
@@ -283,11 +284,11 @@ token。
 | 结果 | 最新期望 | 存在性与下一状态 |
 | --- | --- | --- |
 | `Success` | 存在 | `Present`；进入 `Registered`；重置退避 |
-| `Success` | 不存在 | `Present`；立即开始注销；绝不把 `Registered` 暴露为落定状态 |
+| `Success` | 不存在 | `Present`；立即开始注销；绝不把 `Registered` 暴露为稳定状态 |
 | `Rejected`、`Unavailable` 或未定义 | 存在 | `Unknown`；进入注册 `Backoff` |
 | `Rejected`、`Unavailable` 或未定义 | 不存在 | `Unknown`；立即开始清理注销 |
-| 内部操作超时/取消 | 存在 | 请求取消，等待协作落定，然后 `Unknown` 并进入注册 `Backoff` |
-| 内部操作超时/取消 | 不存在 | 请求取消，等待协作落定，然后 `Unknown` 并开始清理注销 |
+| 内部操作超时/取消 | 存在 | 请求取消，等待操作配合取消并结束，然后 `Unknown` 并进入注册 `Backoff` |
+| 内部操作超时/取消 | 不存在 | 请求取消，等待操作配合取消并结束，然后 `Unknown` 并开始清理注销 |
 | 调用方停止 | 任意 | 应用下文的停止规则；绝不再开始另一次注册 |
 
 ### 注销完成
@@ -297,12 +298,12 @@ token。
 | `Success` | 不存在 | `Absent`；进入 `NotReady`，或完成 `Stopping` |
 | `Success` | 存在 | `Absent`；立即开始注册 |
 | `Rejected`、`Unavailable` 或未定义 | 不存在 | `Unknown`；进入注销 `Backoff` |
-| `Rejected`、`Unavailable` 或未定义 | 存在 | `Unknown`；只在注销落定之后才开始注册 |
-| 内部操作超时/取消 | 任意 | 请求取消，等待协作落定，保留 `Unknown`，然后遵循最新期望 |
+| `Rejected`、`Unavailable` 或未定义 | 存在 | `Unknown`；只在注销结束之后才开始注册 |
+| 内部操作超时/取消 | 任意 | 请求取消，等待操作配合取消并结束，保留 `Unknown`，然后遵循最新期望 |
 | 调用方停止 | 任意 | 在剩余关闭预算内继续清理 |
 
-注销期间的 Ready 翻转绝不会开始一次重叠的注册。注销必须先落定；随后注册会重新建立期望的记录。
-注册期间的未 Ready 翻转会请求取消该次尝试，但 controller 会等待其落定后再注销。这个顺序防止迟到
+注销期间的 Ready 翻转绝不会开始一次重叠的注册。注销必须先结束；随后注册会重新建立期望的记录。
+注册期间的未 Ready 翻转会请求取消该次尝试，但 controller 会等待其结束后再注销。这个顺序防止迟到
 的注销删除更新的注册，也防止迟到的注册逃脱清理。
 
 每个操作和 readiness 采样都有一个单调递增的代次。代次不再是活动代次的完成结果不能直接选择
@@ -318,12 +319,12 @@ token。
    清理注销、session 交接）；之后的每个 `StopAsync` 与 `DisposeAsync` 都等待同一完成，不再
    独自执行清理——同一注册 ID 的清理注销与 session 处置各恰好一次，不存在重叠的注销调用。
 2. **释放先行不注销**：从未停止就被释放的生命周期（启动失败后直接 dispose 的宿主）保持
-   「释放不注销」——它取消采样、等待在途操作落定、处置 session，但保留远端注册。随后的
+   「释放不注销」——它取消采样、等待在途操作结束、处置 session，但保留远端注册。随后的
    `StopAsync` 只是等待该释放完成，安全返回。
 3. **session 交接原子化**：session 由 `Interlocked.Exchange` 取走后处置，任何交错都不会把
    null 交给处置助手，也不会处置两次。
 4. **取消不阻断释放**：首个 stop 若以调用方取消结束，其取消结果属于该调用方；
-   `DisposeAsync` 观察该结果但不传播，并兜底完成被取消的 stop 未走完的 session 交接。
+   `DisposeAsync` 观察该结果但不传播，并补做被取消的 stop 未走完的 session 交接。
    首个 stop 之后的 stop 调用者收到的是同一完成结果，包括其取消分类。
 
 违反该互斥的交错曾产生的缺陷（注销 PUT 重复、session 双重处置、`DisposeSession(null)` 空引用、
@@ -340,13 +341,13 @@ token。
 | `NotReady/Absent` | 处置 session；完成停止 |
 | `Registered/Present` | 在剩余关闭预算内开始注销并重试 |
 | `Backoff` 且存在性为 `Present` 或 `Unknown` | 取消延迟；在剩余预算内开始注销 |
-| `Registering` | 取消注册，等待落定，然后注销，因为存在性可能为 `Present` 或 `Unknown` |
+| `Registering` | 取消注册，等待结束，然后注销，因为存在性可能为 `Present` 或 `Unknown` |
 | `Deregistering` | 在其自身操作预算下等待当前尝试；只在关闭预算仍有剩余时重试 |
 | `NotReady/Unknown` | 在剩余预算内尝试注销 |
 
 如果注销成功，生命周期处置 session 并完成。如果内部关闭预算耗尽，它停止创建操作，发出一条安全的
-`shutdown_timeout` 分类，只在任何协作的在途操作落定之后才处置，并且在不声称远程不存在的情况下
-完成。因此，关闭预算耗尽不会结束停止开始时已在途的操作：该次尝试按其自身操作预算落定，所以一次
+`shutdown_timeout` 分类，只在任何协作的在途操作结束之后才处置，并且在不声称远程不存在的情况下
+完成。因此，关闭预算耗尽不会结束停止开始时已在途的操作：该次尝试按其自身操作预算结束，所以一次
 停止最多可以超出关闭预算一个操作预算的时间。如果 `StopAsync` 调用方 token 先取消，则传播原始
 token 且不开始新工作；尽力而为的归属清理遵循同样的不重叠规则。
 

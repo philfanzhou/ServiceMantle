@@ -65,7 +65,7 @@ assignees: ''
 - GitHub 原生 Blocked by：#NNN，或“无”
 - GitHub 原生 Blocks：#NNN，或“无”
 
-GitHub 原生关系是依赖真源。
+任务依赖以 GitHub 原生关系为准。
 
 若仍 blocked，填写具体缺口、下一项调查/实验、负责角色和解除证据。
 
