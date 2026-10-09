@@ -8,8 +8,8 @@ SingleInstance 算法、锁 provider 的获取/释放实现和租约丢失判定
 
 ## 规则
 
-已经获取租约的本次编排调用，在 `IDatabaseMigrationLock.DisposeAsync` 落定（正常完成、抛普通
-异常或抛内部 `OperationCanceledException` 均算落定）、即将交付主结果时，如果调用方 token 已被
+已经获取租约的本次编排调用，在 `IDatabaseMigrationLock.DisposeAsync` 结束（正常完成、抛普通
+异常或抛内部 `OperationCanceledException` 均算结束）、即将交付主结果时，如果调用方 token 已被
 取消，则以新建的 `OperationCanceledException` 结束：
 
 - 携带调用方自己的 token；
@@ -18,7 +18,7 @@ SingleInstance 算法、锁 provider 的获取/释放实现和租约丢失判定
 
 该检查点优先于所有主结果：
 
-| 释放前的主结果 | 释放中/释放落定时调用方已取消 | 交付 |
+| 释放前的主结果 | 释放中/释放结束时调用方已取消 | 交付 |
 | --- | --- | --- |
 | 跳过执行成功 | 是 | 调用方 `OperationCanceledException` |
 | 执行后成功 | 是 | 调用方 `OperationCanceledException` |
@@ -34,12 +34,12 @@ SingleInstance 算法、锁 provider 的获取/释放实现和租约丢失判定
 - 释放失败（普通异常或内部取消）继续不替换主结果，也不被重抛；
 - 显式释放不引入新的租约丢失检查，正常释放不被当作丢租约；
 - 释放恰好一次，不重试，不重复执行或检查；
-- 既有阶段已经 caller-cancelled 的调用在释放落定后仍交付调用方取消；
+- 既有阶段已经 caller-cancelled 的调用在释放结束后仍交付调用方取消；
 - 预取消的调用不获取租约；获取失败且没有租约时不释放。
 
 ## 不承诺的内容
 
-- **检查点之后的窗口。** 只保证释放操作落定后的最终检查点；检查点之后才发生的取消不承诺被
+- **检查点之后的窗口。** 只保证释放操作结束后的最终检查点；检查点之后才发生的取消不承诺被
   本次编排观察到。
 - **不配合的释放。** 不能中断忽略取消、阻塞在 `DisposeAsync` 里的 provider；不新增释放时限或
   整体时限。
@@ -51,7 +51,7 @@ SingleInstance 算法、锁 provider 的获取/释放实现和租约丢失判定
 `MigrationReleaseCancellationTests`（专属 lease/provider/executor doubles，不依赖真实数据库、
 Sleep 或计时竞争）驱动：
 
-- 7 种主结果 × 3 种释放落定方式的完整矩阵：取消后均不交付普通结果，新建 OCE 的 token、固定
+- 7 种主结果 × 3 种释放结束方式的完整矩阵：取消后均不交付普通结果，新建 OCE 的 token、固定
   消息、无 inner、无秘密泄漏，释放恰一次，执行/检查次数与主结果一致；
 - 同矩阵的未取消对照：保留原成功/错误码与 `ExecutorWasCalled`，释放失败不替换主结果；
 - 既有阶段已取消、预取消、获取失败无租约、双实例隔离（只取消一个）以及显式 MultiInstance

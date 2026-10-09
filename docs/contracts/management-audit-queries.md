@@ -44,13 +44,13 @@ body。
 
 ## 请求取消优先级
 
-查询依赖（包括 scoped 查询服务的 DI 解析）正常或异常落定时，已经观察到的 `RequestAborted`
+查询依赖（包括 scoped 查询服务的 DI 解析）正常返回或抛出异常时，已经观察到的 `RequestAborted`
 优先于普通响应映射，也优先于原样传播依赖自己的取消。此时 endpoint 以新建的
 `OperationCanceledException` 结束：恰好携带原 `RequestAborted`，固定英文消息
 `The management audit query request was cancelled by the caller.`，无 `InnerException`，
 不复用底层异常，不泄露其 canary 或合成秘密。
 
-| 查询依赖的落定方式 | `RequestAborted` 已取消 | 交付 |
+| 查询依赖的结束方式 | `RequestAborted` 已取消 | 交付 |
 | --- | --- | --- |
 | 返回正常页 | 是 | 调用方 `OperationCanceledException` |
 | 返回 null | 是 | 调用方 `OperationCanceledException` |
@@ -63,7 +63,7 @@ body。
 
 预取消的请求不解析查询服务、不执行查询；至多一次查询，不重试、不保存。未取消时有限响应与
 查询输入、权限和安全 Header 行为不变；两个并发请求只取消一个时，另一请求的结果与关联 ID
-不受影响。取消的异常同步抛出与异步任务落定遵循同一优先级。
+不受影响。取消的异常同步抛出与异步任务结束遵循同一优先级。
 
 ## 不承诺的内容
 

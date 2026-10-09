@@ -10,7 +10,7 @@
 
 1. **入口。** 已经取消的调用方在任何依赖被调用之前收到取消；参数无效的检查仍先于取消检查。
 2. **Load 完成。** `LoadAsync` 正常返回后观察取消，再比较 service id 与版本。
-3. **根密钥与校验完成。** 根密钥源、组合校验器与逐键保护循环的每次落定之后都观察取消。
+3. **根密钥与校验完成。** 根密钥源、组合校验器与逐键保护循环的每次调用结束之后都观察取消。
 4. **Apply 完成。** `ApplyAsync` 正常返回的**所有**结果（`Applied / ValidationFailed /
    VersionConflict / VersionExhausted / ProtectionFailed / StorageFailed / TransactionRequired /
    ContextNotClean`）在返回给调用方之前观察取消。这是本契约的收敛点：不按状态枚举逐个打补丁，

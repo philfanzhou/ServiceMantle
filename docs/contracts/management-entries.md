@@ -8,7 +8,9 @@
 该约定不映射任何业务处理程序。消费方提供每个条目背后的处理程序；status、Bootstrap、Setup 和
 session 行为本身由各自的 issue 拥有。
 
-## 最小接线
+<a id="最小接线"></a>
+
+## 最小注册示例
 
 ```csharp
 builder.Services

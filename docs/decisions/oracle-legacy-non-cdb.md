@@ -19,7 +19,7 @@ ServiceMantle 不支持把 legacy non-CDB 作为 Bootstrap 目标、观察或准
 | 满足 ADR 0001 的实际 Oracle 19c 或更高普通 PDB | 保留现有支持。 |
 | 声明的服务器版本低于 19c | 在连接之前按现有最低版本契约拒绝；本决策不重新开启它。 |
 | 声明版本缺失或语法无效 | 配置无效，不是关于服务器真实版本或架构的证据。 |
-| 声称是 21c 或更高的 non-CDB | 仍然关闭。Oracle 的停止支持不会让它对 ServiceMantle 更可接受，且如果连接仍然被提交，运行时探测保持权威。 |
+| 声称是 21c 或更高的 non-CDB | 仍然关闭。Oracle 的停止支持不会让它对 ServiceMantle 更可接受，且如果连接仍然被提交，仍以运行时探测结果为准。 |
 
 Oracle 19c 的
 [`non-CDB upgrade scenarios`](https://docs.oracle.com/en/database/oracle/oracle-database/19/upgrd/upgrade-scenarios-non-cdb-oracle-databases.html)
@@ -55,7 +55,7 @@ Oracle 19c 的
 准备在其 `ALL_USERS` 查询之前拒绝管理会话，锁获取在任何 `DBMS_LOCK` 分配之前
 拒绝目标会话。
 
-声明的 `ServerVersion` 是用于最低版本门禁的配置。provider 不接受它作为经服务器
+声明的 `ServerVersion` 是用于最低版本要求检查的配置。provider 不接受它作为经服务器
 证明的拓扑，也不接受它作为远端数据库是 PDB 的证明。会话存在之前的传输或认证
 失败既不揭示实际版本，也不揭示 CDB/non-CDB 架构。
 
@@ -110,7 +110,7 @@ local/non-Oracle-maintained 目标会话验证缺口保持独立；它不削弱 
 环境；Oracle Free 的 `FREEPDB1` 是 PDB，不能代替它。如果环境、凭据、权限或已
 发现的测试缺失，必需的 CI 和发布验证必须失败而不是跳过。
 
-真实的测试门禁至少必须：
+必须通过的真实测试至少包括：
 
 1. 断言实际服务器版本和 non-CDB 证据，包括空的/non-CDB 的 `CDB_NAME` 和
    `CON_ID=0`，然后把它与单独测试的 19c+ 普通 PDB 区分开。调用方声明的版本或
@@ -124,6 +124,6 @@ local/non-Oracle-maintained 目标会话验证缺口保持独立；它不削弱 
 4. 运行完整的 Bootstrap/Observe/Prepare/Acquire 错误矩阵，不把缺失的 non-CDB
    基础设施当作通过。机密必须不出现在仓库内容、诊断、缓存和构建产物中。
 
-在全部这些证据成为必需门禁之前，支持保持关闭。本决策不创建任何实现任务。#317 是
+在全部这些证据成为必须通过的检查之前，支持保持关闭。本决策不创建任何实现任务。#317 是
 唯一已知的邻近问题，不在此修复；未发现其他邻近缺陷。本文档不添加任何 provider
 代码、SQL、测试、包元数据、CI、README 更改、数据库转换或 19c 之前的保证。

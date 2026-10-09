@@ -212,12 +212,12 @@ namespace 不得跨越两个程序集。
 **数据库 provider 例外。** 六个 `ServiceMantle.Database.*` 包的 namespace、包名与实现不在 #570
 适用范围内，保持 provider 命名；其契约由 ADR 0001–0006 系列决策约束。
 
-**交付顺序与过渡状态。** 政策与判据先行交付（#571），六个代码切片随后逐包实施：#572（两个核心
+**交付顺序与过渡状态。** 政策与判据先行交付（#571），六项代码改动随后逐包实施：#572（两个核心
 契约上移）、#573（AspNetCore→Web）、#574（Consul→Discovery）、#575（Serilog→Logging）、
-#576（OpenTelemetry→Diagnostics）、#577（EFCore→Persistence.Relational）。切片合并前主线代码
+#576（OpenTelemetry→Diagnostics）、#577（EFCore→Persistence.Relational）。各项改动合并前主线代码
 仍使用旧 namespace；这是 #570 明确接受的过渡状态，不构成对本判据的违反。
 
-**包 ID 对齐（#585）。** 上表的「包」列记录的是各切片实施当时的包 ID。#585 随后把五个适配包的
+**包 ID 对齐（#585）。** 上表的「包」列记录的是各项改动实施当时的包 ID。#585 随后把五个适配包的
 包 ID、程序集名与项目目录对齐到各自拥有的能力命名空间树的最小公共祖先节点，provider 与具体技术
 （ASP.NET Core、Consul、Serilog、OpenTelemetry、EF Core）只由类型名与包元数据
 （`<PackageDescription>`、依赖清单）暴露，不再进入包 ID：

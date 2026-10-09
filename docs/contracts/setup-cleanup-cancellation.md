@@ -1,15 +1,15 @@
 # Setup 编排：失败清理完成后的调用方取消优先级
 
 `ServiceSetupOrchestrator` 在任何失败入口都会经由汇合的失败清理 helper：以
-`CancellationToken.None` 丢弃暂存变更，再做既有清洁复核，然后分类。本文档说明清理落定后的
-完成检查点行为，以及哪些内容刻意留在承诺之外。
+`CancellationToken.None` 丢弃暂存变更，再通过既有的 `HasPendingChanges` 检查是否仍有未保存
+变更，然后分类。本文档说明清理结束后的完成检查点行为，以及哪些内容刻意留在承诺之外。
 
 Setup Code、安装行、HTTP handler、Contributor 排序/协议、保存/提交/回滚事务不在本文档范围内。
 
 ## 规则
 
-已经进入失败清理的本次编排，在 `DiscardPendingChangesAsync` 与既有清洁复核完成或异常落定的
-终结检查点上，如果调用方 token 已被取消，则以新建的 `OperationCanceledException` 结束：
+已经进入失败清理的本次编排，在 `DiscardPendingChangesAsync` 及后续未保存变更检查的处理
+结束后（丢弃或检查抛出异常也包括在内），如果在最终检查点上观察到调用方 token 已被取消，则以新建的 `OperationCanceledException` 结束：
 
 - 恰好携带调用方自己的 token；
 - 固定英文消息 `Service setup was cancelled by the caller.`；
@@ -19,7 +19,7 @@ Setup Code、安装行、HTTP handler、Contributor 排序/协议、保存/提�
 
 该检查点优先于所有失败分类：
 
-| 清理前的分类 | 清理中/清理落定时调用方已取消 | 交付 |
+| 清理前的分类 | 清理中/清理结束时调用方已取消 | 交付 |
 | --- | --- | --- |
 | `setup.validation_side_effect` | 是 | 调用方 `OperationCanceledException` |
 | validation 抛异常且 scope 有脏状态（`setup.contributor_failed`） | 是 | 调用方 `OperationCanceledException` |
@@ -41,19 +41,20 @@ Setup Code、安装行、HTTP handler、Contributor 排序/协议、保存/提�
 
 ## 不承诺的内容
 
-- **检查点之后的窗口。** 只保证失败清理落定后的完成检查点；之后才发生的取消不承诺被本次
+- **检查点之后的窗口。** 只保证失败清理结束后的完成检查点；之后才发生的取消不承诺被本次
   编排观察到。
 - **不配合的同步成员。** 不中断不配合的同步 `HasPendingChanges` getter 或 Discard 实现，
   不新增 timeout。
-- **scope 清洁性。** 清理失败后不承诺 scope 已干净；调用方必须丢弃不能确认干净的 scope。
+- **作用域中的未保存变更。** 清理失败后不承诺作用域已无未保存变更；调用方必须丢弃无法确认已无未保存变更
+  的作用域。
 - **回滚范围。** 清理仅丢弃暂存变更，不回滚已提交数据库或外部副作用；保存和事务仍归消费方。
 
 ## 如何被覆盖
 
 `SetupCleanupCancellationTests`（专属 Contributor/scope doubles，不改共享 fixture）驱动：
 
-- 6 种失败入口 × 4 种清理落定方式（取消后正常清理、清理后仍脏、抛普通异常、抛内部 OCE，
-  取消均发生在清洁复核落定之前）共 24 例：全部交付携带原 caller token 的固定消息 OCE，
+- 6 种失败入口 × 4 种清理结束方式（取消后正常清理、清理后仍脏、抛普通异常、抛内部 OCE，
+  取消均发生在未保存变更检查结束之前）共 24 例：全部交付携带原 caller token 的固定消息 OCE，
   无 inner、无秘密；清理恰一次且使用 `CancellationToken.None`；不启动后续注册、不二次 Discard。
 - 同矩阵未取消对照 24 例：保留 ValidationSideEffect/ContributorFailed/合法拒绝码，以及
   `setup.cleanup_failed` 的优先级。

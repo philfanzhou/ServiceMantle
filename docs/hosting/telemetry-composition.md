@@ -30,11 +30,13 @@ A 是 `EnableAspNetCoreTracing`，H 是 `EnableHttpClientTracing`，R 是 `Enabl
 provider 创建由信号决定：A 或 H 需要 tracing；R 需要 metrics。插桩不创建任何导出目标。
 运行时采集/导出配置是独立的；测试仅对 R 行使用手动的内存读取器。
 
-## 可执行的本地接线
+<a id="可执行的本地接线"></a>
+
+## 可执行的本地集成示例
 
 在 ASP.NET Core 应用中引用 `ServiceMantle.Diagnostics`（它会带来 `ServiceMantle.Web` 集成）。
 本本地示例使用显式固定的 Ready 快照来隔离组合。真实服务必须提供自己的、可取消感知的
-`IServiceHealthSnapshotSource`，反映其权威的安装、migration 和数据库状态；注册插桩不会
+`IServiceHealthSnapshotSource`，反映由该来源确定的安装、migration 和数据库状态；注册插桩不会
 提供或持久化该状态。
 
 ```csharp

@@ -2,7 +2,7 @@
 
 这是一个由消费方自有的验收宿主，不是生产模板。它刻意只暴露 `GET /`，返回
 `status: skeleton`。默认情况下，启动不创建数据库、不执行迁移、不运行 setup contributor、
-不预配管理员，也不启用管理/健康/遥测 endpoint。一个 opt-in 的启动部署 gate 可以显式打开；
+不创建初始管理员，也不启用管理/健康/遥测 endpoint。一个 opt-in 的启动部署 gate 可以显式打开；
 除非下面每一项输入都已声明，否则它是关闭的。
 
 ```bash
@@ -17,16 +17,16 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- --urls http://127
 
 | 消费方自有组件 | 当前边界 | 后续 |
 | --- | --- | --- |
-| `ReferenceApplication` | 公开的组合接缝，一条骨架路由 | 由集成任务共享 |
+| `ReferenceApplication` | 公开的应用构建入口，一条骨架路由 | 由集成任务共享 |
 | `ReferenceDbContext` 与 `Data/Migrations` | 一张 workspace 表；迁移、保存与事务由调用方拥有 | #160 |
 | `Database/Sqlite/` | opt-in 的 SQLite 启动部署 gate 与消费方自有的迁移 executor | #112 / #113 |
 | `Database/PostgreSql/` | 消费方自有的 PostgreSQL 迁移 executor、单事务初始化 executor 与 opt-in 启动部署 gate | #497 / #160 |
 | `ReferenceSetupContributor` | 只读校验与仅 staging 的示例；启动时绝不调用 | [#175](https://github.com/philfanzhou/ServiceMantle/issues/175) |
-| `ReferenceSettingDefinitions` | 三个设置项定义（含一个敏感示例键 `workspace.integration_token`）；只读查询与事务更新接线见下文 | #518 已交付查询面；更新面 #519 |
+| `ReferenceSettingDefinitions` | 三个设置项定义（含一个敏感示例键 `workspace.integration_token`）；只读查询与事务更新集成见下文 | #518 已交付查询面；更新面 #519 |
 | `ReferenceReadinessContributor` | gate 关闭路径的唯一占位 contributor，返回 `reference.health_not_integrated`；绝不声称就绪 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 在 PostgreSQL 路径改接业务 contributor |
-| `Health/PostgreSql/` | 仅当 PostgreSQL 启动 gate 打开时接线：`ReferencePostgreSqlHealthSnapshotSource` 每次请求重读安装行，`ReferencePostgreSqlWorkspaceReadinessContributor` 提供业务就绪否决 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) / [#388](https://github.com/philfanzhou/ServiceMantle/issues/388) 交付 |
+| `Health/PostgreSql/` | 仅当 PostgreSQL 启动 gate 打开时注册：`ReferencePostgreSqlHealthSnapshotSource` 每次请求重读安装行，`ReferencePostgreSqlWorkspaceReadinessContributor` 提供业务就绪否决 | 由 [#156](https://github.com/philfanzhou/ServiceMantle/issues/156) / [#388](https://github.com/philfanzhou/ServiceMantle/issues/388) 交付 |
 | `ExternalManagementIdentityPlaceholder` | gate 关闭路径的未配置 provider；PostgreSQL 路径改用 `ReferenceExternalManagementIdentityProvider`（部署配置的操作员目录） | 由 [#109](https://github.com/philfanzhou/ServiceMantle/issues/109) 交付 |
-| `Logging/` | opt-in 的 Serilog Console 接线与一行已清理的请求日志 | 由 [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) 交付 |
+| `Logging/` | opt-in 的 Serilog Console 配置与一行已清理的请求日志 | 由 [#157](https://github.com/philfanzhou/ServiceMantle/issues/157) / [PR #307](https://github.com/philfanzhou/ServiceMantle/pull/307) 交付 |
 | `Telemetry/` | opt-in 的基础 ASP.NET Core、HttpClient 与运行时插桩（#158）；opt-in 的阶段指标发布（#521）；opt-in 的管理员会话授权 Prometheus 抓取端点（#520）；opt-in 的 OTLP traces/metrics 导出（#522） | 见下文 |
 
 EF SQLite 是消费方的模型载体。启动 gate 关闭时，ServiceMantle 的 SQLite provider 完全不注册：
@@ -60,7 +60,7 @@ gate。打开时：
 任何上界。样例构建自己的 SQLite 连接——非池化、私有缓存、没有管理连接或密码输入——并且 EF
 使用 `Mode=ReadWrite`，因此 EF 默认的 `ReadWriteCreate` 绝不可能在 gate 背后创建文件。
 
-gate 随后以固定顺序运行，每一步都失败关闭：部署模式先从捕获的能力声明校验；一次只读观察判定
+gate 随后以固定顺序运行，任何一步失败都停止启动：部署模式先从捕获的能力声明校验；一次只读观察判定
 目标是否存在；除非显式允许 preparation，缺失的目标会中止启动；消费方自己的 scoped executor
 检查、至多迁移一次、再检查。对同一 canonical target 的并发调用会取得一个横跨观察与迁移的
 进程内回合，因此一个调用绝不会在兄弟调用的迁移正在写入目标时观察它。只有成功的迁移才允许
@@ -112,7 +112,7 @@ gate。全部输入在 `Build` 之前读取并固定，不可用的输入在任�
 注册或数据库副作用之前抛出，消息只含两个设置名。两个 gate 都未启用时，默认行为完全不变。
 固定预算：准备调用 10 秒，迁移锁获取 30 秒；迁移执行与启动总时长没有任何上界。
 
-gate 随后以固定顺序运行，每一步都失败关闭：
+gate 随后以固定顺序运行，任何一步失败都停止启动：
 
 1. 一次只读观察判定目标是否存在。缺失且未授权 → `TargetMissing`，数据库仍不存在；缺失且
    已授权 → 一次准备调用创建空库，失败 → `PreparationFailed`。准备成功后不再重新观察，
@@ -136,7 +136,7 @@ provider 消息或异常文本。只有 `Ready` 允许宿主完成启动——ga
 
 本 gate **不**保证：不自动接管任意旧库（缺安装行或安装行无效一律关闭失败）；不回滚已提交的
 迁移或 `CREATE DATABASE`；不保证 gate 结果之后的状态新鲜度（实时健康见下文的
-[阶段 Live/Ready 健康接线](#postgresql-live-ready-health)）；不做双实例最终 E2E（
+[阶段 Live/Ready 健康能力集成](#postgresql-live-ready-health)）；不做双实例最终 E2E（
 [#165](https://github.com/philfanzhou/ServiceMantle/issues/165)）；不保证行政连接端点的 TLS
 与网络信任。调用方责任：可信的 PostgreSQL 端点、最小权限的运行时账户、首次准备之后移除
 行政凭据、部署侧负责备份。
@@ -145,7 +145,7 @@ provider 消息或异常文本。只有 `Ready` 允许宿主完成启动——ga
 
 ## 一次性首次安装（Setup）
 
-当且仅当上面的 PostgreSQL 启动 gate 被显式打开时，样例接线共享 Setup 条目与自己的安装
+当且仅当上面的 PostgreSQL 启动 gate 被显式打开时，样例注册共享 Setup 条目与自己的安装
 Contributor。gate 关闭时 `/management/v1/setup` 为 404，没有签发器，控制台没有横幅。
 
 首次启动（gate 解析为 `PendingSetup`）在标准输出打印一次：
@@ -157,7 +157,7 @@ expires at <UTC ISO-8601>
 for a new code later run with --rotate-setup-code
 ```
 
-明文只经过可替换的 `ReferenceSetupCodeOutput` 接缝（默认 `Console.Out`），从不经过
+明文只经过可替换的 `ReferenceSetupCodeOutput` 输出接口（默认 `Console.Out`），从不经过
 `ILogger`；数据库只存摘要。`PendingSetup` 期间重启打印固定提示，不轮换；`CreateAsync` 的
 乐观并发保证两实例同时首签时至多一份有效材料。code 过期或丢失时运行
 `--rotate-setup-code`（同样的 gate 参数，在 Web 宿主之前执行）：成功打印同一横幅并退出
@@ -172,9 +172,11 @@ for a new code later run with --rotate-setup-code
 
 <a id="postgresql-management-session"></a>
 
-## 管理会话与外部身份接线
+<a id="管理会话与外部身份接线"></a>
 
-当且仅当 PostgreSQL 启动 gate 被显式打开时，样例在同一个分支内接线共享管理会话。gate 关闭
+## 管理会话与外部身份集成
+
+当且仅当 PostgreSQL 启动 gate 被显式打开时，样例在同一个分支内注册共享管理会话。gate 关闭
 的所有路径逐字不变：没有 cookie 方案、没有管理路由、placeholder provider 仍是唯一的身份注册。
 
 外部身份来自部署配置，不是服务自建的本地管理员：
@@ -209,14 +211,18 @@ exporter 与配置管理 API 属于各自的后续任务。调用方责任：通
 与双实例进程验收
 [`ReferenceManagementCrossInstanceTests`](../../tests/ServiceMantle.ReferenceService.Tests/)。
 
-## 阶段 Live/Ready 健康接线
+<a id="阶段-liveready-健康接线"></a>
 
-当且仅当上面的 PostgreSQL 启动 gate 被显式打开时，样例才接线健康能力；**不新增任何配置键**。
+<a id="postgresql-live-ready-health"></a>
+
+## 阶段 Live/Ready 健康能力集成
+
+当且仅当上面的 PostgreSQL 启动 gate 被显式打开时，样例才注册健康能力；**不新增任何配置键**。
 gate 关闭的所有路径（默认、SQLite、日志、遥测开关）行为完全不变：`/health*` 仍返回 404，
 `ReferenceReadinessContributor` 仍是唯一的 readiness contributor，也不注册快照来源或
 `IDbContextFactory<ReferencePostgreSqlDbContext>`。
 
-接线复用 gate 已注册的目标连接 factory 与 Ready 结果，注册三样东西：
+健康能力复用 gate 已注册的目标连接 factory 与 Ready 结果，注册三样东西：
 
 - `ReferencePostgreSqlHealthSnapshotSource`（单例，`IServiceHealthSnapshotSource`）：每次
   `GetSnapshotAsync` 先确认 gate 结果为 Ready，再从 `IDbContextFactory<ReferencePostgreSqlDbContext>`
@@ -224,7 +230,7 @@ gate 关闭的所有路径（默认、SQLite、日志、遥测开关）行为完
   `FindAsync(serviceId)`，随后释放该 context。它不缓存、不后台轮询、不重试、不写入、也不捕获
   请求 scope 的 context，因此安装行的变化在下一次请求即被反映，无需重启。
 - `mantle.AddServiceMantleHealthEndpoints()`：使用库的默认探测预算，映射 `/health/live`、
-  `/health/ready` 与 `/health`。不接线 Phase Gate、管理 API 或安装状态端点。
+  `/health/ready` 与 `/health`。不注册 Phase Gate、管理 API 或安装状态端点。
 - `ReferencePostgreSqlWorkspaceReadinessContributor`（经 `AddServiceReadinessContributor<T>`）：
   业务就绪否决，替换占位 contributor；两者同为 `Order 100`，因此 PostgreSQL 路径只注册业务者，
   以免 `HealthStartupValidator` 因重复 order 拒绝启动。
@@ -236,7 +242,7 @@ gate 关闭的所有路径（默认、SQLite、日志、遥测开关）行为完
 `errorCode` 为 null。
 
 完整的结果矩阵（入口 × 外部输入 × 事件 → 唯一结果）以
-[#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 的「语义模型」一节为权威，
+[#156](https://github.com/philfanzhou/ServiceMantle/issues/156) 的「语义模型」一节为准，
 本节不复制第二套规则。其要点：`/health/live` 恒 200 且不读数据库；安装行 `PendingSetup` →
 503 `phase: pendingSetup`；`Completed` 且至少一个 workspace → 200 `ready`；`Completed` 且
 workspace 为空 → 503 `reference.workspace_missing`；workspace 不可读 →
@@ -245,7 +251,7 @@ workspace 为空 → 503 `reference.workspace_missing`；workspace 不可读 →
 预算 → 503 `health.probe_timeout`；调用方取消 → 以请求 token 的 `OperationCanceledException`
 结束，不写出响应。
 
-本接线**不**保证：请求时刻之后的状态新鲜度，或跨实例的原子阶段转换与一致观察（
+本次集成**不**保证：请求时刻之后的状态新鲜度，或跨实例的原子阶段转换与一致观察（
 [#173](https://github.com/philfanzhou/ServiceMantle/issues/173)）；`migrationStatus` 在宿主生命
 周期内恒为 `succeeded`，启动后由其他实例或外部 DDL 推进的 schema 变化只有当安装行读取因此失败
 时才表现为 `health.probe_failed`；不区分「数据库不可达」与「安装行缺失/无效」——两者都是无快照的
@@ -260,9 +266,11 @@ workspace 为空 → 503 `reference.workspace_missing`；workspace 不可读 →
 
 <a id="reference-consul-registration"></a>
 
-## 可选 Consul 注册接线
+<a id="可选-consul-注册接线"></a>
 
-`ReferenceService:Consul:Enabled` 默认为 `false`；只有显式的 `true` 才接线，且要求 PostgreSQL
+## 可选 Consul 注册集成
+
+`ReferenceService:Consul:Enabled` 默认为 `false`；只有显式的 `true` 才注册 Consul 能力，且要求 PostgreSQL
 启动 gate 同时打开（Consul 的全部运行输入来自 gate 数据库拥有的设置快照），否则在任何注册
 之前失败，消息只含两个配置键。可选的 `ReferenceService:InstanceId`（缺省
 `reference-local`）在 `AddServiceMantle` 之前校验，多实例部署必须为每个实例提供不同值。
@@ -275,7 +283,7 @@ address/port」的更新被 `POST /management/v1/settings` 直接拒绝。就绪
 `reference-service:<instanceId>` 注册恰一次；失去 Ready 或宿主停止时对同一 ID 注销。
 
 两个已知边界由调用方负责：其一，`discovery.*` 全部 `requiresRestart`，运行中写入的新值重启
-后才生效；其二，开关开启期间写入的 `discovery.*` 行在关闭开关（或回滚本接线）前必须删除，
+后才生效；其二，开关开启期间写入的 `discovery.*` 行在关闭开关（或回滚本次集成）前必须删除，
 否则它们成为未知键并使设置查询/更新与快照激活失败。完整矩阵、非保证与测试见
 [docs/testing/reference-consul.md](../../docs/testing/reference-consul.md)。
 
@@ -295,7 +303,7 @@ address/port」的更新被 `POST /management/v1/settings` 直接拒绝。就绪
 [`ReferencePostgreSqlInstallationInitializationTests`](../../tests/ServiceMantle.ReferenceService.Tests/)。
 
 身份占位符不会为不可用的外部系统编造未认证成功的故事，不发出凭据、不联系网络服务、也不创建
-本地管理员。本样例中不存在本地管理员实体或预配路径。
+本地管理员。本样例中不存在本地管理员实体或初始化路径。
 
 配置管理事务审计仍在
 [#177](https://github.com/philfanzhou/ServiceMantle/issues/177)，首次安装事务审计在
@@ -305,7 +313,9 @@ address/port」的更新被 `POST /management/v1/settings` 直接拒绝。就绪
 代理、生产安全加固、API 兼容性、最终管理路由或多实例 E2E 行为不做任何保证。它的启动状态不是
 健康/就绪声明。
 
-## 日志安全接线
+<a id="日志安全接线"></a>
+
+## 日志安全配置
 
 `ReferenceService:Logging:Enabled` 是显式布尔开关，默认为 `false`。缺失或无法解析的值会使
 ServiceMantle Serilog 宿主、敏感 Header 注册表与请求日志保持未注册；该值在 `Build` 之前固定，
@@ -329,13 +339,13 @@ redaction 标记整体替换，而拒绝列表之外的 Header——`User-Agent`
 [结构化日志安全契约](../../LOGGING_SECURITY.md)的自由文本规则投影，因此确实会进入日志行。
 只有该契约识别的形状才会在那里被 redact。通过 `AddSensitiveHeaders` 添加 Header 名可以把它的
 值挡在外面。调用方取消保持为取消，绝不会被吞掉。phase gate、健康 endpoint、管理路由与速率
-限制在这里保持未接线；基础遥测有自己的开关，见下文，两个开关互不改变。
+限制在这里保持未注册；基础遥测有自己的开关，见下文，两个开关互不改变。
 
 安全边界就是[结构化日志安全契约](../../LOGGING_SECURITY.md)中记录的那个。被拒绝的结构化字段
 名、被拒绝的 Header、受支持的敏感值类型以及显式识别的自由文本形状会被 redact；未标注的不透明
 秘密、从不经过清理器或 projector 的值、第三方 provider、任意框架事件与远程系统不在覆盖范围
 内。启用日志不创建数据库、不运行迁移、不调用 setup、也不保存消费方的 `DbContext`。测试使用的
-失败、拒绝与异常路由由测试在公开的 `Build` 接缝上映射；运行中的样例只保留骨架路由。
+失败、拒绝与异常路由由测试在公开的 `Build` 构建入口上映射；运行中的样例只保留骨架路由。
 
 ## 基础遥测插桩
 
@@ -364,7 +374,7 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- \
 在构建输出中。关闭开关会阻止 ServiceMantle 拥有的 provider 与 listener 被注册；它不会从发布
 输出中移除那些程序集，也不构成 .NET 进程不运行任何线程、定时器或 socket 的主张。
 
-验收矩阵以及本接线不保证的事项完整清单，见
+验收矩阵以及本次集成不保证的事项完整清单，见
 [`docs/testing/reference-telemetry.md`](../../docs/testing/reference-telemetry.md)。
 
 ```bash
@@ -374,10 +384,10 @@ dotnet test --project tests/ServiceMantle.ReferenceService.Tests -c Release
 ### 安装阶段指标
 
 `ReferenceService:Telemetry:PhaseMetrics:Enabled` 是第二个显式布尔开关，默认为 `false`，只能与
-PostgreSQL 启动 gate 一起打开——没有 gate 就没有权威阶段，`CreateBuilder` 会在任何注册与副作用
+PostgreSQL 启动 gate 一起打开——没有 gate 就无法从安装行确定阶段，`CreateBuilder` 会在任何注册与副作用
 之前拒绝并只点名两个配置键。
 
-打开时，样例注册宿主拥有的 `ServiceMetrics` 发布器，并把权威健康 source
+打开时，样例注册宿主拥有的 `ServiceMetrics` 发布器，并把唯一健康快照来源
 `ReferencePostgreSqlHealthSnapshotSource` 包进透明的装饰器
 `ReferencePhaseMetricsSnapshotSource`：phase gate 与健康 endpoint 的每次读取都顺带发布阶段指标。
 成功观察发布观察到的阶段；任何非调用方取消的失败（gate 未 Ready、行缺失、数据库不可达）发布
@@ -386,7 +396,7 @@ PostgreSQL 启动 gate 一起打开——没有 gate 就没有权威阶段，`Cr
 周期性健康探测（例如 `/health/ready`）。
 
 关闭时注册与之前逐字一致，容器中没有 `ServiceMetrics`，`IServiceHealthSnapshotSource` 仍直接
-解析为权威 source。与基础遥测开关互相独立：阶段指标开启会注册自己的 meter provider，不要求
+解析为唯一健康快照来源。与基础遥测开关互相独立：阶段指标开启会注册自己的 meter provider，不要求
 `ReferenceService:Telemetry:Enabled`。
 
 ```bash
@@ -454,7 +464,9 @@ dotnet run --project samples/ServiceMantle.ReferenceService -- \
 验收矩阵见
 [`docs/testing/reference-telemetry.md`](../../docs/testing/reference-telemetry.md)。
 
-## 设置项只读查询接线
+<a id="设置项只读查询接线"></a>
+
+## 设置项只读查询集成
 
 PostgreSQL 启动 gate 打开时，`Build` 在受保护的 management API v1 组上映射两个只读 endpoint：
 `GET /management/v1/settings/definitions` 返回设置项目录，`GET /management/v1/settings` 返回同一
@@ -463,7 +475,7 @@ PostgreSQL 启动 gate 打开时，`Build` 在受保护的 management API v1 组
 关闭时容器中没有 `IServiceSettingStore`、`IServiceSettingRootKeySource` 与查询服务，路由集合仍
 只有 `/`。
 
-接线完全使用公开包类型：store 是 `EfCoreServiceSettingStore<ReferencePostgreSqlDbContext>`，
+集成完全使用公开包类型：store 是 `EfCoreServiceSettingStore<ReferencePostgreSqlDbContext>`，
 经 gate 已注册的 `IDbContextFactory` 创建短生命周期 context（与健康快照 source、就绪
 contributor 同一方式）；快照栈由 `AddServiceMantleSettingSnapshots()` 绑定。注册顺序是一个不变
 量：样例无条件注册 `ServiceSettingDefinitionRegistry` 在前，快照注册的 `TryAddSingleton` 在后，
@@ -483,7 +495,9 @@ root key 复用 `ReferenceService:Management:RootKey`，不新增配置键：库
 种。库中密文以另一把 key 加密时，`GET /settings` 是固定 `503
 {"errorCode":"management.settings.unavailable"}`，定义查询仍 200。
 
-## 设置项事务更新接线
+<a id="设置项事务更新接线"></a>
+
+## 设置项事务更新集成
 
 同一 gate 打开时，`Build` 还在同一个受保护组上映射批量更新 endpoint
 `POST /management/v1/settings`。endpoint 本身来自公开包的

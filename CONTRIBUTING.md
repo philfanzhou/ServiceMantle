@@ -43,7 +43,7 @@
   去掉 RC 后缀，发布 `0.3.1`，不再递增 patch。
 - `0.3.1` 正式发布后，下一个发布周期从 `0.3.2-rc.1` 开始。
 - 同一版本的失败重跑保持原 tag、版本和源码提交，不算版本递增；草稿、未发布 tag 与 edge
-  artifact 不作为稳定版本基线。已发布版本不得删除、覆盖或重新指向其他提交。
+  构建输出不作为稳定版本基线。已发布版本不得删除、覆盖或重新指向其他提交。
 
 全部注册包继续使用同一版本和 tag；发布验证及 `nuget.org` environment 人工审批按
 [发布指南](RELEASING.md) 执行。
@@ -135,7 +135,7 @@ resolve 后调用、catch），以及它的契约里是否含有该产品特有�
   随能力命名住在 `ServiceMantle.Diagnostics.Export.*`。
 
 可断言的形式：消费方源码中不允许出现适配包自有 namespace 的 `using`。#570 之后适配包自有
-namespace 已按能力命名，因此这条以「守卫过的名字集合」断言：已退役的技术选型命名 namespace
+namespace 已按能力命名，因此测试检查以下命名空间名称集合：已退役的技术选型命名 namespace
 （`ServiceMantle.AspNetCore`、`ServiceMantle.Consul`、`ServiceMantle.Serilog`、
 `ServiceMantle.OpenTelemetry`、`ServiceMantle.Persistence.EntityFrameworkCore`）不得复活，且归
 ASP.NET Core 适配包独有的 `ServiceMantle.Web` 前缀（核心包无此裸 namespace 或子空间类型）同样

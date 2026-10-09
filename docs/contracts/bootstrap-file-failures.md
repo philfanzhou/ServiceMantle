@@ -20,7 +20,7 @@ provider。它只定义一种分类。它不定义 HTTP endpoint、状态码映�
 | `TargetMissing` | 2 | 操作要求目标已存在，而存储通过打开目标并被告知它不在那里，证明了目标缺失。 |
 
 分类在 `BootstrapFileStore` 内部形成，位于存储决定某个操作为何失败的那个点上。
-`BootstrapConfigurationManager` 原样透传异常，因此 `Create`/`Update` 用例报告与相应存储调用
+`BootstrapConfigurationManager` 将异常原样向调用方传播，因此 `Create`/`Update` 用例报告与相应存储调用
 相同的值。
 
 ## 每个操作报告什么

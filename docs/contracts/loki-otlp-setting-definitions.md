@@ -10,9 +10,9 @@
 **严格管理更新规则**；键名、值类型与敏感性由库固定；不新增任何读取 `IConfiguration` 的路径。
 
 传输 scheme 不再是裁决对象：`http://` 与 `https://` 端点在两条路径上都直接可用，无任何开关。
-`loki.allow_insecure_http`（#663 引入）与 `discovery.allow-insecure-http`（#591 引入）随传输闸口
-移除一并退休；存量快照必须先删除退休键行再升级（loader 拒绝 unknown key），删除示例见
-README 的 `ConsulDiscoverySettingMigration.TryConvert` 内存转换清单（退休键在转换中被丢弃）。
+`loki.allow_insecure_http`（#663 引入）与 `discovery.allow-insecure-http`（#591 引入）在移除传输
+协议限制时一并删除；存量快照必须先删除这些键对应的行再升级（loader 拒绝 unknown key），删除
+示例见 README 的 `ConsulDiscoverySettingMigration.TryConvert` 内存转换清单（已移除的键在转换中被丢弃）。
 
 ## 键表
 
@@ -85,7 +85,7 @@ A 缺失不自动选择无认证；改为无认证必须同一版本 batch 设�
 sink。重复等价注册幂等，不同有效端点、认证模式或 batch 配置仍按 `loki.conflicting_registration`
 拒绝；同固定名 resolver 重复捕获值仍保留首次值，不新增凭据热旋转保证。
 
-存量快照若存有已退休的 `loki.allow_insecure_http` 行：升级前先在管理更新中删除该键并 commit
+存量快照若存有已移除的 `loki.allow_insecure_http` 行：升级前先在管理更新中删除该键并 commit
 （loader 对 unknown key 的拒绝是预期边界），之后 `http://` 端点直接可用。无需 schema/migration，
 旧 keys、purpose、route、包 ID 和 namespace 均不变。发布及消费方升级独立执行，产品只用正式官方包。
 

@@ -50,7 +50,9 @@ InspectionFailed）。`Message` 由类型内部以「一个已校验标识符 + 
   决定）；已应用迁移 id 与快照的相互一致性归读取器；不做分类与回填决策。
 - 调用方责任：提供同构的期望模型（schema 命名与读取器产出的标识符对齐）；自行决定差异的处置。
 
-## 后续切片归属
+<a id="后续切片归属"></a>
+
+## 后续任务归属
 
 PostgreSQL 证据读取器已由 `ServiceMantle.Database.PostgreSql` 的
 `ServiceMantle.Database.PostgreSql.Migration` 命名空间交付：`PostgreSqlSchemaEvidenceReader`

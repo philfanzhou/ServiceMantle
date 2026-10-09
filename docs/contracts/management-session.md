@@ -116,7 +116,7 @@ cookie——无关的 cookie 与更早的管理 cookie 一律如此——会以�
 带过期时间的 ticket 会应答固定的 unavailable 结果，而不是一个猜测的值。
 
 operator resolver 与 `AuthenticateAsync` 各有一个完成检查点：resolver 或认证操作在
-`RequestAborted` 已取消之后落定——正常返回 `Resolved`、`Unauthenticated`、`ClaimsInvalid`、
+`RequestAborted` 已取消之后结束调用——正常返回 `Resolved`、`Unauthenticated`、`ClaimsInvalid`、
 null、合法 ticket、缺失过期时间的 ticket、`NoResult`，或抛出普通异常、内部取消——都不再交付
 `Current`/`Forbid`/`Unavailable` 普通结果，也不再启动下一个依赖，而是以携带原请求 token 的
 安全取消结束。未取消时，resolver 的故障仍按原样向上传播，结果分类保持不变。

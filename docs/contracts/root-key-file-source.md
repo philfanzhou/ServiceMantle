@@ -27,7 +27,7 @@ DbContext/事务、不负责migration。敏感流为RNG/文件→Resolve→calle
 文件严格32bytes canonical Base64，44 ASCII字符，允许唯一末尾LF或CRLF；最多读取47bytes，超过46拒绝，
 不trim任意空白。目标read前须positively证明普通文件，FIFO/socket/device/目录/悬空symlink不打开读取。
 拒UNC/device/ADS/NUL/URI/dot组件，以及target、parent、祖先的symlink/reparse；不得以File.Exists=false推定可创建。
-支持Linux/macOS/Windows x64/arm64私有native metadata helper；未知平台/architecture/能力失败关闭。
+支持Linux/macOS/Windows x64/arm64私有native metadata helper；未知平台/architecture/能力均拒绝读取或创建根密钥。
 
 已有Unix专用父目录必须owner-only、有owner read/execute，可无write；若直接父目录叶缺失且其父存在，只创建该叶0700并重新验证。
 不递归悄建目录树、不chmod已有目录。既有文件0400/0600，新temp在创建当下0600，不能写secret后chmod。
@@ -37,7 +37,7 @@ Windows继承caller配置的ACL，仍验证普通对象与reparse；真实Create
 ## 保证与非保证
 
 在已声明普通本地文件系统、受信任专用目录内，复用合法文件；并发首次创建只发布一个完整target，成功者返回胜者。
-格式/权限/metadata失败关闭，不重置损坏文件。同步API没有CancellationToken/async完成取消协议，文件handle在返回/失败前释放。
+格式/权限/metadata不符合要求时拒绝读取或创建根密钥，不重置损坏文件。同步API没有CancellationToken/async完成取消协议，文件handle在返回/失败前释放。
 
 不保证具有目录写权限的恶意外部进程、校验后的替换/恶意hardlink、网络/同步/特殊挂载原子和durability、断电目录entry fsync、
 强杀或拒删下temp清理、Windows ACL等价Unix、轮换/分发、string清零、caller显式记录/反射序列化返回值。

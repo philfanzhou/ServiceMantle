@@ -72,5 +72,5 @@ migration 边界。本文档只描述它的一个性质：调用方的取消在�
   也没有任何跨 provider 的 SPI。
 
 同一文件还保留了一个走真实文件路径的用例——目标文件缺失时被拒绝且不创建任何东西——因此这个
-测试接缝不会悄悄变成唯一被测试的东西。`ReferenceSqliteMigrationTests` 和
+测试替身入口不会悄悄变成唯一被测试的东西。`ReferenceSqliteMigrationTests` 和
 `ReferenceSqliteStartupTests` 仍然是有限历史矩阵、启动门和部署契约的所有者。

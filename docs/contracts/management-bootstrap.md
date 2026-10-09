@@ -7,7 +7,9 @@ Bootstrap management 条目是写入本实例自己的本地 Bootstrap 文件的
 条目基线、实例本地的 `BootstrapFileStore` 及其 `BootstrapConfigurationManager`、一次性凭据
 store，以及进程本地的重启闩锁——并把它们的有限结果投射为固定响应。
 
-## 接线
+<a id="接线"></a>
+
+## 注册示例
 
 ```csharp
 builder.Services

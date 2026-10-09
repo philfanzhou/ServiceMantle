@@ -21,7 +21,7 @@
    [GitHub Release](#github-release) 一节）；RC 等候选版本只发布 NuGet 包。
 
 推送到 `main` 会运行相同的验证并产生相同的产物，但不发布任何东西。它们的版本号是
-`0.0.0-edge.<run>.<attempt>`，只作为 workflow artifact 存在。
+`0.0.0-edge.<run>.<attempt>`，仅作为工作流保存的构建输出。
 
 ## 版本规则
 
@@ -63,7 +63,7 @@ NuGet 会丢弃它，`v1.0.0+a` 和 `v1.0.0+b` 会碰撞同一个包槽位。
 其中任何一项失败或被取消，发布 job 都不会运行。该 job 没有任何 `always()` 或 `failure()`
 条件可以推翻这一点。
 
-推送的包是从 `publish` job 下载的 artifact，不是重新构建的，因此到达 NuGet.org 的内容与这些
+实际推送的是 `publish` job 下载的 NuGet 包，不是重新构建的，因此到达 NuGet.org 的内容与这些
 关卡检查过的内容逐字节一致。
 
 ## 失败与重跑
@@ -151,4 +151,4 @@ NuGet.org API key，因此本仓库不存储任何长寿命的发布秘密。
 3. 一个仓库变量 `NUGET_USER`，存放该 NuGet.org 用户名。登录 action 会把它传给 token 交换。
 4. 一个名为 `nuget.org` 的 GitHub environment。它必须配置必需 reviewer：任何版本——rc
    或正式版——推送 NuGet.org 前都会在此暂停，等待对 tag 与版本号的人工确认。这是刻意的
-   门禁，不要移除；单人维护仓库需保持「禁止自批准」关闭，否则触发发布的同一人无法放行。
+   人工审批要求，不要移除；单人维护仓库需保持「禁止自批准」关闭，否则触发发布的同一人无法放行。

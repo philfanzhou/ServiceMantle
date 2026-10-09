@@ -22,8 +22,8 @@ CI 与发布调用 `ServiceMantle.ReleaseTool`；它们不包含按包的构建�
 `artifacts/test-diagnostics/<repository-relative-project-path>/test` 或 `list-tests` 下启用
 同步 MTP 诊断日志，因此在执行或进程退出期间挂死的 runner 会在 CI job 超时之前失败，同时保留
 已写出的诊断输出。测试 job 失败或被取消时，CI 上传该目录；在创建诊断之前就失败的运行不会让
-上传步骤变成另一个失败。从 workflow run 下载 `test-diagnostics-<run-id>-<attempt>` artifact
-来检查 `.diag` 文件。目录与 artifact 名只由登记的项目路径和 GitHub run 元数据派生，绝不来自
+上传步骤变成另一个失败。从 workflow run 下载 `test-diagnostics-<run-id>-<attempt>` 诊断文件归档
+来检查 `.diag` 文件。目录与诊断文件归档名只由登记的项目路径和 GitHub run 元数据派生，绝不来自
 登记的测试环境取值。
 
 登记的测试调用运行在专属的 POSIX 进程组或 Windows job 内。一个小的 ReleaseTool host 在启动

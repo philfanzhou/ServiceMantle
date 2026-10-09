@@ -32,7 +32,7 @@ application-lock 函数。MySQL 和 MariaDB 使用公开的命名锁函数，不
 `INFORMATION_SCHEMA.SCHEMATA` 中可见。
 
 缺失的目标和不可访问的目标绝不被当作服务器身份的证明。如果认证、权限或连接性阻止了验证，
-准备以失败关闭，返回相应的现有安全错误码。已完成但为否定或不支持的证明返回
+准备被拒绝，返回相应的现有安全错误码。已完成但为否定或不支持的证明返回
 `database_target_preparation.invalid_target`。调用方取消优先于返回的拒绝或超时，并被净化。
 任何结果或诊断都不包含目标/管理凭据、endpoint 身份、质询值或驱动错误。
 
