@@ -68,6 +68,258 @@ public sealed class SqliteWalRecoveryTests
         Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
     }
 
+    [Theory]
+    [InlineData("observe")]
+    [InlineData("prepare")]
+    public async Task Clean_WAL_without_sidecars_is_refused_by_default_and_admitted_only_with_opt_in(string entry)
+    {
+        using var directory = new TestDirectory();
+        var path = Path.Combine(directory.Path, "clean.db");
+        await CreateCleanWalAsync(path);
+        var target = Target(path);
+
+        var disabled = await new SqliteDatabaseTargetPreparationProvider().ObserveAsync(target, Token);
+        Assert.Equal(DatabaseTargetObservationStatus.TargetUnreachable, disabled.Status);
+        Assert.True(disabled.TargetExists);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, disabled.ErrorCode);
+
+        var access = new CountingAccess(new SqliteDatabaseAccess());
+        var provider = new SqliteDatabaseTargetPreparationProvider(
+            new SqliteTargetFileSystem(), access, recoveryOptions: new(true, Budget));
+        if (entry == "prepare")
+        {
+            var prepared = await provider.PrepareAsync(DatabaseTargetPreparationRequest.ForFile(target), Budget, Token);
+            Assert.True(prepared.Succeeded);
+            Assert.Equal(DatabaseTargetPreparationOutcome.AlreadyExists, prepared.Outcome);
+        }
+        else
+        {
+            var observed = await provider.ObserveAsync(target, Token);
+            Assert.Equal(DatabaseTargetObservationStatus.TargetConnectable, observed.Status);
+        }
+
+        Assert.Equal(1, access.Recoveries);
+        Assert.Equal(1, access.ImmutableObservations);
+        Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+        var header = await File.ReadAllBytesAsync(path, Token);
+        Assert.Equal((byte)2, header[18]);
+        Assert.Equal((byte)2, header[19]);
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ConnectionString))
+        {
+            await connection.OpenAsync(Token);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA user_version";
+            Assert.Equal(42L, await command.ExecuteScalarAsync(Token));
+            command.CommandText = "SELECT count(*) FROM retained";
+            Assert.Equal(1L, await command.ExecuteScalarAsync(Token));
+        }
+    }
+
+    [Fact]
+    public async Task Clean_WAL_intake_is_idempotent_without_sidecar_residue()
+    {
+        using var directory = new TestDirectory();
+        var path = Path.Combine(directory.Path, "idempotent.db");
+        await CreateCleanWalAsync(path);
+        var access = new CountingAccess(new SqliteDatabaseAccess());
+        var provider = new SqliteDatabaseTargetPreparationProvider(
+            new SqliteTargetFileSystem(), access, recoveryOptions: new(true, Budget));
+
+        var first = await provider.ObserveAsync(Target(path), Token);
+        var second = await provider.ObserveAsync(Target(path), Token);
+
+        Assert.Equal(DatabaseTargetObservationStatus.TargetConnectable, first.Status);
+        Assert.Equal(DatabaseTargetObservationStatus.TargetConnectable, second.Status);
+        Assert.Equal(2, access.Recoveries);
+        Assert.Equal(2, access.ImmutableObservations);
+        Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+        var header = await File.ReadAllBytesAsync(path, Token);
+        Assert.Equal((byte)2, header[18]);
+        Assert.Equal((byte)2, header[19]);
+    }
+
+    [Fact]
+    public async Task Clean_WAL_eligibility_failure_fails_closed_without_a_read_write_open()
+    {
+        using var directory = new TestDirectory();
+        var path = Path.Combine(directory.Path, "ineligible.db");
+        await CreateCleanWalAsync(path);
+        UnixFileMode? mode = null;
+        FileAttributes? attributes = null;
+        if (OperatingSystem.IsWindows())
+        {
+            attributes = File.GetAttributes(path);
+            File.SetAttributes(path, FileAttributes.ReadOnly);
+        }
+        else
+        {
+            mode = File.GetUnixFileMode(path);
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        }
+
+        try
+        {
+            var access = new CountingAccess(new SqliteDatabaseAccess());
+            var provider = new SqliteDatabaseTargetPreparationProvider(
+                new SqliteTargetFileSystem(), access, recoveryOptions: new(true));
+            var observed = await provider.ObserveAsync(Target(path), Token);
+
+            Assert.Equal(DatabaseTargetObservationStatus.TargetUnreachable, observed.Status);
+            Assert.True(observed.TargetExists);
+            Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, observed.ErrorCode);
+            Assert.Equal(0, access.Recoveries);
+            Assert.Equal(0, access.ImmutableObservations);
+            Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+        }
+        finally
+        {
+            if (OperatingSystem.IsWindows()) File.SetAttributes(path, attributes!.Value);
+            else File.SetUnixFileMode(path, mode!.Value);
+        }
+    }
+
+    [Fact]
+    public async Task Publish_winner_with_a_clean_WAL_database_uses_the_opt_in_intake()
+    {
+        using var directory = new TestDirectory();
+        var path = Path.Combine(directory.Path, "winner-clean.db");
+        var access = new CountingAccess(new SqliteDatabaseAccess());
+        var provider = new SqliteDatabaseTargetPreparationProvider(new SqliteTargetFileSystem(), access,
+            async (checkpoint, _) => { if (checkpoint == SqlitePreparationCheckpoint.BeforePublish) await CreateCleanWalAsync(path); },
+            new(true, Budget));
+        var prepared = await provider.PrepareAsync(DatabaseTargetPreparationRequest.ForFile(Target(path)), Budget, Token);
+
+        Assert.True(prepared.Succeeded);
+        Assert.Equal(DatabaseTargetPreparationOutcome.AlreadyExists, prepared.Outcome);
+        Assert.Equal(1, access.Recoveries);
+        Assert.Equal(1, access.ImmutableObservations);
+        Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+    }
+
+    [Fact]
+    public async Task Clean_WAL_opt_in_passes_bootstrap_validation_through_the_shared_observer()
+    {
+        using var directory = new TestDirectory();
+        var path = Path.Combine(directory.Path, "bootstrap-clean.db");
+        await CreateCleanWalAsync(path);
+        var observer = new SqliteDatabaseTargetPreparationProvider(new SqliteTargetRecoveryOptions(true, Budget));
+
+        var result = await new SqliteBootstrapDatabaseProvider(observer).ValidateAsync(Target(path), Token);
+
+        Assert.True(result.IsValid);
+        Assert.Null(result.ErrorCode);
+        Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+    }
+
+    [Fact]
+    public async Task Clean_WAL_intake_gates_on_header_eligibility_and_recovery_result()
+    {
+        // A header the access layer does not classify as clean WAL keeps the enabled observer on
+        // the default read-only classification path.
+        var filesystem = new CleanWalFileSystem();
+        var access = new ScriptedAccess();
+        var provider = new SqliteDatabaseTargetPreparationProvider(filesystem, access, recoveryOptions: new(true));
+        var observed = await provider.ObserveAsync(Target(AbsolutePath), Token);
+        Assert.Null(observed.ErrorCode);
+        Assert.Equal(1, access.CleanWalChecks);
+        Assert.Equal(1, access.Inspections);
+        Assert.Equal(0, access.Recoveries);
+
+        // A clean WAL header that fails eligibility validation never opens a read-write connection.
+        access = new ScriptedAccess { CleanWal = true };
+        provider = new(new CleanWalFileSystem { Eligible = false }, access, recoveryOptions: new(true));
+        observed = await provider.ObserveAsync(Target(AbsolutePath), Token);
+        Assert.Equal(DatabaseTargetObservationStatus.TargetUnreachable, observed.Status);
+        Assert.True(observed.TargetExists);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, observed.ErrorCode);
+        Assert.Equal(0, access.Recoveries);
+        Assert.Equal(0, access.Inspections);
+
+        // A busy checkpoint fails closed as a conflict after exactly one attempt.
+        access = new ScriptedAccess { CleanWal = true, RecoveryResult = SqliteRecoveryStatus.Busy };
+        provider = new(new CleanWalFileSystem(), access, recoveryOptions: new(true));
+        observed = await provider.ObserveAsync(Target(AbsolutePath), Token);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.TargetConflict, observed.ErrorCode);
+        Assert.Equal(1, access.Recoveries);
+        Assert.Equal(0, access.Inspections);
+
+        // A failed checkpoint fails closed as a preparation failure.
+        access = new ScriptedAccess { CleanWal = true, RecoveryResult = SqliteRecoveryStatus.Failed };
+        provider = new(new CleanWalFileSystem(), access, recoveryOptions: new(true));
+        observed = await provider.ObserveAsync(Target(AbsolutePath), Token);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.PreparationFailed, observed.ErrorCode);
+        Assert.Equal(1, access.Recoveries);
+
+        // A checkpoint that exceeds the recovery budget fails closed as a bounded timeout.
+        access = new ScriptedAccess { CleanWal = true, Delay = true };
+        provider = new(new CleanWalFileSystem(), access, recoveryOptions: new(true, TimeSpan.FromMilliseconds(20)));
+        observed = await provider.ObserveAsync(Target(AbsolutePath), Token);
+        Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.Timeout, observed.ErrorCode);
+        Assert.Equal(1, access.Recoveries);
+    }
+
+    [Theory]
+    [InlineData("classify")]
+    [InlineData("eligibility")]
+    public async Task Clean_WAL_intake_cancellation_keeps_the_caller_token_without_recovery(string stage)
+    {
+        using var cts = new CancellationTokenSource();
+        var filesystem = new CleanWalFileSystem { Eligibility = stage == "eligibility" ? () => cts.Cancel() : null };
+        var access = new ScriptedAccess
+        {
+            CleanWal = true,
+            CleanWalCheck = stage == "classify" ? () => cts.Cancel() : null
+        };
+        var provider = new SqliteDatabaseTargetPreparationProvider(filesystem, access, recoveryOptions: new(true));
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            () => provider.ObserveAsync(Target(AbsolutePath), cts.Token).AsTask());
+
+        Assert.Equal(cts.Token, exception.CancellationToken);
+        Assert.Null(exception.InnerException);
+        Assert.Equal(0, access.Recoveries);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task Real_clean_WAL_cancellation_releases_owned_resources_and_leaves_no_partial_state(int stage)
+    {
+        using var directory = new TestDirectory();
+        var path = Path.Combine(directory.Path, "cancel-clean.db");
+        await CreateCleanWalAsync(path);
+        using var cts = new CancellationTokenSource();
+        var released = false;
+        var access = new SqliteDatabaseAccess((checkpoint, state, _) =>
+        {
+            if (checkpoint == SqliteRecoveryCheckpoint.ResourcesReleased)
+            {
+                Assert.Equal(System.Data.ConnectionState.Closed, state);
+                released = true;
+            }
+
+            if ((int)checkpoint == stage) cts.Cancel();
+            return ValueTask.CompletedTask;
+        });
+        var provider = new SqliteDatabaseTargetPreparationProvider(
+            new SqliteTargetFileSystem(), access, recoveryOptions: new(true));
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(
+            () => provider.ObserveAsync(Target(path), cts.Token).AsTask());
+
+        Assert.Equal(cts.Token, exception.CancellationToken);
+        Assert.Null(exception.InnerException);
+        Assert.True(released);
+        Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
+        var header = await File.ReadAllBytesAsync(path, Token);
+        Assert.Equal((byte)2, header[18]);
+        Assert.Equal((byte)2, header[19]);
+        // FileShare.None detects a leaked owned handle on Windows; Unix relies on the lifecycle hook.
+        using var exclusive = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+
     [Fact]
     public async Task Gate_with_explicit_provider_instance_recovers_before_executor_runs()
     {
@@ -265,6 +517,22 @@ public sealed class SqliteWalRecoveryTests
     private static BootstrapDatabaseConfiguration Target(string path) => new(WellKnownDatabaseProviderIds.Sqlite, null, new SqliteConnectionStringBuilder { DataSource = path }.ConnectionString);
     private static SqliteDatabaseTargetPreparationProvider Enabled() => new(new SqliteTargetRecoveryOptions(true, Budget));
 
+    private static async Task CreateCleanWalAsync(string path)
+    {
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = path, Pooling = false }.ConnectionString))
+        {
+            await connection.OpenAsync(Token);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA user_version=42; CREATE TABLE retained (id INTEGER); INSERT INTO retained VALUES (42);";
+            await command.ExecuteNonQueryAsync(Token);
+        }
+
+        Assert.False(File.Exists(path + "-wal"));
+        Assert.False(File.Exists(path + "-shm"));
+        Assert.False(File.Exists(path + "-journal"));
+    }
+
     private static async Task CrashAsync(string path)
     {
         var info = new ProcessStartInfo(Environment.ProcessPath!) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
@@ -303,21 +571,36 @@ public sealed class SqliteWalRecoveryTests
     }
     private sealed class CountingAccess(ISqliteDatabaseAccess inner) : ISqliteDatabaseAccess
     {
-        public int Recoveries;
+        public int Recoveries, ImmutableObservations;
         public ValueTask<SqliteDatabaseInspectionStatus> InspectAsync(string path, CancellationToken token) => inner.InspectAsync(path, token);
-        public ValueTask<SqliteDatabaseInspectionStatus> InspectRecoveredAsync(string path, CancellationToken token) => inner.InspectRecoveredAsync(path, token);
+        public ValueTask<SqliteDatabaseInspectionStatus> InspectRecoveredAsync(string path, CancellationToken token) { ImmutableObservations++; return inner.InspectRecoveredAsync(path, token); }
+        public ValueTask<bool> InspectCleanWalAsync(string path, CancellationToken token) => inner.InspectCleanWalAsync(path, token);
         public ValueTask InitializeAsync(string path, CancellationToken token) => inner.InitializeAsync(path, token);
         public ValueTask<SqliteRecoveryStatus> RecoverAsync(string path, TimeSpan timeout, CancellationToken token) { Recoveries++; return inner.RecoverAsync(path, timeout, token); }
     }
     private sealed class ScriptedAccess : ISqliteDatabaseAccess
     {
-        public int Recoveries, Inspections;
-        public Action? Recover, Inspect;
-        public bool Delay;
+        public int Recoveries, Inspections, CleanWalChecks;
+        public Action? Recover, Inspect, CleanWalCheck;
+        public bool Delay, CleanWal;
+        public SqliteRecoveryStatus RecoveryResult { get; set; } = SqliteRecoveryStatus.Recovered;
         public ValueTask<SqliteDatabaseInspectionStatus> InspectAsync(string path, CancellationToken token) { Inspections++; Inspect?.Invoke(); return ValueTask.FromResult(SqliteDatabaseInspectionStatus.Connectable); }
+        public ValueTask<bool> InspectCleanWalAsync(string path, CancellationToken token) { CleanWalChecks++; CleanWalCheck?.Invoke(); return ValueTask.FromResult(CleanWal); }
         public ValueTask InitializeAsync(string path, CancellationToken token) => throw new InvalidOperationException();
         public async ValueTask<SqliteRecoveryStatus> RecoverAsync(string path, TimeSpan timeout, CancellationToken token)
-        { Recoveries++; Recover?.Invoke(); if (Delay) await Task.Delay(Timeout.InfiniteTimeSpan, token); return SqliteRecoveryStatus.Recovered; }
+        { Recoveries++; Recover?.Invoke(); if (Delay) await Task.Delay(Timeout.InfiniteTimeSpan, token); return RecoveryResult; }
+    }
+    private sealed class CleanWalFileSystem : ISqliteTargetFileSystem
+    {
+        public int PathInspections;
+        public bool Eligible = true;
+        public Action? Eligibility;
+        public SqlitePathInspection Inspect(string path) { PathInspections++; return new(SqlitePathInspectionStatus.ExistingFile, path); }
+        public SqliteSidecarInspectionStatus InspectSidecars(string path) => SqliteSidecarInspectionStatus.None;
+        public bool CanRecoverCleanWal(string path) { Eligibility?.Invoke(); return Eligible; }
+        public string CreateTemporaryFile(string path) => throw new InvalidOperationException();
+        public SqlitePublishStatus Publish(string a, string b) => throw new InvalidOperationException();
+        public void DeleteTemporaryFile(string path) => throw new InvalidOperationException();
     }
     private sealed class RecoveryFileSystem(bool remain) : ISqliteTargetFileSystem
     {

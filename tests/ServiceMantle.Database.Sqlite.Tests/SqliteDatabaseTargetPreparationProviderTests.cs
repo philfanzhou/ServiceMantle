@@ -792,7 +792,6 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
     [InlineData("prepare", false)]
     [InlineData("bootstrap", false)]
     [InlineData("winner", false)]
-    [InlineData("observe", true)]
     public async Task Clean_real_WAL_is_refused_before_any_SQLite_open_without_changing_the_winner(string entry, bool enabled)
     {
         using var directory = new TemporaryDirectory();
@@ -922,10 +921,14 @@ public sealed class SqliteDatabaseTargetPreparationProviderTests
     {
         using var directory = new TemporaryDirectory();
         var path = System.IO.Path.Combine(directory.Path, "winner.db");
-        var fs = new CleanupFileSystem(() => Thread.Sleep(150));
+        // The budget must stay comfortably above the un-paced SQLite work that creates the winner
+        // (which parallel test load can inflate well past 100ms) while the cleanup sleep stays
+        // above the budget, so the timeout is always observed during cleanup, never before the
+        // winner exists.
+        var fs = new CleanupFileSystem(() => Thread.Sleep(1_500));
         var provider = new SqliteDatabaseTargetPreparationProvider(fs, new SqliteDatabaseAccess(),
             async (point, _) => { if (point == SqlitePreparationCheckpoint.BeforePublish) await CreateCleanWalAsync(path); });
-        var result = await provider.PrepareAsync(DatabaseTargetPreparationRequest.ForFile(TargetForPath(path)), TimeSpan.FromMilliseconds(100), Token);
+        var result = await provider.PrepareAsync(DatabaseTargetPreparationRequest.ForFile(TargetForPath(path)), TimeSpan.FromSeconds(1), Token);
         Assert.Equal(WellKnownDatabaseTargetPreparationErrorCodes.Timeout, result.ErrorCode);
         Assert.Equal([path], Directory.GetFileSystemEntries(directory.Path));
     }

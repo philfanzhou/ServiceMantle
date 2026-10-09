@@ -137,6 +137,7 @@ internal interface ISqliteTargetFileSystem
     SqlitePathInspection Inspect(string path);
     SqliteSidecarInspectionStatus InspectSidecars(string canonicalPath);
     bool CanRecoverSidecars(string canonicalPath) => false;
+    bool CanRecoverCleanWal(string canonicalPath) => false;
     string CreateTemporaryFile(string canonicalTargetPath);
     SqlitePublishStatus Publish(string temporaryPath, string canonicalTargetPath);
     void DeleteTemporaryFile(string temporaryPath);
@@ -341,6 +342,23 @@ internal sealed class SqliteTargetFileSystem : ISqliteTargetFileSystem
                 found = true;
             }
             return found;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    public bool CanRecoverCleanWal(string canonicalPath)
+    {
+        // The clean-WAL form has no sidecars, so eligibility revalidation covers the target alone:
+        // an ordinary, single-linked, writable file whose canonical path is unchanged.
+        try
+        {
+            var target = Inspect(canonicalPath);
+            return target.Status == SqlitePathInspectionStatus.ExistingFile &&
+                string.Equals(target.CanonicalPath, canonicalPath, StringComparison.Ordinal) &&
+                SqliteNativeFileMetadata.HasReadWriteAccess(canonicalPath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
