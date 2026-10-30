@@ -13,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ServiceMantle\ServiceMantle.csproj" />
     <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
   </ItemGroup>
 
 </Project>
