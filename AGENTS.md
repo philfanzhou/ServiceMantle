@@ -6,7 +6,7 @@ ASP.NET Core、数据库 provider 与 EF Core 持久化能力通过独立包提�
 ## 维护方式
 
 - 本文件是仓库内 AI 协作流程与约束的唯一事实来源。
-- Codex 直接读取本文件；Claude Code 通过根目录 `CLAUDE.md` 导入本文件。
+- Codex 直接读取本文件；Claude Code v2.1.277+ 同样直接读取本文件，无需 `CLAUDE.md` 导入。
 - `CONTRIBUTING.md` 是所有贡献者都必须遵守的工程与 review 政策，本文件负责把它落实为 AI 的工作流程。
 - 修改 AI 通用流程时只改本文件。除非某条规则确实只适用于单个工具，否则不要把规则正文写进
   `CLAUDE.md` 或其他工具入口文件，以免内容漂移或互相冲突。
