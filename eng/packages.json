@@ -121,7 +121,8 @@
       "optional": true,
       "dependencies": [
         "Microsoft.Data.SqlClient",
-        "ServiceMantle"
+        "ServiceMantle",
+        "System.Security.Cryptography.Pkcs"
       ],
       "frameworkReferences": [],
       "tests": [
@@ -167,7 +168,8 @@
       "optional": true,
       "dependencies": [
         "Oracle.ManagedDataAccess.Core",
-        "ServiceMantle"
+        "ServiceMantle",
+        "System.Security.Cryptography.Pkcs"
       ],
       "frameworkReferences": [],
       "tests": [
@@ -239,7 +241,9 @@
       "dependencies": [
         "Microsoft.AspNetCore.DataProtection",
         "Microsoft.EntityFrameworkCore.Relational",
-        "ServiceMantle"
+        "ServiceMantle",
+        "System.Security.Cryptography.Pkcs",
+        "System.Security.Cryptography.Xml"
       ],
       "frameworkReferences": [],
       "tests": [
