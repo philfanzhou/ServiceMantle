@@ -10,11 +10,13 @@ public sealed class OraclePackageBoundaryTests
     private static readonly string[] ExpectedDependencies =
     [
         "Oracle.ManagedDataAccess.Core",
-        "ServiceMantle"
+        "ServiceMantle",
+        // Pinned directly so the provider never resolves the vulnerable transitive version.
+        "System.Security.Cryptography.Pkcs"
     ];
 
     [Fact]
-    public void Package_references_only_core_and_the_Oracle_driver()
+    public void Package_references_only_core_the_Oracle_driver_and_patched_cryptography()
     {
         var repositoryRoot = FindRepositoryRoot();
         var project = XDocument.Load(Path.Combine(
