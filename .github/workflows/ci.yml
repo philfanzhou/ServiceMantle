@@ -1,9 +1,13 @@
 name: CI
 
 on:
-  # Default-branch pushes are verified by release.yml before package artifacts
-  # are published, so CI remains a pull-request verification gate.
+  # A pull request verifies itself here, and so does every push to the default
+  # branch: release.yml is tag-only, so this trigger is the only CI a merge to
+  # main runs. release.yml still calls this workflow from its verify job, so a
+  # release is published only after this same CI passes.
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
   workflow_call:
   workflow_dispatch:

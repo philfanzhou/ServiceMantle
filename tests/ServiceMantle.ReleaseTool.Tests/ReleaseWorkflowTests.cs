@@ -19,10 +19,22 @@ public sealed class ReleaseWorkflowTests
     private static readonly string Ci = ReadWorkflow("ci.yml");
 
     [Fact]
-    public void Release_runs_on_default_branch_pushes_and_on_release_tags()
+    public void Release_runs_on_release_tags_only()
     {
-        Assert.Contains("branches: [main]", Release, StringComparison.Ordinal);
+        // A merge to main must run CI and nothing that can publish. The release
+        // workflow is reached by a semantic-version tag alone.
+        Assert.DoesNotContain("branches: [main]", Release, StringComparison.Ordinal);
+        Assert.Contains("tags:", Release, StringComparison.Ordinal);
         Assert.Contains("\"v*.*.*\"", Release, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ci_runs_on_default_branch_pushes()
+    {
+        // Now that release.yml is tag-only, this trigger is the only CI a merge
+        // to main runs; removing it would leave main merges unverified.
+        Assert.Contains("push:", Ci, StringComparison.Ordinal);
+        Assert.Contains("branches: [main]", Ci, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -34,8 +46,8 @@ public sealed class ReleaseWorkflowTests
             "if: ${{ needs.version.outputs.publish == 'true' }}",
             job,
             StringComparison.Ordinal);
-        // resolve-version only ever answers publish=true for a tag; every other ref, including a
-        // main push, resolves to an untagged version with publish=false.
+        // resolve-version only ever answers publish=true for a tag; every other ref
+        // resolves to an untagged version with publish=false.
         Assert.Contains("-- resolve-version", Job("version"), StringComparison.Ordinal);
     }
 
