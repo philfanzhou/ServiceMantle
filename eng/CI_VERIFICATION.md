@@ -1,9 +1,10 @@
 # CI 验证入口核对
 
-本仓库有两个验证入口，一个 workflow 出现在其中一个不代表它出现在另一个：
+本仓库的验证入口，一个 workflow 出现在其中一个不代表它出现在另一个：
 
 - **PR 入口**：`pull_request` 触发的 workflow，在合并前给出证据。
-- **Release 复验入口**：`release.yml` 在 main push 与 tag push 上重跑验证，并用 `needs` 把
+- **默认分支入口**：合并到 `main` 时直接运行 `ci.yml`；它只做验证，不发布任何东西。
+- **Release 复验入口**：`release.yml` 在 tag push 上重跑验证，并用 `needs` 把
   `publish` 挡在验证之后。
 
 `release.yml` 通过 `uses: ./.github/workflows/ci.yml` 复用 `ci.yml`，因此 `ci.yml` 里的 job 自动
@@ -54,7 +55,7 @@ PY
 ## 未合并 PR 上能证明什么
 
 结构校验、被调用 workflow 的 PR 运行结果，以及 `release.yml` 的 YAML 差异，都可以在未合并的 PR 上
-给出。**release DAG 本身跑不起来**：`release.yml` 只在 main push 和 tag push 上触发，`workflow_dispatch`
+给出。**release DAG 本身跑不起来**：`release.yml` 只在 tag push 上触发，`workflow_dispatch`
 单独运行被调用 workflow 也不等于 release DAG 已经跑过。新增或调整 release 工作流依赖关系的 PR 必须写明：
-首次 main push 的 release run 才是后置验证点，届时复核新增 job 是否出现在 DAG 中、`publish` 是否
+首次 tag push 的 release run 才是后置验证点，届时复核新增 job 是否出现在 DAG 中、`publish` 是否
 确实被它挡住。

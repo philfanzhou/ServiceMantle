@@ -20,8 +20,9 @@
    （版本号不带预发布后缀），workflow 还会为该 tag 自动创建 GitHub Release（见
    [GitHub Release](#github-release) 一节）；RC 等候选版本只发布 NuGet 包。
 
-推送到 `main` 会运行相同的验证并产生相同的产物，但不发布任何东西。它们的版本号是
-`0.0.0-edge.<run>.<attempt>`，仅作为工作流保存的构建输出。
+推送到 `main` 只运行 `ci.yml` 的验证（构建、测试、打包与消费检查），不触发 release
+workflow，不产生发布产物，也不发布任何东西。发布产物只来自 tag 触发的 **Package release**
+workflow。
 
 ## 版本规则
 

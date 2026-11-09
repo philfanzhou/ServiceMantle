@@ -2,7 +2,8 @@ name: Package release
 
 on:
   push:
-    branches: [main]
+    # Only a release tag publishes. A push or merge to the default branch runs
+    # ci.yml and nothing here, so no package or release can come from main.
     tags:
       - "v*.*.*"
 
